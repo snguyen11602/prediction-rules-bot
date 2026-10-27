@@ -43,6 +43,8 @@ export interface NormalizedMarket {
   outcomes?: string[];
   /** Platform event this market belongs to (Kalshi event_ticker, Polymarket event id). */
   eventId?: string;
+  /** Taker fee rate for fee = contracts × rate × p × (1 − p), when the platform publishes it per market. */
+  takerFeeRate?: number;
   /** Free-form tags / categories from the platform. */
   tags?: string[];
   url?: string;

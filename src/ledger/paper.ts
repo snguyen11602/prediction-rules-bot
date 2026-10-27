@@ -419,6 +419,7 @@ export function riskStateFromLedger(ledger: PaperLedger, ruleId: string, now = n
   let realized = 0;
   let dayPnl = 0;
   const openGroups = new Set<string>();
+  const groups = ledger.arbGroups ?? {};
   for (const p of ledger.positions) {
     if (p.ruleId !== ruleId) continue;
     if (p.status === "open") {
@@ -426,6 +427,15 @@ export function riskStateFromLedger(ledger: PaperLedger, ruleId: string, now = n
       if (p.groupId) openGroups.add(p.groupId);
       else openCount += 1;
       exposure += p.costUsd;
+    } else if (p.groupId) {
+      // A settled leg of an open arb isn't a realized result yet (its partner may settle days later).
+      const g = groups[p.groupId];
+      if (!g || g.status !== "closed") {
+        openGroups.add(p.groupId);
+        continue;
+      }
+      realized += p.realizedPnlUsd ?? 0;
+      if (g.closedAt && dayKeyLA(new Date(g.closedAt)) === dayKey) dayPnl += p.realizedPnlUsd ?? 0;
     } else {
       realized += p.realizedPnlUsd ?? 0;
       if (p.exitAt && dayKeyLA(new Date(p.exitAt)) === dayKey) dayPnl += p.realizedPnlUsd ?? 0;
@@ -494,6 +504,11 @@ export function summarizeLedger(ledger: PaperLedger): { rules: RuleSummary[]; to
       s.unrealizedPnlUsd += p.unrealizedPnlUsd ?? 0;
     } else {
       const pnl = p.realizedPnlUsd ?? 0;
+      if (p.groupId && ledger.arbGroups?.[p.groupId]?.status !== "closed") {
+        // Settled leg of a still-open arb: part of that arb's open P/L until the arb closes.
+        s.unrealizedPnlUsd += pnl;
+        continue;
+      }
       s.realizedPnlUsd += pnl;
       // Arbitrage legs are scored as one trade per group (below): one leg always "loses".
       if (p.groupId) continue;

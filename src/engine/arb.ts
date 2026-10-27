@@ -62,7 +62,7 @@ export interface ArbQuote {
 export interface QuoteEnv {
   slippage: number;
   includeFees: boolean;
-  feeFor: (platform: PlatformId, contracts: number, price: number) => number;
+  feeFor: (market: NormalizedMarket, contracts: number, price: number) => number;
   roundSets: (platforms: PlatformId[], sets: number) => number;
   now: Date;
 }
@@ -79,8 +79,15 @@ export function pairKey(kalshiId: string, polymarketId: string): string {
   return `x|kalshi:${kalshiId}|polymarket:${polymarketId}`;
 }
 
+/** The pairs file must live in the rules folder (it's rewritten by arb:confirm / arb:block). */
 export function pairsFilePath(rulesPath: string, cfg: ArbitrageConfig): string {
-  return path.resolve(path.dirname(rulesPath), cfg.cross_platform.pairs_file);
+  const dir = path.dirname(path.resolve(rulesPath));
+  const file = path.resolve(dir, cfg.cross_platform.pairs_file);
+  const rel = path.relative(dir, file);
+  if (rel.startsWith("..") || path.isAbsolute(rel) || !/\.ya?ml$/i.test(file)) {
+    throw new Error(`arbitrage.cross_platform.pairs_file must be a .yaml file inside ${dir}`);
+  }
+  return file;
 }
 
 /** Missing file → no pairs. Invalid file → throws (don't silently trade without blocks). */
@@ -92,7 +99,20 @@ export async function loadPairsFile(file: string): Promise<ArbPairsFile> {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return { confirmed: [], blocked: [] };
     throw err;
   }
-  return ArbPairsFileSchema.parse(parseYaml(raw) ?? {});
+  let data: unknown;
+  try {
+    data = parseYaml(raw);
+  } catch (err) {
+    // Don't echo file contents into logs / webhooks.
+    const line = (err as { linePos?: Array<{ line: number }> }).linePos?.[0]?.line;
+    throw new Error(`${path.basename(file)} is not valid YAML${line ? ` (line ${line})` : ""}`);
+  }
+  const parsed = ArbPairsFileSchema.safeParse(data ?? {});
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new Error(`${path.basename(file)}: ${issue?.path.join(".") || "file"} ${issue?.message ?? "is invalid"}`);
+  }
+  return parsed.data;
 }
 
 /** Price one basket for `sizeUsd` of capital (or a fixed number of sets). */
@@ -104,15 +124,21 @@ export function quoteBasket(basket: ArbBasket, size: { sizeUsd: number } | { set
   if (!(perSet < basket.payoutPerSet)) return null;
 
   const platforms = basket.legs.map((l) => l.market.platform);
-  const rawSets = "sets" in size ? size.sets : size.sizeUsd / perSet;
-  const sets = env.roundSets(platforms, rawSets);
+  const feesFor = (n: number) =>
+    basket.legs.map((l, i) => (env.includeFees ? env.feeFor(l.market, n, prices[i]) : 0));
+  let sets = env.roundSets(platforms, "sets" in size ? size.sets : size.sizeUsd / perSet);
+  if ("sizeUsd" in size) {
+    // Fees count toward the position size: shrink until cost + fees fit.
+    for (let i = 0; i < 20 && sets > 0; i++) {
+      const total = sets * perSet + feesFor(sets).reduce((a, b) => a + b, 0);
+      if (total <= size.sizeUsd + 1e-9) break;
+      sets = env.roundSets(platforms, sets * (size.sizeUsd / total) - 1e-9);
+    }
+  }
   if (!(sets > 0)) return null;
 
-  const legs: ArbQuoteLeg[] = basket.legs.map((l, i) => ({
-    ...l,
-    price: prices[i],
-    feeUsd: env.includeFees ? env.feeFor(l.market.platform, sets, prices[i]) : 0,
-  }));
+  const fees = feesFor(sets);
+  const legs: ArbQuoteLeg[] = basket.legs.map((l, i) => ({ ...l, price: prices[i], feeUsd: fees[i] }));
   const costUsd = round2(sets * perSet);
   const feesUsd = round2(legs.reduce((a, l) => a + l.feeUsd, 0));
   const payoutUsd = round2(sets * basket.payoutPerSet);
@@ -145,7 +171,7 @@ export function unwindProceeds(
 ): { proceedsUsd: number; prices: number[]; fees: number[] } | null {
   if (!legs.every((l) => quoted(l.market))) return null;
   const prices = legs.map((l) => sellPrice(l.market, l.side, env.slippage));
-  const fees = legs.map((l, i) => (env.includeFees ? env.feeFor(l.market.platform, l.contracts, prices[i]) : 0));
+  const fees = legs.map((l, i) => (env.includeFees ? env.feeFor(l.market, l.contracts, prices[i]) : 0));
   const gross = legs.reduce((a, l, i) => a + l.contracts * prices[i], 0);
   return { proceedsUsd: round2(gross - fees.reduce((a, b) => a + b, 0)), prices, fees };
 }
@@ -221,7 +247,12 @@ export async function discoverBaskets(input: DiscoverInput): Promise<Discovery> 
       candidates = findMatches(
         input.markets.filter((m) => m.platform === "kalshi" && !claimed.has(`kalshi:${m.id}`)),
         input.markets.filter((m) => m.platform === "polymarket" && !claimed.has(`polymarket:${m.id}`)),
-        { minScore: cfg.cross_platform.min_score, maxCloseGapHours: cfg.cross_platform.max_close_gap_hours },
+        {
+          minScore: cfg.cross_platform.min_score,
+          maxCloseGapHours: cfg.cross_platform.max_close_gap_hours,
+          // Blocked pairs never compete for a market in the one-to-one assignment.
+          exclude: new Set(pairs.blocked.map((b) => `${b.kalshi}|${b.polymarket}`)),
+        },
       );
       for (const c of candidates) {
         const key = pairKey(c.kalshi.id, c.polymarket.id);
@@ -243,7 +274,10 @@ export async function discoverBaskets(input: DiscoverInput): Promise<Discovery> 
   if (cfg.same_platform.enabled) {
     for (const g of input.eventGroups) {
       if (!g.mutuallyExclusive) continue;
+      // An outcome already resolved YES means the event is decided; remaining quotes are stale.
+      if (g.markets.some((m) => m.status === "resolved" && (m.resolvedOutcome === "yes" || m.settlementYesPrice != null))) continue;
       const open = g.markets.filter((m) => (m.status ?? "open") === "open");
+      const nonOpen = g.markets.filter((m) => (m.status ?? "open") !== "open");
       if (open.length < 2 || open.length > cfg.same_platform.max_outcomes) continue;
       const withQuotes = open.filter(quoted);
       const base = { matchedBy: "platform" as const, payoutPerSet: 1, url: g.url };
@@ -265,8 +299,9 @@ export async function discoverBaskets(input: DiscoverInput): Promise<Discovery> 
         }
       }
       if (cfg.same_platform.yes_basket && g.exhaustive) {
-        // Every outcome is needed: if one is missing a quote, the basket isn't complete.
-        if (withQuotes.length === open.length) {
+        // Every outcome that can still win is needed, and every other one must have resolved NO.
+        const othersSettledNo = nonOpen.every((m) => m.status === "resolved" && m.resolvedOutcome === "no");
+        if (withQuotes.length === open.length && othersSettledNo) {
           baskets.push({
             ...base,
             key: `y|${g.platform}:${g.eventId}`,

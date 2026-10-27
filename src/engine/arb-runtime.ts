@@ -23,6 +23,9 @@ import {
   type QuoteEnv,
 } from "./arb.js";
 import { sellPrice } from "./pricing.js";
+import { hoursToResolve } from "./evaluate.js";
+import { mkdir, open, readFile, rename } from "node:fs/promises";
+import path from "node:path";
 import { applyOutcome, checkEntryRisk, defaultRiskState, positionSizeUsd, type RiskState } from "./risk.js";
 import { dayKeyLA } from "./clock.js";
 import { randomUUID } from "node:crypto";
@@ -35,8 +38,85 @@ import { randomUUID } from "node:crypto";
 type Push = (e: EngineEvent) => Promise<void>;
 type Lookup = (platform: PlatformId, id: string) => Promise<NormalizedMarket | null>;
 
+/** Prefix for watch-mode de-duplication keys (kept apart from per-market rule keys). */
+const SIGNAL_PREFIX = "§arb|";
+
+/**
+ * Rolling cache of platform events for cross-platform matching. Kalshi has
+ * thousands of events and rate-limits, so each scan reads one more page and
+ * matching uses everything seen in the last `ttlHours`. Prices in the cache are
+ * only for matching; quotes are always refreshed before pricing an arb.
+ */
+export class ArbUniverse {
+  private cursors: Record<string, string | undefined> = {};
+  private events = new Map<string, { at: number; group: EventGroup }>();
+  constructor(private readonly ttlHours = 12) {}
+
+  cursor(platform: PlatformId): string | undefined {
+    return this.cursors[platform];
+  }
+  setCursor(platform: PlatformId, cursor: string | undefined): void {
+    this.cursors[platform] = cursor;
+  }
+  add(groups: EventGroup[], now: Date): void {
+    for (const g of groups) {
+      this.events.set(`${g.platform}:${g.eventId}`, {
+        at: now.getTime(),
+        group: { ...g, markets: g.markets.map(({ raw: _raw, ...m }) => m) },
+      });
+    }
+    const cutoff = now.getTime() - this.ttlHours * 3600_000;
+    for (const [k, v] of this.events) if (v.at < cutoff) this.events.delete(k);
+  }
+  markets(): NormalizedMarket[] {
+    return [...this.events.values()].flatMap((e) => e.group.markets);
+  }
+  get size(): number {
+    return this.events.size;
+  }
+  toJSON() {
+    return { version: 1, cursors: this.cursors, events: Object.fromEntries(this.events) };
+  }
+  static fromJSON(d: unknown, ttlHours?: number): ArbUniverse {
+    const u = new ArbUniverse(ttlHours);
+    const data = d as { version?: number; cursors?: Record<string, string>; events?: Record<string, { at: number; group: EventGroup }> };
+    if (data?.version !== 1) return u;
+    u.cursors = data.cursors ?? {};
+    for (const [k, v] of Object.entries(data.events ?? {})) if (v?.group?.markets) u.events.set(k, v);
+    return u;
+  }
+}
+
+/** data/paper-ledger.json → data/paper-ledger.arb-cache.json */
+export function universePathFor(ledgerPath: string): string {
+  const ext = path.extname(ledgerPath);
+  return ext ? `${ledgerPath.slice(0, -ext.length)}.arb-cache${ext}` : `${ledgerPath}.arb-cache.json`;
+}
+
+export async function loadUniverse(file: string): Promise<ArbUniverse> {
+  try {
+    return ArbUniverse.fromJSON(JSON.parse(await readFile(file, "utf8")));
+  } catch {
+    return new ArbUniverse();
+  }
+}
+
+export async function saveUniverse(file: string, u: ArbUniverse): Promise<void> {
+  await mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  const fh = await open(tmp, "w");
+  try {
+    await fh.writeFile(JSON.stringify(u));
+  } finally {
+    await fh.close();
+  }
+  await rename(tmp, file);
+}
+
 export interface ArbOpportunity {
   key: string;
+  /** False for auto-matched pairs while auto_trade is off (alert only until confirmed). */
+  tradable: boolean;
   kind: ArbQuote["basket"]["kind"];
   kindLabel: string;
   title: string;
@@ -76,7 +156,7 @@ export function quoteEnv(cfg: ArbitrageConfig, adapters: PlatformAdapter[], now:
     slippage: cfg.paper.slippage,
     includeFees: cfg.paper.include_fees,
     now,
-    feeFor: (platform, contracts, price) => adapterFor(platform)?.estimateTakerFeeUsd?.(contracts, price) ?? 0,
+    feeFor: (market, contracts, price) => adapterFor(market.platform)?.estimateTakerFeeUsd?.(contracts, price, market) ?? 0,
     roundSets: (platforms, sets) => {
       let s = Math.floor(sets * 100 + 1e-9) / 100;
       for (const p of new Set(platforms)) {
@@ -88,9 +168,14 @@ export function quoteEnv(cfg: ArbitrageConfig, adapters: PlatformAdapter[], now:
   };
 }
 
-function summarize(q: ArbQuote): ArbOpportunity {
+function canTrade(cfg: ArbitrageConfig, q: ArbQuote): boolean {
+  return q.basket.matchedBy !== "auto" || cfg.cross_platform.auto_trade;
+}
+
+function summarize(q: ArbQuote, cfg?: ArbitrageConfig): ArbOpportunity {
   return {
     key: q.basket.key,
+    tradable: cfg ? canTrade(cfg, q) : q.basket.matchedBy !== "auto",
     kind: q.basket.kind,
     kindLabel: kindLabel(q.basket.kind),
     title: q.basket.title,
@@ -117,7 +202,7 @@ function money(n: number): string {
   return `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
 }
 
-/** Find arbitrage opportunities that clear min_edge and the time limit. */
+/** Find arbitrage opportunities that clear min_edge and the time limits. */
 export async function findOpportunities(args: {
   cfg: ArbitrageConfig;
   rulesPath: string;
@@ -126,80 +211,147 @@ export async function findOpportunities(args: {
   lookup: Lookup;
   push: Push;
   now: Date;
-}): Promise<{ quotes: ArbQuote[]; discovery: Discovery; checked: number }> {
+  universe?: ArbUniverse;
+}): Promise<{ quotes: ArbQuote[]; discovery: Discovery; checked: number; complete: boolean }> {
   const { adapters, push, now } = args;
+  const universe = args.universe ?? new ArbUniverse();
   let cfg = args.cfg;
+  let complete = true;
   let pairs = { confirmed: [], blocked: [] } as Awaited<ReturnType<typeof loadPairsFile>>;
   try {
     pairs = await loadPairsFile(pairsFilePath(args.rulesPath, cfg));
   } catch (err) {
+    complete = false;
     await push({
       at: now.toISOString(),
       type: "adapter_error",
       ruleId: "arbitrage",
-      message: `Arbitrage pairs file is invalid (${(err as Error).message}); cross-platform arbitrage skipped this cycle`,
+      message: `Arbitrage pairs file problem: ${(err as Error).message}; cross-platform arbitrage skipped this cycle`,
     });
     if (cfg.cross_platform.enabled) cfg = { ...cfg, cross_platform: { ...cfg.cross_platform, enabled: false } };
   }
 
-  const eventGroups: EventGroup[] = [];
-  if (cfg.same_platform.enabled) {
-    for (const a of adapters) {
-      if (!a.listEventGroups) continue;
-      try {
-        eventGroups.push(...(await a.listEventGroups({ limit: cfg.same_platform.scan_events })));
-      } catch (err) {
-        await push({
-          at: now.toISOString(),
-          type: "adapter_error",
-          ruleId: "arbitrage",
-          message: `${a.id}: could not load events for same-site arbitrage (${(err as Error).message})`,
-          data: { platform: a.id },
-        });
+  // Fresh event pages this cycle (same-site baskets need fresh prices; cross-platform matching uses the cache too).
+  const freshGroups: EventGroup[] = [];
+  for (const a of adapters) {
+    try {
+      if (a.listEventGroupsPage) {
+        const page = await a.listEventGroupsPage({ limit: cfg.same_platform.scan_events, cursor: universe.cursor(a.id) });
+        freshGroups.push(...page.groups);
+        universe.setCursor(a.id, page.cursor); // undefined → start over next time
+      } else if (a.listEventGroups) {
+        freshGroups.push(...(await a.listEventGroups({ limit: cfg.same_platform.scan_events })));
       }
+    } catch (err) {
+      complete = false;
+      await push({
+        at: now.toISOString(),
+        type: "adapter_error",
+        ruleId: "arbitrage",
+        message: `${a.id}: could not load events for arbitrage (${(err as Error).message})`,
+        data: { platform: a.id },
+      });
+    }
+  }
+  universe.add(freshGroups, now);
+
+  const fresh = new Map<string, NormalizedMarket>();
+  for (const m of [...args.markets, ...freshGroups.flatMap((g) => g.markets)]) fresh.set(`${m.platform}:${m.id}`, m);
+  const forMatching = new Map(fresh);
+  if (cfg.cross_platform.enabled) {
+    for (const m of universe.markets()) {
+      const k = `${m.platform}:${m.id}`;
+      if (!forMatching.has(k)) forMatching.set(k, m);
     }
   }
 
-  const discovery = await discoverBaskets({ cfg, pairs, markets: args.markets, lookup: args.lookup, eventGroups });
+  const discovery = await discoverBaskets({
+    cfg,
+    pairs,
+    markets: [...forMatching.values()],
+    lookup: args.lookup,
+    eventGroups: cfg.same_platform.enabled ? freshGroups : [],
+  });
+
+  // Cached markets were only good enough to match on: refresh their prices before quoting.
+  const stale = new Map<PlatformId, Set<string>>();
+  for (const b of discovery.baskets) {
+    for (const l of b.legs) {
+      if (fresh.has(`${l.market.platform}:${l.market.id}`)) continue;
+      const set = stale.get(l.market.platform) ?? new Set<string>();
+      set.add(l.market.id);
+      stale.set(l.market.platform, set);
+    }
+  }
+  const refreshed = new Map<string, NormalizedMarket>();
+  for (const [platform, ids] of stale) {
+    const a = adapters.find((x) => x.id === platform);
+    try {
+      const list = a?.getMarkets
+        ? await a.getMarkets([...ids])
+        : (await Promise.all([...ids].slice(0, 30).map((id) => args.lookup(platform, id)))).filter((m): m is NormalizedMarket => !!m);
+      for (const m of list) refreshed.set(`${m.platform}:${m.id}`, m);
+    } catch (err) {
+      complete = false;
+      await push({
+        at: now.toISOString(),
+        type: "adapter_error",
+        ruleId: "arbitrage",
+        message: `${platform}: could not refresh prices for matched markets (${(err as Error).message})`,
+      });
+    }
+  }
+  const current = (m: NormalizedMarket) => fresh.get(`${m.platform}:${m.id}`) ?? refreshed.get(`${m.platform}:${m.id}`);
+  const baskets = discovery.baskets
+    .filter((b) => b.legs.every((l) => current(l.market)))
+    .map((b) => ({ ...b, legs: b.legs.map((l) => ({ ...l, market: current(l.market)! })) }));
+
   const env = quoteEnv(cfg, adapters, now);
   const size = positionSizeUsd(arbitrageAsRule(cfg).risk);
-  const quotes = bestQuotes(discovery.baskets, size, env).filter(
-    (q) => q.edge >= cfg.min_edge && (q.hoursToResolve == null || q.hoursToResolve <= cfg.max_hours_to_resolve),
-  );
-  const checked = new Set(discovery.baskets.map((b) => b.key)).size;
+  const quotes = bestQuotes(baskets, size, env).filter((q) => {
+    if (q.edge < cfg.min_edge) return false;
+    if (q.hoursToResolve != null && q.hoursToResolve > cfg.max_hours_to_resolve) return false;
+    return q.legs.every((l) => (hoursToResolve(l.market, now) ?? Infinity) >= cfg.min_hours_to_resolve);
+  });
+  const checked = new Set(baskets.map((b) => b.key)).size;
   await push({
     at: now.toISOString(),
     type: "info",
     ruleId: "arbitrage",
     message:
       `Arbitrage: checked ${checked} set(s) — ${discovery.candidates.length} auto-matched pair(s), ` +
-      `${pairs.confirmed.length} confirmed pair(s), ${eventGroups.filter((g) => g.mutuallyExclusive).length} exclusive event(s); ` +
-      `${quotes.length} opportunit${quotes.length === 1 ? "y" : "ies"} ≥ ${(cfg.min_edge * 100).toFixed(1)}¢ per $1`,
+      `${pairs.confirmed.length} confirmed pair(s), ${freshGroups.filter((g) => g.mutuallyExclusive).length} exclusive event(s), ` +
+      `${universe.size} events cached for matching; ${quotes.length} opportunit${quotes.length === 1 ? "y" : "ies"} ≥ ${(cfg.min_edge * 100).toFixed(1)}¢ per $1`,
   });
-  return { quotes, discovery, checked };
+  return { quotes, discovery: { ...discovery, baskets }, checked, complete };
 }
 
 export async function emitArbSignals(
   quotes: ArbQuote[],
   push: Push,
   now: Date,
-  opts: { action: "alert" | "paper"; lastMatched?: Set<string> },
+  opts: { action: "alert" | "paper"; cfg?: ArbitrageConfig; lastMatched?: Set<string>; complete?: boolean },
 ): Promise<number> {
   let emitted = 0;
-  const current = new Set(quotes.map((q) => `arb|${q.basket.key}`));
+  const current = new Set(quotes.map((q) => `${SIGNAL_PREFIX}${q.basket.key}`));
   for (const q of quotes) {
-    const k = `arb|${q.basket.key}`;
+    const k = `${SIGNAL_PREFIX}${q.basket.key}`;
     if (opts.lastMatched?.has(k)) continue;
-    const s = summarize(q);
+    const s = summarize(q, opts.cfg);
+    const willTrade = opts.action === "paper" && s.tradable;
     const legs = q.legs.map((l) => `${l.side.toUpperCase()} ${l.market.platform} @ ${(l.price * 100).toFixed(1)}¢`).join(" + ");
     await push({
       at: now.toISOString(),
       type: "arb_signal",
       ruleId: "arbitrage",
       message:
-        `${opts.action === "paper" ? "PAPER" : "ALERT"} ARB ${(q.edge * 100).toFixed(1)}¢ per $1 ` +
+        `${willTrade ? "PAPER" : "ALERT"} ARB ${(q.edge * 100).toFixed(1)}¢ per $1 ` +
         `(${money(q.profitUsd)} on ${money(q.costUsd + q.feesUsd)}) — ${q.basket.title} [${legs}]` +
-        (q.basket.matchedBy === "auto" ? " (auto-matched: check both questions are the same)" : ""),
+        (q.basket.matchedBy === "auto"
+          ? s.tradable
+            ? " (auto-matched: check both questions are the same)"
+            : " (auto-matched: check it, then npm run arb:confirm to paper-trade it)"
+          : ""),
       market: {
         platform: q.legs[0].market.platform,
         id: q.legs[0].market.id,
@@ -213,7 +365,10 @@ export async function emitArbSignals(
     emitted += 1;
   }
   if (opts.lastMatched) {
-    for (const k of [...opts.lastMatched]) if (k.startsWith("arb|") && !current.has(k)) opts.lastMatched.delete(k);
+    // A scan that hit errors may have missed opportunities that still exist: don't forget them.
+    if (opts.complete !== false) {
+      for (const k of [...opts.lastMatched]) if (k.startsWith(SIGNAL_PREFIX) && !current.has(k)) opts.lastMatched.delete(k);
+    }
     for (const k of current) opts.lastMatched.add(k);
   }
   return emitted;
@@ -326,6 +481,7 @@ export async function openArbGroups(ctx: PaperCtx, quotes: ArbQuote[]): Promise<
   const risk = riskStateFromLedger(ctx.ledger, ctx.rule.id, ctx.now);
   let opened = 0;
   for (const q of quotes) {
+    if (!canTrade(ctx.cfg, q)) continue; // auto-matched pairs alert only until confirmed
     if (Object.values(groups).some((g) => g.status === "open" && g.key === q.basket.key)) continue;
     const lastClose = Object.values(groups)
       .filter((g) => g.key === q.basket.key && g.closedAt)
@@ -394,3 +550,4 @@ export async function openArbGroups(ctx: PaperCtx, quotes: ArbQuote[]): Promise<
 }
 
 export { summarize as summarizeQuote };
+export type { ArbQuote };

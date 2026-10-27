@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { NormalizedMarket, PlatformId } from "../types.js";
 import { kalshiTakerFeeUsd } from "./kalshi.js";
+import { polymarketTakerFeeUsd } from "./polymarket.js";
 import type { EventGroup, ListMarketsOptions, PlatformAdapter } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -50,12 +51,12 @@ export class DemoAdapter implements PlatformAdapter {
   async listEventGroups(opts: { limit?: number } = {}): Promise<EventGroup[]> {
     const byEvent = new Map<string, FixtureRow[]>();
     for (const r of await this.fixtureRows()) {
-      if (!r.eventId || (r.status ?? "open") !== "open") continue;
+      if (!r.eventId) continue;
       byEvent.set(r.eventId, [...(byEvent.get(r.eventId) ?? []), r]);
     }
     const groups: EventGroup[] = [];
     for (const [eventId, rows] of byEvent) {
-      if (rows.length < 2) continue;
+      if (rows.filter((r) => (r.status ?? "open") === "open").length < 2) continue;
       groups.push({
         platform: this.id,
         eventId,
@@ -81,8 +82,15 @@ export class DemoAdapter implements PlatformAdapter {
     return (await this.rows()).find((m) => m.id === id) ?? null;
   }
 
-  estimateTakerFeeUsd(contracts: number, price: number): number {
-    return this.id === "kalshi" ? kalshiTakerFeeUsd(contracts, price) : 0;
+  estimateTakerFeeUsd(contracts: number, price: number, market?: NormalizedMarket): number {
+    if (this.id === "kalshi") return kalshiTakerFeeUsd(contracts, price);
+    // Demo Polymarket rows are fee-free unless they set takerFeeRate.
+    return polymarketTakerFeeUsd(contracts, price, market?.takerFeeRate ?? 0);
+  }
+
+  async getMarkets(ids: string[]): Promise<NormalizedMarket[]> {
+    const want = new Set(ids);
+    return (await this.rows()).filter((m) => want.has(m.id));
   }
 
   roundContracts(contracts: number): number {

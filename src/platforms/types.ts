@@ -40,7 +40,7 @@ export interface PlatformAdapter {
    * Approximate taker fee in USD for a fill of `contracts` at `price`
    * (0–1). Used only for paper PnL; omit for fee-free platforms.
    */
-  estimateTakerFeeUsd?(contracts: number, price: number): number;
+  estimateTakerFeeUsd?(contracts: number, price: number, market?: NormalizedMarket): number;
   /**
    * Round a paper order size to what the platform can actually trade
    * (e.g. whole contracts). Omit when fractional sizes are allowed.
@@ -51,4 +51,8 @@ export interface PlatformAdapter {
    * same-platform arbitrage. Optional; adapters that can't group omit it.
    */
   listEventGroups?(opts?: { limit?: number }): Promise<EventGroup[]>;
+  /** Paged version for platforms with many events (resume from `cursor` on the next scan). */
+  listEventGroupsPage?(opts: { limit?: number; cursor?: string }): Promise<{ groups: EventGroup[]; cursor?: string }>;
+  /** Current data for several markets in one request. */
+  getMarkets?(ids: string[]): Promise<NormalizedMarket[]>;
 }

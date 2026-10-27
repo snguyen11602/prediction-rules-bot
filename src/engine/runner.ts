@@ -7,7 +7,7 @@ import { evaluateEntry, type PriorPrice } from "./evaluate.js";
 import { checkEntryRisk, defaultRiskState, type RiskState } from "./risk.js";
 import type { EventSink } from "./events.js";
 import { consoleSink } from "./events.js";
-import { arbConfig, arbScanLimit, emitArbSignals, findOpportunities, slicePerPlatform } from "./arb-runtime.js";
+import { arbConfig, arbScanLimit, emitArbSignals, findOpportunities, slicePerPlatform, type ArbUniverse } from "./arb-runtime.js";
 
 export interface SignalArgs {
   rule: Rule;
@@ -34,6 +34,8 @@ export interface RunnerOptions {
    * previous scan are suppressed until they stop matching and match again.
    */
   lastMatched?: Set<string>;
+  /** Watch: keep the arbitrage event cache between polls. */
+  arbUniverse?: ArbUniverse;
   /**
    * Called for each entry signal. In paper mode, return the USD exposure actually
    * added (or `true` for the signalled size) when a position was opened; anything
@@ -306,10 +308,11 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
 
   let arbFound = 0;
   if (arbCfg) {
-    const { quotes } = await findOpportunities({
+    const { quotes, complete } = await findOpportunities({
       cfg: arbCfg,
       rulesPath: opts.rulesPath,
       adapters,
+      universe: opts.arbUniverse,
       markets: fetched,
       lookup: async (platform, id) => {
         const a = adapters.find((x) => x.id === platform);
@@ -320,14 +323,14 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     });
     arbFound = quotes.length;
     // scan / watch never trade: arbitrage opportunities are alerts here.
-    await emitArbSignals(quotes, push, now, { action: "alert", lastMatched: opts.lastMatched });
+    await emitArbSignals(quotes, push, now, { action: "alert", cfg: arbCfg, lastMatched: opts.lastMatched, complete });
   }
 
   await push({
     at: new Date().toISOString(),
     type: "scan_end",
     message:
-      `Done. ${fetched.length} markets scanned, ${signals} entry signal(s).` +
+      `Done. ${markets.length} markets checked by rules${fetched.length > markets.length ? ` (${fetched.length} fetched for arbitrage)` : ""}, ${signals} entry signal(s).` +
       (arbCfg ? ` ${arbFound} arbitrage opportunit${arbFound === 1 ? "y" : "ies"}.` : "") +
       (suppressed ? ` ${suppressed} repeat match(es) suppressed.` : ""),
     data: { markets: fetched.length, signals, suppressed, arb: arbFound },

@@ -8,6 +8,7 @@ import { DemoAdapter } from "../platforms/demo.js";
 import type { EngineEvent } from "../types.js";
 import { runPaperCycle } from "./paper-session.js";
 import type { PaperLedger } from "../ledger/paper.js";
+import { rulesWithAllArbPaths } from "./test-utils.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const RULES = path.join(ROOT, "rules/example.yaml");
@@ -20,10 +21,11 @@ function adapters(fixturePath: string, now: Date) {
   return (["kalshi", "polymarket"] as const).map((id) => new DemoAdapter(id, { fixturePath, now: () => now }));
 }
 
+let rulesPath = RULES;
 async function cycle(ledgerPath: string, fixture: string, now: Date) {
   const events: EngineEvent[] = [];
   const res = await runPaperCycle({
-    rulesPath: RULES,
+    rulesPath,
     ledgerPath,
     demo: true,
     now,
@@ -35,7 +37,18 @@ async function cycle(ledgerPath: string, fixture: string, now: Date) {
   return { ...res, events };
 }
 
+test("default arbitrage settings: auto-matched pairs alert but don't trade", async () => {
+  rulesPath = RULES;
+  const ledgerPath = path.join(await mkdtemp(path.join(tmpdir(), "prb-")), "ledger.json");
+  const r = await cycle(ledgerPath, SNAP1, T0);
+  assert.equal(r.arb?.opened, 1, "only the mayor NO basket (platform-flagged) trades by default");
+  const fed = r.events.find((e) => e.type === "arb_signal" && /Fed decision/.test(e.message));
+  assert.ok(fed && /arb:confirm/.test(fed.message), "the auto-matched Fed pair is reported with how to confirm it");
+  assert.ok(!r.events.some((e) => e.type === "arb_signal" && /YES on all/.test(e.message)), "YES baskets are off by default");
+});
+
 test("demo paper flow: entries, no duplicates, exits, PnL and loss pause", async () => {
+  rulesPath = await rulesWithAllArbPaths();
   const ledgerPath = path.join(await mkdtemp(path.join(tmpdir(), "prb-")), "ledger.json");
 
   const r1 = await cycle(ledgerPath, SNAP1, T0);
@@ -55,7 +68,7 @@ test("demo paper flow: entries, no duplicates, exits, PnL and loss pause", async
   assert.equal(r3.realizedPnlUsd, -29.06); // Kalshi fills are whole contracts
 
   assert.equal(r3.arb?.closed, 2, "Fed pair sold early, mayor basket resolved");
-  assert.equal(r3.arb?.realizedPnlUsd, 7.75);
+  assert.equal(r3.arb?.realizedPnlUsd, 7.66);
 
   const reasons = r3.events
     .filter((e) => e.type === "paper_exit" && e.ruleId !== "arbitrage")

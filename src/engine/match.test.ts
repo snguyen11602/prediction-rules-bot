@@ -94,3 +94,46 @@ test("review mode returns near misses with a reason", () => {
   assert.equal(m[0].ok, false);
   assert.equal(m[0].reason, "numbers differ");
 });
+
+test("review cases: different questions that look alike never auto-match", () => {
+  const cases: Array<[string, string, string?]> = [
+    ["Who will win the Pennsylvania Senate race?", "Fetterman wins the Pennsylvania Senate race?", "McCormick"],
+    ["NYC mayoral race winner?", "Mamdani wins NYC mayoral race?", "Cuomo"],
+    ["Will Israel strike Iran by November 30?", "Will Iran strike Israel by November 30?"],
+    ["Will the US strike Iran by October 31?", "Will Iran strike the US by October 31?"],
+    ["Will the Fed cut rates before the December 2026 meeting?", "Will the Fed cut rates after the December 2026 meeting?"],
+    ["Will GDP growth be below -1% in Q3 2026?", "Will GDP growth be below 1% in Q3 2026?"],
+    ["Will the Fed cut rates 3+ times in 2026?", "Will the Fed cut rates 3 times in 2026?"],
+    ["Will Bitcoin hit $150k before $80k?", "Will Bitcoin hit $80k before $150k?"],
+    ["Will Bitcoin be above $100,000 on December 31, 2026?", "Will Bitcoin be above $100,000 at any time before December 31, 2026?"],
+    ["Will AOC win the 2028 Democratic primary?", "Will AOC win the 2028 general election?"],
+    // Seen on live data: Kalshi presidential nominee vs Polymarket VICE-presidential nominee.
+    ["Will Alexandria Ocasio-Cortez be the Democratic Presidential nominee in 2028?", "Will Alexandria Ocasio-Cortez be the 2028 Democratic Vice-Presidential nominee?"],
+  ];
+  for (const [kt, pt, sub] of cases) {
+    const km = k("K", sub ? `${kt} — ${sub}` : kt, sub ? { subtitle: sub } : {});
+    assert.equal(findMatches([km], [p("P", pt)], OPTS).length, 0, `${kt} ↔ ${pt}`);
+  }
+});
+
+test("real matches still pair: candidate outcomes and strikes in a Kalshi subtitle", () => {
+  const pairs: Array<[string, string, string]> = [
+    ["Who will win the 2026 Pennsylvania Senate race?", "McCormick", "Will McCormick win the 2026 Pennsylvania Senate race?"],
+    ["Bitcoin price on December 31, 2026?", "Above $100,000", "Will Bitcoin be above $100k on December 31, 2026?"],
+    ["Will the Federal Reserve Cut rates by 25bps at their October 2026 meeting?", "Cut 25bps", "Will the Fed decrease interest rates by 25 bps after the October 2026 meeting?"],
+    // Live-data match (Kalshi title + subtitle vs Polymarket question).
+    ["Will France win the 2028 UEFA Euros?", "France", "Will France win the UEFA EURO 2028?"],
+  ];
+  for (const [kt, sub, pt] of pairs) {
+    assert.equal(findMatches([k("K", `${kt} — ${sub}`, { subtitle: sub })], [p("P", pt)], OPTS).length, 1, pt);
+  }
+});
+
+test("blocked pairs don't use up a market in the one-to-one assignment", () => {
+  const kal = k("K", "Will the Fed cut rates by 25bps in December 2026?");
+  const m = findMatches([kal], [p("P1", "Fed cuts rates 25 bps in December 2026?"), p("P2", "Will the Fed cut by 25 bps in December 2026?")], {
+    ...OPTS,
+    exclude: new Set(["K|P1"]),
+  });
+  assert.deepEqual(m.map((x) => x.polymarket.id), ["P2"]);
+});

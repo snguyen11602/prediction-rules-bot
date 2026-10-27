@@ -38,9 +38,33 @@ async function find() {
   const cfg = file.arbitrage ?? ArbitrageSchema.parse({});
   const adapters = createAdapters({ demo: args.demo, platforms: ["kalshi", "polymarket"], fixturePath: args.fixture });
   const now = new Date();
-  const { markets } = await fetchMarkets(adapters, cfg.cross_platform.scan_limit, async (e) => {
+  const { markets: listed } = await fetchMarkets(adapters, cfg.cross_platform.scan_limit, async (e) => {
     if (e.type === "adapter_error") console.error(`⚠ ${e.message}`);
   });
+  // Kalshi's real questions live in its events list; read a few pages (politely — it rate-limits).
+  const pages = Number(process.env.ARB_FIND_PAGES ?? (args.all ? 6 : 3));
+  const groups: EventGroup[] = [];
+  for (const a of adapters) {
+    try {
+      if (a.listEventGroupsPage) {
+        let cursor: string | undefined;
+        for (let i = 0; i < pages; i++) {
+          const page = await a.listEventGroupsPage({ limit: 200, cursor });
+          groups.push(...page.groups);
+          cursor = page.cursor;
+          if (!cursor) break;
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      } else if (a.listEventGroups) {
+        groups.push(...(await a.listEventGroups({ limit: cfg.same_platform.scan_events })));
+      }
+    } catch (err) {
+      console.error(`⚠ ${a.id}: ${(err as Error).message}`);
+    }
+  }
+  const byKey = new Map<string, (typeof listed)[number]>();
+  for (const m of [...listed, ...groups.flatMap((g) => g.markets)]) if (!byKey.has(`${m.platform}:${m.id}`)) byKey.set(`${m.platform}:${m.id}`, m);
+  const markets = [...byKey.values()];
   const pairsPath = pairsFilePath(args.rules, cfg);
   const pairs = await loadPairsFile(pairsPath);
   const confirmed = new Map(pairs.confirmed.map((c) => [pairKey(c.kalshi, c.polymarket), c]));
@@ -50,13 +74,14 @@ async function find() {
 
   const kal = markets.filter((m) => m.platform === "kalshi");
   const poly = markets.filter((m) => m.platform === "polymarket");
-  console.log(`\nScanned ${kal.length} Kalshi and ${poly.length} Polymarket markets${args.demo ? " [DEMO]" : ""}.\n`);
+  console.log(`\nScanned ${kal.length} Kalshi and ${poly.length} Polymarket markets (${groups.length} events)${args.demo ? " [DEMO]" : ""}.\n`);
 
   const cands = findMatches(kal, poly, {
     minScore: cfg.cross_platform.min_score,
     maxCloseGapHours: cfg.cross_platform.max_close_gap_hours,
     includeRejected: true,
     reviewFloor: args.all ? 0.25 : 0.4,
+    exclude: new Set(pairs.blocked.map((b) => `${b.kalshi}|${b.polymarket}`)),
   });
   const rank = (c: (typeof cands)[number]) => {
     const key = pairKey(c.kalshi.id, c.polymarket.id);
@@ -74,18 +99,26 @@ async function find() {
       : blocked.has(key)
         ? "BLOCKED"
         : c.ok && gap <= cfg.cross_platform.max_price_gap
-          ? cfg.cross_platform.auto_match
-            ? "AUTO — trades (check it!)"
-            : "AUTO match (auto_match is off)"
+          ? !cfg.cross_platform.auto_match
+            ? "AUTO match (auto_match is off)"
+            : cfg.cross_platform.auto_trade
+              ? "AUTO — trades (check it!)"
+              : "AUTO — alerts only; confirm it to paper-trade"
           : c.ok
             ? `SKIPPED — prices ${Math.round(gap * 100)}¢ apart`
             : `not matched — ${c.reason}`;
     const invert = confirmed.get(key)?.invert ?? false;
-    const quotes = crossBaskets(c.kalshi, c.polymarket, invert, "confirmed")
+    const baskets = crossBaskets(c.kalshi, c.polymarket, invert, "confirmed");
+    const quotes = baskets
       .map((b) => quoteBasket(b, { sizeUsd: size }, env))
       .filter((q): q is NonNullable<typeof q> => q != null)
       .sort((a, b) => b.edge - a.edge);
     const best = quotes[0];
+    // Cheapest cost of a $1 hedge before fees, to show how close a pair is when there's no arb.
+    const quotedBoth = c.kalshi.yesBid != null && c.kalshi.yesAsk != null && c.polymarket.yesBid != null && c.polymarket.yesAsk != null;
+    const cheapest = quotedBoth
+      ? Math.min(...baskets.map((b) => b.legs.reduce((a, l) => a + (l.side === "yes" ? l.market.yesAsk! : 1 - l.market.yesBid!), 0)))
+      : undefined;
     const n = saved.length + 1;
     saved.push({ n, kalshi: { id: c.kalshi.id, title: c.kalshi.title }, polymarket: { id: c.polymarket.id, title: c.polymarket.title } });
     console.log(`#${n}  ${status}   similarity ${c.score.toFixed(2)}`);
@@ -96,15 +129,15 @@ async function find() {
         ? `    Arb now: ${best.edge > 0 ? "+" : ""}${(best.edge * 100).toFixed(1)}¢ per $1 after fees` +
             ` (${best.legs.map((l) => `${l.side.toUpperCase()} ${l.market.platform}`).join(" + ")})` +
             (best.edge >= cfg.min_edge ? "  ← above your min_edge" : "")
-        : "    Arb now: none (one side has no quotes)",
+        : cheapest != null
+          ? `    Arb now: none — a $1 hedge costs ${(cheapest * 100).toFixed(1)}¢ before fees`
+          : "    Arb now: none (one side has no bid or ask)",
     );
     console.log("");
   }
 
   // Same-site arbitrage summary.
   if (cfg.same_platform.enabled) {
-    const groups: EventGroup[] = [];
-    for (const a of adapters) if (a.listEventGroups) groups.push(...(await a.listEventGroups({ limit: cfg.same_platform.scan_events }).catch(() => [])));
     const d = await discoverBaskets({ cfg: { ...cfg, cross_platform: { ...cfg.cross_platform, enabled: false } }, pairs, markets: [], eventGroups: groups });
     const qs = bestQuotes(d.baskets, size, env).filter((q) => q.edge >= cfg.min_edge);
     console.log(`Same-site: ${groups.filter((g) => g.mutuallyExclusive).length} events where only one outcome can win; ${qs.length} with an arb ≥ ${(cfg.min_edge * 100).toFixed(1)}¢ per $1.`);

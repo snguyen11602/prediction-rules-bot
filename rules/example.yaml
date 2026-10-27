@@ -31,11 +31,12 @@ arbitrage:
   action: paper              # alert = report only; paper = also take hypothetical trades
   min_edge: 0.02             # at least 2¢ locked in per $1 of payout, after fees and slippage
   max_hours_to_resolve: 1440 # don't tie money up for more than 60 days
+  min_hours_to_resolve: 1    # quotes go stale right before resolution
   unwind_early: true         # sell all legs early once that already pays the full amount
   cross_platform:
     enabled: true
-    auto_match: true         # also trade pairs found by title matching (strict: numbers and
-                             # directions must agree); review them with `npm run arb:find`
+    auto_match: true         # look for pairs by title (strict: numbers, directions and names must agree)
+    auto_trade: false        # auto pairs only ALERT until you confirm them: npm run arb:find → arb:confirm
     min_score: 0.5
     max_close_gap_hours: 168
     max_price_gap: 0.15      # an "arb" wider than 15¢ is almost always two different questions
@@ -45,8 +46,8 @@ arbitrage:
     enabled: true
     scan_events: 100
     max_outcomes: 30
-    no_basket: true
-    yes_basket: true
+    no_basket: true          # NO on every outcome when YES prices add up to more than $1
+    yes_basket: false        # needs "one of these must win", which the platforms rarely guarantee
   risk:
     position_size_fraction: 0.1   # $100 per arb on a $1,000 paper bankroll
     bankroll_usd: 1000

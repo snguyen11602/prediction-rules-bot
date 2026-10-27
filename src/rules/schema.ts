@@ -142,13 +142,20 @@ export const ArbitrageSchema = z.object({
   min_edge: z.number().min(0).max(0.5).default(0.02),
   /** Skip arbs that would tie money up longer than this (hours until the last leg closes). */
   max_hours_to_resolve: z.number().positive().default(1440),
+  /** Skip arbs where any leg closes sooner than this — quotes go stale right before resolution. */
+  min_hours_to_resolve: z.number().nonnegative().default(1),
   /** Sell every leg early when that already pays at least the guaranteed payout. */
   unwind_early: z.boolean().default(true),
   cross_platform: z
     .object({
       enabled: z.boolean().default(true),
-      /** Also trade pairs found automatically (not just ones confirmed in the pairs file). */
+      /** Look for pairs automatically by title (they're reported; see auto_trade). */
       auto_match: z.boolean().default(true),
+      /**
+       * Paper-trade automatic pairs too. Off by default: a wrong match is two bets that can
+       * both lose, so automatic pairs only alert until you confirm them (npm run arb:confirm).
+       */
+      auto_trade: z.boolean().default(false),
       /** Title similarity needed for an automatic pair (0–1). */
       min_score: z.number().min(0).max(1).default(0.5),
       /** Close times of the two markets must be this close (hours). */
@@ -173,8 +180,11 @@ export const ArbitrageSchema = z.object({
       max_outcomes: z.number().int().min(2).max(100).default(30),
       /** NO on every outcome when YES bids sum above $1. Safe whenever outcomes are mutually exclusive. */
       no_basket: z.boolean().default(true),
-      /** YES on every outcome when YES asks sum below $1. Only used when the platform says one must win. */
-      yes_basket: z.boolean().default(true),
+      /**
+       * YES on every outcome when YES asks sum below $1. Only safe when one listed outcome must
+       * win; Polymarket's "Other" outcomes can change meaning, so adapters rarely guarantee it. Off by default.
+       */
+      yes_basket: z.boolean().default(false),
     })
     .default({}),
   risk: RiskSchema.default({

@@ -21,7 +21,7 @@ const env: QuoteEnv = {
   slippage: 0.005,
   includeFees: true,
   now: NOW,
-  feeFor: (pl: PlatformId, c: number, price: number) => (pl === "kalshi" ? kalshiTakerFeeUsd(c, price) : 0),
+  feeFor: (m: NormalizedMarket, c: number, price: number) => (m.platform === "kalshi" ? kalshiTakerFeeUsd(c, price) : 0),
   roundSets: (pls: PlatformId[], s: number) => (pls.includes("kalshi") ? Math.floor(s) : Math.floor(s * 100) / 100),
 };
 const closes = new Date(NOW.getTime() + 500 * 3600_000).toISOString();
@@ -47,10 +47,12 @@ test("cross-platform quote: cheaper direction, whole Kalshi contracts, fees incl
   });
   const [q] = bestQuotes(d.baskets, 100, env);
   assert.deepEqual(q.legs.map((l) => `${l.market.platform}:${l.side}`), ["kalshi:yes", "polymarket:no"]);
-  assert.equal(q.sets, 105);
-  assert.equal(q.costUsd, 99.23); // 105 × (0.575 + 0.370)
-  assert.equal(q.feesUsd, 1.8); // Kalshi taker fee on 105 @ 0.575
-  assert.equal(q.profitUsd, 3.97);
+  // Fees count toward the $100 size: 103 sets × 0.945 = $97.34 + $1.77 Kalshi fee ≤ $100.
+  assert.equal(q.sets, 103);
+  assert.equal(q.costUsd, 97.34);
+  assert.equal(q.feesUsd, 1.77);
+  assert.ok(q.costUsd + q.feesUsd <= 100);
+  assert.equal(q.profitUsd, 3.89);
   assert.ok(q.edge > 0.037 && q.edge < 0.039);
 });
 
@@ -89,7 +91,10 @@ test("same-site baskets: NO basket on exclusive events, YES basket only when one
 
   const cheap = [mk("polymarket", "X", 0.29, 0.3), mk("polymarket", "Y", 0.24, 0.25), mk("polymarket", "O", 0.16, 0.17)];
   const exh = { ...group, eventId: "F", markets: cheap, exhaustive: true };
-  const d3 = await discoverBaskets({ cfg, pairs: { confirmed: [], blocked: [] }, markets: [], eventGroups: [exh] });
+  const off = await discoverBaskets({ cfg, pairs: { confirmed: [], blocked: [] }, markets: [], eventGroups: [exh] });
+  assert.ok(!off.baskets.some((b) => b.kind === "yes_basket"), "YES baskets are off by default");
+  const yesCfg = ArbitrageSchema.parse({ same_platform: { yes_basket: true } });
+  const d3 = await discoverBaskets({ cfg: yesCfg, pairs: { confirmed: [], blocked: [] }, markets: [], eventGroups: [exh] });
   const yes = bestQuotes(d3.baskets, 100, env).find((x) => x.basket.kind === "yes_basket");
   assert.ok(yes && yes.basket.payoutPerSet === 1 && yes.profitUsd > 0);
 });
@@ -196,10 +201,102 @@ test("scan reports arbitrage as alerts and never opens positions; watch alerts o
   };
   await runScan(opts);
   const first = events.filter((e) => e.type === "arb_signal");
-  assert.equal(first.length, 3);
+  assert.equal(first.length, 2, "Fed pair (auto-matched) + mayor NO basket; YES baskets are off by default");
   assert.ok(first.every((e) => e.data?.action === "alert"));
   assert.equal(events.filter((e) => e.type === "arb_open").length, 0);
   events.length = 0;
   await runScan(opts);
   assert.equal(events.filter((e) => e.type === "arb_signal").length, 0, "watch: no repeat alerts");
+});
+
+test("an event with an outcome already resolved YES is never basketed", async () => {
+  const outcomes = [
+    mk("polymarket", "A", 0.52, 0.53),
+    mk("polymarket", "B", 0.6, 0.61),
+    { ...mk("polymarket", "C", 0, 0), status: "resolved" as const, resolvedOutcome: "yes" as const, yesBid: undefined, yesAsk: undefined },
+  ];
+  const d = await discoverBaskets({
+    cfg,
+    pairs: { confirmed: [], blocked: [] },
+    markets: [],
+    eventGroups: [{ platform: "polymarket", eventId: "E", title: "Decided", mutuallyExclusive: true, exhaustive: false, markets: outcomes }],
+  });
+  assert.equal(d.baskets.length, 0);
+});
+
+test("pairs file must stay in the rules folder; YAML errors don't echo file contents", async () => {
+  const { pairsFilePath, loadPairsFile } = await import("./arb.js");
+  const bad = ArbitrageSchema.parse({ cross_platform: { pairs_file: "../../.env" } });
+  assert.throws(() => pairsFilePath("/repo/rules/example.yaml", bad), /inside/);
+  const dir = await mkdtemp(path.join(tmpdir(), "prb-pairs-"));
+  const file = path.join(dir, "arb-pairs.yaml");
+  await writeFile(file, "confirmed: [\nSECRET_TOKEN=abc123\n");
+  await assert.rejects(loadPairsFile(file), (err: Error) => /not valid YAML/.test(err.message) && !/abc123/.test(err.message));
+});
+
+test("Polymarket fees come from each market's schedule", async () => {
+  const { PolymarketAdapter, polymarketTakerFeeUsd } = await import("../platforms/polymarket.js");
+  assert.equal(polymarketTakerFeeUsd(100, 0.5, 0.05), 1.25);
+  assert.equal(polymarketTakerFeeUsd(100, 0.5, 0), 0);
+  const a = new PolymarketAdapter("https://gamma.test");
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify([
+        { id: "1", question: "free", outcomePrices: '["0.5","0.5"]', feeType: "zero_fees", feeSchedule: { rate: 0 }, bestBid: 0.49, bestAsk: 0.51 },
+        { id: "2", question: "sports", outcomePrices: '["0.5","0.5"]', feeType: "sports_fees_v3", feeSchedule: { rate: 0.05, exponent: 1 }, bestBid: 0.49, bestAsk: 0.51 },
+        { id: "3", question: "paused", outcomePrices: '["0.5","0.5"]', acceptingOrders: false, bestBid: 0.49, bestAsk: 0.51 },
+      ]),
+    )) as typeof fetch;
+  try {
+    const [free, sports, paused] = await a.listMarkets({ limit: 3 });
+    assert.equal(a.estimateTakerFeeUsd(100, 0.5, free), 0);
+    assert.equal(a.estimateTakerFeeUsd(100, 0.5, sports), 1.25);
+    assert.equal(a.estimateTakerFeeUsd(100, 0.5, undefined), 1.25, "unknown schedule assumes the 5% general rate");
+    assert.equal(paused.status, "closed", "a market not accepting orders has stale quotes");
+    assert.equal(paused.yesBid, undefined);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("one settled leg of an open arb isn't a realized loss, and turning arbitrage off still closes it", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "prb-arb2-"));
+  const rules = path.join(dir, "rules.yaml");
+  const write = (enabled: boolean) =>
+    writeFile(
+      rules,
+      `rules:\n  - id: noop\n    name: noop\n    filters: { keywords_any: [zzzz] }\narbitrage:\n  enabled: ${enabled}\n  cross_platform: { auto_match: false }\n  same_platform: { enabled: false }\n  unwind_early: false\n`,
+    );
+  await write(true);
+  await writeFile(path.join(dir, "arb-pairs.yaml"), `confirmed:\n  - { kalshi: K1, polymarket: P1 }\n`);
+  const open = (id: string, b: number, a: number, platform: PlatformId) => ({ ...mk(platform, id, b, a), closesInHours: 100 });
+  const s1 = path.join(dir, "s1.json");
+  await writeFile(s1, JSON.stringify([open("K1", 0.4, 0.41, "kalshi"), open("P1", 0.46, 0.47, "polymarket")]));
+  // Kalshi settles NO first (our YES leg loses); Polymarket is still trading.
+  const s2 = path.join(dir, "s2.json");
+  await writeFile(s2, JSON.stringify([{ platform: "kalshi", id: "K1", title: "K1", yesPrice: 0, status: "resolved", resolvedOutcome: "no", closesInHours: -1 }, open("P1", 0.02, 0.03, "polymarket")]));
+  const s3 = path.join(dir, "s3.json");
+  await writeFile(s3, JSON.stringify([{ platform: "kalshi", id: "K1", title: "K1", yesPrice: 0, status: "resolved", resolvedOutcome: "no", closesInHours: -2 }, { platform: "polymarket", id: "P1", title: "P1", yesPrice: 0, status: "resolved", resolvedOutcome: "no", closesInHours: -1 }]));
+  const ledgerPath = path.join(dir, "ledger.json");
+  const run = (fixture: string, now: Date) =>
+    runPaperCycle({
+      rulesPath: rules, ledgerPath, demo: true, now, emit: () => undefined,
+      adapters: (["kalshi", "polymarket"] as const).map((id) => new DemoAdapter(id, { fixturePath: fixture, now: () => now })),
+    });
+  await run(s1, NOW);
+  await run(s2, new Date(NOW.getTime() + 3600_000));
+  const { loadLedger, riskStateFromLedger, summarizeLedger } = await import("../ledger/paper.js");
+  let ledger = await loadLedger(ledgerPath, { demo: true });
+  const rs = riskStateFromLedger(ledger, "arbitrage", new Date(NOW.getTime() + 3600_000));
+  assert.equal(rs.dayPnlUsd, 0, "half-settled arb doesn't count toward the daily loss cap");
+  assert.equal(summarizeLedger(ledger).total.realizedPnlUsd, 0);
+
+  await write(false); // strategy switched off with an arb still open
+  const r3 = await run(s3, new Date(NOW.getTime() + 7200_000));
+  assert.equal(r3.arb?.closed, 1, "open arbs are still settled and scored");
+  ledger = await loadLedger(ledgerPath, { demo: true });
+  const g = Object.values(ledger.arbGroups ?? {})[0];
+  assert.equal(g.status, "closed");
+  assert.ok((g.realizedPnlUsd ?? 0) > 0, "NO on Polymarket paid out: the pair made money overall");
 });
