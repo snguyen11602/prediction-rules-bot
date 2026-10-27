@@ -692,9 +692,9 @@
   function renderUnusual(rulesById) {
     const loop = state.loop || {};
     const h = state.history || { hours: 0, markets: 0 };
-    const need = 13;
+    const need = 3;
     $("historyNote").textContent = h.hours >= need
-      ? `Price history: ${h.hours}h on ${h.markets} markets — enough to judge what's normal.`
+      ? `Price history: ${h.hours}h on ${h.markets} markets — enough to judge what's normal (12h gives the best baseline).`
       : `Price history: ${h.hours}h of ~${need}h needed (${h.markets} markets). Unusual moves start showing once there's enough to know what's normal for each market.`;
     const body = $("unusualBody");
     body.replaceChildren();

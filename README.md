@@ -83,7 +83,7 @@ The rules that use it:
 | `follow-unusual-move-paper` | Paper-buys in the direction of the move (`side: with_move`), then a trailing stop sells near the high |
 | `dip-reversion-paper` | Still buys ordinary dips, but `unusual_move: { mode: exclude }` keeps it out of drops that look informed |
 
-It needs about 13 hours of snapshots before it can judge what's normal, so leave `npm run paper:watch` running.
+It needs at least 3 hours of snapshots (12 for a full baseline) before it can judge what's normal, so leave `npm run paper:watch` running. Until then, the dip rule stays out rather than guess.
 News, big traders and thin order books cause the same pattern, so treat it as a lead, not proof.
 
 ## Paper trading
