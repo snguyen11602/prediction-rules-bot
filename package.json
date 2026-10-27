@@ -1,0 +1,27 @@
+{
+  "name": "prediction-rules-bot",
+  "version": "0.1.0",
+  "description": "Shared rules engine for Kalshi and Polymarket prediction markets (alerts/paper first; live gated)",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "scan": "tsx src/cli/scan.ts",
+    "watch": "tsx src/cli/watch.ts",
+    "paper": "tsx src/cli/paper.ts",
+    "live": "tsx src/cli/live.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "yaml": "^2.7.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

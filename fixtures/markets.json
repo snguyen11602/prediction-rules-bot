@@ -1,0 +1,55 @@
+[
+  {
+    "platform": "kalshi",
+    "id": "DEMO-ELECTION-YES",
+    "title": "Will the incumbent win the next presidential election?",
+    "yesPrice": 0.42,
+    "noPrice": 0.58,
+    "liquidityUsd": 12000,
+    "volume24hUsd": 4500,
+    "closesAt": "2026-11-05T05:00:00Z",
+    "url": "https://kalshi.com/markets/DEMO-ELECTION-YES"
+  },
+  {
+    "platform": "kalshi",
+    "id": "DEMO-SENATE-FLIP",
+    "title": "Senate majority flips after election?",
+    "yesPrice": 0.31,
+    "noPrice": 0.69,
+    "liquidityUsd": 8000,
+    "volume24hUsd": 2100,
+    "closesAt": "2026-11-05T05:00:00Z",
+    "url": "https://kalshi.com/markets/DEMO-SENATE-FLIP"
+  },
+  {
+    "platform": "polymarket",
+    "id": "demo-poly-1",
+    "title": "Presidential election winner: Democratic nominee?",
+    "yesPrice": 0.48,
+    "noPrice": 0.52,
+    "liquidityUsd": 250000,
+    "volume24hUsd": 90000,
+    "closesAt": "2026-11-05T05:00:00Z",
+    "url": "https://polymarket.com/event/demo-election"
+  },
+  {
+    "platform": "polymarket",
+    "id": "demo-poly-2",
+    "title": "Fed rate cut before year end?",
+    "yesPrice": 0.67,
+    "noPrice": 0.33,
+    "liquidityUsd": 180000,
+    "volume24hUsd": 40000,
+    "closesAt": "2026-12-31T23:59:00Z",
+    "url": "https://polymarket.com/event/demo-fed"
+  },
+  {
+    "platform": "polymarket",
+    "id": "demo-poly-3",
+    "title": "Parlay same game NFL special (should be excluded)",
+    "yesPrice": 0.22,
+    "noPrice": 0.78,
+    "liquidityUsd": 5000,
+    "closesAt": "2026-10-28T00:00:00Z"
+  }
+]

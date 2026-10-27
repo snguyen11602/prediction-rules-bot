@@ -1,0 +1,53 @@
+# Example shared rules for Kalshi + Polymarket.
+# action: alert (default safe) | paper | live (blocked unless env gates pass)
+version: 1
+rules:
+  - id: mid-prob-politics-alert
+    name: Mid-probability politics / election alert
+    enabled: true
+    action: alert
+    filters:
+      platforms: [kalshi, polymarket]
+      keywords_any: [election, president, senate, trump, harris, poll]
+      keywords_exclude: [parlay, same game]
+      min_price: 0.15
+      max_price: 0.85
+      min_liquidity_usd: 500
+      max_hours_to_resolve: 720   # 30 days
+      min_hours_to_resolve: 6
+    entry:
+      side: yes
+      # Match anything already in the filter price band
+      yes_price_above: 0.15
+      yes_price_below: 0.85
+    risk:
+      # Stuart's earlier idea: size at a fraction of bankroll
+      position_size_fraction: 0.25
+      bankroll_usd: 1000
+      max_position_usd: 250
+      max_open_positions: 3
+      # Pause new entries after N consecutive losses
+      fire_after_n_losses: 3
+      pause_hours_after_losses: 24
+      daily_loss_cap_usd: 150
+
+  - id: short-dated-move-watch
+    name: Short-dated markets with a meaningful price move
+    enabled: true
+    action: alert
+    filters:
+      platforms: [kalshi, polymarket]
+      min_price: 0.05
+      max_price: 0.95
+      max_hours_to_resolve: 72
+      min_liquidity_usd: 200
+    entry:
+      side: yes
+      # Requires a prior observation (watch/paper accumulates state)
+      yes_price_move_pct: 0.08
+    risk:
+      position_size_fraction: 0.1
+      bankroll_usd: 1000
+      max_open_positions: 5
+      fire_after_n_losses: 3
+      pause_hours_after_losses: 12
