@@ -1,5 +1,5 @@
 import type { Rule, RiskConfig } from "../rules/schema.js";
-import type { EngineEvent, PaperFill } from "../types.js";
+import type { EngineEvent } from "../types.js";
 
 export interface RiskState {
   consecutiveLosses: number;
@@ -8,6 +8,13 @@ export interface RiskState {
   /** YYYY-MM-DD in America/Los_Angeles-ish local date string from runner. */
   dayKey: string;
   dayPnlUsd: number;
+  /**
+   * Paper/live only: USD currently tied up in open positions and realized PnL
+   * to date. When set, entries are blocked if they would exceed
+   * bankroll_usd + realizedPnlUsd. Alert-only scans leave these undefined.
+   */
+  openExposureUsd?: number;
+  realizedPnlUsd?: number;
 }
 
 export function defaultRiskState(dayKey: string): RiskState {
@@ -32,7 +39,8 @@ export interface RiskCheckResult {
 }
 
 /**
- * Gate new entries: consecutive-loss pause, open-position cap, daily loss cap.
+ * Gate new entries: consecutive-loss pause, open-position cap, daily loss cap,
+ * and (when exposure is tracked) available paper bankroll.
  */
 export function checkEntryRisk(
   rule: Rule,
@@ -61,7 +69,17 @@ export function checkEntryRisk(
       reason: `daily loss cap $${risk.daily_loss_cap_usd} hit (pnl=${state.dayPnlUsd.toFixed(2)})`,
     };
   }
-  return { ok: true, sizeUsd: positionSizeUsd(risk) };
+  const sizeUsd = positionSizeUsd(risk);
+  if (state.openExposureUsd != null) {
+    const equity = risk.bankroll_usd + (state.realizedPnlUsd ?? 0);
+    if (state.openExposureUsd + sizeUsd > equity + 1e-9) {
+      return {
+        ok: false,
+        reason: `insufficient bankroll: $${state.openExposureUsd.toFixed(2)} open + $${sizeUsd.toFixed(2)} new > $${equity.toFixed(2)} equity`,
+      };
+    }
+  }
+  return { ok: true, sizeUsd };
 }
 
 /** Record a closed paper/live outcome and maybe trip the consecutive-loss pause. */
@@ -99,15 +117,4 @@ export function applyOutcome(
   }
 
   return { state: next, events };
-}
-
-export function summarizeFillsForRisk(fills: PaperFill[], dayKey: string): Partial<RiskState> {
-  const dayFills = fills.filter((f) => f.at.slice(0, 10) === dayKey);
-  // Paper fills are openings only in this starter — PnL tracked separately when exits land.
-  return {
-    openPositions: fills.length,
-    dayKey,
-    dayPnlUsd: 0,
-    consecutiveLosses: 0,
-  };
 }

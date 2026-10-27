@@ -11,7 +11,10 @@
     "scan": "tsx src/cli/scan.ts",
     "watch": "tsx src/cli/watch.ts",
     "paper": "tsx src/cli/paper.ts",
+    "paper:report": "tsx src/cli/paper-report.ts",
+    "paper:close": "tsx src/cli/paper-close.ts",
     "live": "tsx src/cli/live.ts",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },

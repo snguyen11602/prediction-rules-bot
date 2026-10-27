@@ -5,9 +5,11 @@
     "title": "Will the incumbent win the next presidential election?",
     "yesPrice": 0.42,
     "noPrice": 0.58,
+    "yesBid": 0.41,
+    "yesAsk": 0.43,
     "liquidityUsd": 12000,
     "volume24hUsd": 4500,
-    "closesAt": "2026-11-05T05:00:00Z",
+    "closesInHours": 216,
     "url": "https://kalshi.com/markets/DEMO-ELECTION-YES"
   },
   {
@@ -16,10 +18,38 @@
     "title": "Senate majority flips after election?",
     "yesPrice": 0.31,
     "noPrice": 0.69,
+    "yesBid": 0.30,
+    "yesAsk": 0.32,
     "liquidityUsd": 8000,
     "volume24hUsd": 2100,
-    "closesAt": "2026-11-05T05:00:00Z",
+    "closesInHours": 216,
     "url": "https://kalshi.com/markets/DEMO-SENATE-FLIP"
+  },
+  {
+    "platform": "kalshi",
+    "id": "DEMO-RAIN-NYC",
+    "title": "Will Central Park record measurable rain tomorrow?",
+    "yesPrice": 0.895,
+    "noPrice": 0.105,
+    "yesBid": 0.89,
+    "yesAsk": 0.90,
+    "liquidityUsd": 9000,
+    "volume24hUsd": 3000,
+    "closesInHours": 30,
+    "url": "https://kalshi.com/markets/DEMO-RAIN-NYC"
+  },
+  {
+    "platform": "kalshi",
+    "id": "DEMO-CPI-HOT",
+    "title": "CPI inflation above 4.0% in this week's report?",
+    "yesPrice": 0.075,
+    "noPrice": 0.925,
+    "yesBid": 0.07,
+    "yesAsk": 0.08,
+    "liquidityUsd": 15000,
+    "volume24hUsd": 6000,
+    "closesInHours": 40,
+    "url": "https://kalshi.com/markets/DEMO-CPI-HOT"
   },
   {
     "platform": "polymarket",
@@ -27,20 +57,24 @@
     "title": "Presidential election winner: Democratic nominee?",
     "yesPrice": 0.48,
     "noPrice": 0.52,
+    "yesBid": 0.47,
+    "yesAsk": 0.49,
     "liquidityUsd": 250000,
     "volume24hUsd": 90000,
-    "closesAt": "2026-11-05T05:00:00Z",
+    "closesInHours": 216,
     "url": "https://polymarket.com/event/demo-election"
   },
   {
     "platform": "polymarket",
     "id": "demo-poly-2",
-    "title": "Fed rate cut before year end?",
+    "title": "Fed rate cut at the next FOMC meeting?",
     "yesPrice": 0.67,
     "noPrice": 0.33,
+    "yesBid": 0.66,
+    "yesAsk": 0.68,
     "liquidityUsd": 180000,
     "volume24hUsd": 40000,
-    "closesAt": "2026-12-31T23:59:00Z",
+    "closesInHours": 300,
     "url": "https://polymarket.com/event/demo-fed"
   },
   {
@@ -49,7 +83,36 @@
     "title": "Parlay same game NFL special (should be excluded)",
     "yesPrice": 0.22,
     "noPrice": 0.78,
+    "yesBid": 0.21,
+    "yesAsk": 0.23,
     "liquidityUsd": 5000,
-    "closesAt": "2026-10-28T00:00:00Z"
+    "volume24hUsd": 1200,
+    "closesInHours": 30
+  },
+  {
+    "platform": "polymarket",
+    "id": "demo-poly-4",
+    "title": "Bitcoin above $60k on Friday close?",
+    "yesPrice": 0.925,
+    "noPrice": 0.075,
+    "yesBid": 0.92,
+    "yesAsk": 0.93,
+    "liquidityUsd": 60000,
+    "volume24hUsd": 20000,
+    "closesInHours": 50,
+    "url": "https://polymarket.com/event/demo-btc-friday"
+  },
+  {
+    "platform": "polymarket",
+    "id": "demo-poly-5",
+    "title": "Will the frontrunner withdraw before the debate?",
+    "yesPrice": 0.055,
+    "noPrice": 0.945,
+    "yesBid": 0.05,
+    "yesAsk": 0.06,
+    "liquidityUsd": 30000,
+    "volume24hUsd": 8000,
+    "closesInHours": 60,
+    "url": "https://polymarket.com/event/demo-withdraw"
   }
 ]
