@@ -55,7 +55,34 @@ export interface PaperPosition {
   exitReason?: PaperExitReason;
   exitDetail?: string;
   realizedPnlUsd?: number;
+  /** Leg of an arbitrage group (see PaperLedger.arbGroups). Grouped legs are never exited on their own rules. */
+  groupId?: string;
   hypothetical: true;
+}
+
+/** One arbitrage = several linked legs that only make sense together. */
+export interface ArbGroupRecord {
+  id: string;
+  ruleId: string;
+  /** Basket key (pair or event) — used for re-entry cool-downs. */
+  key: string;
+  kind: "cross_platform" | "no_basket" | "yes_basket";
+  title: string;
+  matchedBy: "confirmed" | "auto" | "platform";
+  score?: number;
+  status: "open" | "closed";
+  openedAt: string;
+  sets: number;
+  payoutPerSet: number;
+  costUsd: number;
+  entryFeesUsd: number;
+  /** Profit locked in at entry if every leg settles as expected. */
+  expectedProfitUsd: number;
+  edge: number;
+  legIds: string[];
+  closedAt?: string;
+  closeReason?: "resolved" | "arb_unwind" | "manual" | "mixed";
+  realizedPnlUsd?: number;
 }
 
 export interface RulePaperState {
@@ -74,6 +101,8 @@ export interface PaperLedger {
   lastPrices: Record<string, { yesPrice: number; at: string }>;
   /** Set when this ledger was upgraded from v1; legacy fills stay in `fills` only. */
   migratedFromV1?: { at: string; legacyFills: number };
+  /** Arbitrage groups by id (optional; added with the arbitrage strategy). */
+  arbGroups?: Record<string, ArbGroupRecord>;
 }
 
 interface PaperLedgerV1 {
@@ -274,6 +303,7 @@ export function openPosition(
     sizeUsd: number;
     feeUsd?: number;
     at?: Date;
+    groupId?: string;
   },
 ): PaperPosition {
   if (!(input.price > 0 && input.price < 1)) {
@@ -300,6 +330,7 @@ export function openPosition(
     lastMarkAt: at,
     marketStatus: "open",
     unrealizedPnlUsd: -(input.feeUsd ?? 0),
+    groupId: input.groupId,
     hypothetical: true,
   };
   ledger.positions.push(pos);
@@ -387,10 +418,13 @@ export function riskStateFromLedger(ledger: PaperLedger, ruleId: string, now = n
   let exposure = 0;
   let realized = 0;
   let dayPnl = 0;
+  const openGroups = new Set<string>();
   for (const p of ledger.positions) {
     if (p.ruleId !== ruleId) continue;
     if (p.status === "open") {
-      openCount += 1;
+      // An arbitrage group is one position however many legs it has.
+      if (p.groupId) openGroups.add(p.groupId);
+      else openCount += 1;
       exposure += p.costUsd;
     } else {
       realized += p.realizedPnlUsd ?? 0;
@@ -401,7 +435,7 @@ export function riskStateFromLedger(ledger: PaperLedger, ruleId: string, now = n
   return {
     consecutiveLosses: rs?.consecutiveLosses ?? 0,
     pausedUntil: rs?.pausedUntil,
-    openPositions: openCount,
+    openPositions: openCount + openGroups.size,
     dayKey,
     dayPnlUsd: round2(dayPnl),
     openExposureUsd: round2(exposure),
@@ -445,21 +479,37 @@ export function summarizeLedger(ledger: PaperLedger): { rules: RuleSummary[]; to
     consecutiveLosses: ledger.ruleState[ruleId]?.consecutiveLosses ?? 0,
     pausedUntil: ledger.ruleState[ruleId]?.pausedUntil,
   });
+  const openGroups = new Map<string, Set<string>>();
   for (const p of ledger.positions) {
     const s = by.get(p.ruleId) ?? blank(p.ruleId);
     by.set(p.ruleId, s);
     s.feesUsd += p.entryFeeUsd + (p.exitFeeUsd ?? 0);
     if (p.status === "open") {
-      s.open += 1;
+      if (p.groupId) {
+        const set = openGroups.get(p.ruleId) ?? new Set<string>();
+        set.add(p.groupId);
+        openGroups.set(p.ruleId, set);
+      } else s.open += 1;
       s.exposureUsd += p.costUsd;
       s.unrealizedPnlUsd += p.unrealizedPnlUsd ?? 0;
     } else {
-      s.closed += 1;
       const pnl = p.realizedPnlUsd ?? 0;
       s.realizedPnlUsd += pnl;
+      // Arbitrage legs are scored as one trade per group (below): one leg always "loses".
+      if (p.groupId) continue;
+      s.closed += 1;
       if (pnl > 0) s.wins += 1;
       else if (pnl < 0) s.losses += 1;
     }
+  }
+  for (const [ruleId, set] of openGroups) by.get(ruleId)!.open += set.size;
+  for (const g of Object.values(ledger.arbGroups ?? {})) {
+    if (g.status !== "closed") continue;
+    const s = by.get(g.ruleId) ?? blank(g.ruleId);
+    by.set(g.ruleId, s);
+    s.closed += 1;
+    if ((g.realizedPnlUsd ?? 0) > 0) s.wins += 1;
+    else if ((g.realizedPnlUsd ?? 0) < 0) s.losses += 1;
   }
   const rules = [...by.values()].map(roundSummary).sort((a, b) => a.ruleId.localeCompare(b.ruleId));
   const total = rules.reduce<RuleSummary>(

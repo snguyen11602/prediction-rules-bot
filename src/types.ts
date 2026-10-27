@@ -34,6 +34,15 @@ export interface NormalizedMarket {
    * (e.g. a 50/50 resolution or a scalar settlement). NO pays 1 − this.
    */
   settlementYesPrice?: number;
+  /**
+   * The specific outcome when the platform splits it from the question
+   * (Kalshi `yes_sub_title`, e.g. "Cut 25bps"). Already appended to `title`.
+   */
+  subtitle?: string;
+  /** Outcome labels in YES/NO order when known (e.g. ["Yes","No"]). */
+  outcomes?: string[];
+  /** Platform event this market belongs to (Kalshi event_ticker, Polymarket event id). */
+  eventId?: string;
   /** Free-form tags / categories from the platform. */
   tags?: string[];
   url?: string;
@@ -57,6 +66,9 @@ export interface EngineEvent {
     | "paper_fill"
     | "paper_exit"
     | "paper_summary"
+    | "arb_signal"
+    | "arb_open"
+    | "arb_close"
     | "info";
   message: string;
   ruleId?: string;
@@ -72,7 +84,8 @@ export type PaperExitReason =
   | "time_to_resolve"
   | "max_hold"
   | "resolved"
-  | "manual";
+  | "manual"
+  | "arb_unwind";
 
 /**
  * Append-only journal row in the paper ledger. v1 ledgers only had opening

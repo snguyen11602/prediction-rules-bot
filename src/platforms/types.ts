@@ -7,6 +7,19 @@ export interface ListMarketsOptions {
   query?: string;
 }
 
+/** An event's outcomes as separate binary markets (e.g. one market per candidate). */
+export interface EventGroup {
+  platform: PlatformId;
+  eventId: string;
+  title: string;
+  /** Platform guarantees at most one market in the event resolves YES. */
+  mutuallyExclusive: boolean;
+  /** Platform guarantees exactly one resolves YES (e.g. includes an "Other" outcome). */
+  exhaustive: boolean;
+  markets: NormalizedMarket[];
+  url?: string;
+}
+
 /**
  * Read-only market data. Nothing here may place, cancel, or sign orders —
  * any future write path belongs on a separate LiveTradingAdapter that
@@ -33,4 +46,9 @@ export interface PlatformAdapter {
    * (e.g. whole contracts). Omit when fractional sizes are allowed.
    */
   roundContracts?(contracts: number): number;
+  /**
+   * Public read of multi-outcome events with their markets nested, for
+   * same-platform arbitrage. Optional; adapters that can't group omit it.
+   */
+  listEventGroups?(opts?: { limit?: number }): Promise<EventGroup[]>;
 }

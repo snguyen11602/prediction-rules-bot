@@ -14,6 +14,7 @@ npm run paper         # marks/exits open paper positions, then paper-enters new 
 npm run paper:report  # offline PnL report from the paper ledger
 npm run paper:close -- --id <id> --price <0-1>   # manually close a stuck paper position
 npm run paper:watch   # paper trade every 5 min + live dashboard at http://localhost:4321
+npm run arb:find      # review likely Kalshi ↔ Polymarket pairs for the arbitrage strategy
 npm test              # unit + demo end-to-end tests (no network)
 npm run live          # exits with “not implemented / needs keys”
 ```
@@ -27,6 +28,36 @@ Node 20+ recommended. Uses `tsx` so you don’t need a build step for day-to-day
 3. Evaluates filters + entry conditions + risk gates.
 4. Emits events to the console (optional webhook / JSONL file).
 5. In paper mode, also manages hypothetical positions in a local ledger (below).
+
+## Main strategy: arbitrage
+
+Configured in the `arbitrage:` block at the top of `rules/example.yaml`. It looks for sets of
+contracts that pay a guaranteed amount, and paper-buys them when they cost less than that amount
+after the bid/ask spread, slippage and fees.
+
+| Kind | When | Trade | Guaranteed payout per set |
+|------|------|-------|---------------------------|
+| Kalshi ↔ Polymarket | Same question priced differently on the two sites | YES on one, NO on the other | $1 |
+| Same site, NO basket | Outcomes where only one can win (the platform says so) and YES bids add up to more than $1 | NO on each outcome | $1 × (outcomes − 1) |
+| Same site, YES basket | Outcomes where exactly one must win and YES asks add up to less than $1 | YES on every outcome | $1 |
+
+- **Matching across sites** is the hard part. Pairs are found automatically, but only when the
+  numbers, years, direction words (cut/hike, above/below, win/lose, not) and names agree and the
+  titles are similar. Auto pairs more than 15¢ apart are skipped, because they're almost always two
+  different questions. Run `npm run arb:find` to see the pairs with today's edge, then
+  `npm run arb:confirm -- <#>` or `npm run arb:block -- <#>` (saved in `rules/arb-pairs.yaml`).
+  Auto-matched trades are tagged on the dashboard so you can check them.
+- **Same-site baskets** only use the platforms' own flags: Kalshi's `mutually_exclusive` events and
+  Polymarket's neg-risk events. YES baskets also need an "Other" outcome, so one must win.
+- **Sizing and risk** use the same knobs as the other rules: `position_size_fraction`, `max_position_usd`,
+  `max_open_positions` (counted per arb, not per leg) and the consecutive-loss pause. An arb that
+  loses money means the legs didn't hedge (usually a bad match), so the default pauses after 2.
+- **Exits:** each arb is held until every leg settles, or sold early (`unwind_early`) when selling every
+  leg already returns the full guaranteed payout. Each arb counts as one trade in the stats.
+- **Limits:** paper trading assumes the best price is available for the whole size and that both legs
+  fill at once; real books are thin and prices move. Real opportunities are rare and usually a few
+  cents. Live trading would also need money on both sites. Opportunities only need public data,
+  so `npm run scan` and `npm run watch` report them as alerts.
 
 ## Paper trading
 

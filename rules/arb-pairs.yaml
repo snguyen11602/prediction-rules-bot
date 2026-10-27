@@ -1,0 +1,15 @@
+# Cross-platform pairs you've checked by hand (`npm run arb:find` lists candidates).
+#
+# confirmed: the same question on both sites. These are traded even if the titles don't
+#            match automatically. Use invert: true when Polymarket YES means Kalshi NO.
+# blocked:   look-alikes that are NOT the same question. Never traded.
+#
+# Easiest way to edit: npm run arb:confirm -- <number>   /   npm run arb:block -- <number>
+#
+# Example:
+#   confirmed:
+#     - kalshi: KXFEDDECISION-26DEC-C25
+#       polymarket: "123456"
+#       note: Fed cuts 25bps in December 2026
+confirmed: []
+blocked: []

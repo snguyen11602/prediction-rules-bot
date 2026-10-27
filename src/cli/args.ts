@@ -29,6 +29,12 @@ export interface CliArgs {
   noOpen: boolean;
   /** True when --interval was passed explicitly. */
   intervalSet: boolean;
+  /** arb:confirm — Polymarket YES means Kalshi NO. */
+  invert: boolean;
+  /** arb:find — also show weak near-misses. */
+  all: boolean;
+  /** Bare words after the command (e.g. the number for arb:confirm). */
+  positional: string[];
 }
 
 function intArg(name: string, raw: string | undefined, min: number): number {
@@ -55,6 +61,9 @@ export function parseArgs(argv: string[]): CliArgs {
     paper: false,
     noOpen: false,
     intervalSet: process.env.POLL_INTERVAL_SEC != null,
+    invert: false,
+    all: false,
+    positional: [],
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -69,6 +78,8 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (a === "--port") out.port = intArg("--port", args[++i], 1);
     else if (a === "--paper") out.paper = true;
     else if (a === "--no-open") out.noOpen = true;
+    else if (a === "--invert") out.invert = true;
+    else if (a === "--all") out.all = true;
     else if (a === "--log-file" && args[i + 1]) out.logFile = path.resolve(args[++i]);
     else if (a === "--webhook" && args[i + 1]) out.webhook = args[++i];
     else if (a === "--fixture" && args[i + 1]) out.fixture = path.resolve(args[++i]);
@@ -96,6 +107,9 @@ export function parseArgs(argv: string[]): CliArgs {
   npm run paper:close -- --id <position id> --price <0-1> [--demo] [--ledger path]
   npm run paper:watch -- [--demo] [--interval sec] [--port N] [--no-open]   # paper loop + dashboard
   npm run dashboard -- [--demo] [--ledger path] [--port N] [--no-open]      # dashboard only (read-only)
+  npm run arb:find -- [--demo] [--all]          # likely Kalshi ↔ Polymarket pairs + current edge
+  npm run arb:confirm -- <n> [--invert]         # trade pair #n from the last arb:find
+  npm run arb:block -- <n>                      # never trade pair #n
   npm run live   # stub only — refuses unless gates pass (still not implemented)
 
 Paper ledger defaults: data/paper-ledger.json (real data), data/paper-ledger.demo.json (--demo).
@@ -104,6 +118,8 @@ Paper fills only rules with action: paper (pass --paper-all to paper every rule)
 Env: POLL_INTERVAL_SEC, WEBHOOK_URL, EVENT_LOG_FILE,
      ENABLE_LIVE_TRADING=true + ALLOW_LIVE=true required for any future live path.`);
       process.exit(0);
+    } else if (!a.startsWith("--")) {
+      out.positional.push(a);
     } else if (a.startsWith("--")) {
       // eslint-disable-next-line no-console
       console.error(`Unknown or incomplete flag: ${a} (see --help)`);

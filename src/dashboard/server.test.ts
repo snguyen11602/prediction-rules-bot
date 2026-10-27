@@ -52,9 +52,16 @@ test("dashboard serves the page and a ledger snapshot", async () => {
     assert.equal(state.ledger.demo, true);
     assert.equal(state.open.length, 1);
     assert.equal(state.closed.length, 4);
-    assert.equal(state.pnlSeries.length, 4);
-    assert.equal(state.pnlSeries.at(-1).cumPnlUsd, -29.06);
-    assert.equal(state.totals.realizedPnlUsd, -29.06);
+    // 4 single trades + 2 arbitrage trades (each counted once, not per leg)
+    assert.equal(state.pnlSeries.length, 6);
+    assert.equal(state.pnlSeries.at(-1).cumPnlUsd, -21.31);
+    assert.equal(state.totals.realizedPnlUsd, -21.31);
+    assert.equal(state.arbs.enabled, true);
+    assert.equal(state.arbs.open.length, 1);
+    assert.equal(state.arbs.open[0].kind, "yes_basket");
+    assert.equal(state.arbs.open[0].legs.length, 4);
+    assert.deepEqual(state.arbs.closed.map((a: { realizedPnlUsd: number }) => a.realizedPnlUsd).sort(), [2.3, 5.45]);
+    assert.equal(state.rules[0].ruleId, "arbitrage", "arbitrage is listed first as the main strategy");
     assert.equal(state.ruleNames["macro-econ-alert"], "Fed / CPI / jobs markets resolving within two weeks");
     assert.ok(state.rules.some((r: { ruleId: string; pausedUntil?: string }) => r.ruleId === "favorite-carry-no-paper" && r.pausedUntil));
   } finally {

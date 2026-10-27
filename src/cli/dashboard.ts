@@ -17,7 +17,7 @@ import { createDashboardServer, type LoopState } from "../dashboard/server.js";
 import type { EngineEvent } from "../types.js";
 
 const MAX_EVENTS = 300;
-const QUIET_TYPES = new Set(["paper_fill", "paper_exit", "paper_summary", "adapter_error"]);
+const QUIET_TYPES = new Set(["paper_fill", "paper_exit", "paper_summary", "adapter_error", "arb_open", "arb_close"]);
 
 function openBrowser(url: string) {
   const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
@@ -47,6 +47,11 @@ async function main() {
     }
     if (e.type === "entry_signal" && e.data?.action === "alert" && e.market) {
       const key = `${e.ruleId}|${e.market.platform}:${e.market.id}`;
+      alertKeys.add(key);
+      if (prevAlertKeys.has(key)) return;
+    }
+    if (e.type === "arb_signal") {
+      const key = `arb|${String(e.data?.key ?? e.message)}`;
       alertKeys.add(key);
       if (prevAlertKeys.has(key)) return;
     }
@@ -130,6 +135,8 @@ async function main() {
         realizedPnlUsd: res.realizedPnlUsd,
         markets: typeof end?.data?.markets === "number" ? end.data.markets : undefined,
       };
+      loop.arbOpportunities = res.arb?.opportunities;
+      loop.arbCheckedAt = new Date().toISOString();
       loop.lastError = undefined;
     } catch (err) {
       loop.lastError = (err as Error).message;

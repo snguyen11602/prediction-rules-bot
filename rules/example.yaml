@@ -15,6 +15,51 @@
 # The paper strategies below are hypotheses to test in paper mode, not proven edges.
 # Check `npm run paper:report` after a few weeks before trusting any of them.
 version: 1
+
+# ── Main strategy: arbitrage ────────────────────────────────────────────────
+# Buys a set of contracts that is guaranteed to pay out, for less than the payout.
+#   Kalshi ↔ Polymarket: same question on both → YES on the cheaper side, NO on the other.
+#   Same site:           outcomes where only one can win (e.g. a Fed decision, a race) →
+#                        NO on every outcome when YES prices add up to more than $1,
+#                        YES on every outcome when they add up to less (only when one must win).
+# Prices use the real bid/ask plus slippage and fees, so a "4¢ gap" on screen is often 0¢ after costs.
+# Risks it can't remove: two markets that look alike but resolve differently (check auto-matched
+# pairs — `npm run arb:find`), money locked up until resolution, and prices moving before both
+# legs fill in real life. Paper only.
+arbitrage:
+  enabled: true
+  action: paper              # alert = report only; paper = also take hypothetical trades
+  min_edge: 0.02             # at least 2¢ locked in per $1 of payout, after fees and slippage
+  max_hours_to_resolve: 1440 # don't tie money up for more than 60 days
+  unwind_early: true         # sell all legs early once that already pays the full amount
+  cross_platform:
+    enabled: true
+    auto_match: true         # also trade pairs found by title matching (strict: numbers and
+                             # directions must agree); review them with `npm run arb:find`
+    min_score: 0.5
+    max_close_gap_hours: 168
+    max_price_gap: 0.15      # an "arb" wider than 15¢ is almost always two different questions
+    scan_limit: 400          # markets per platform to look through for pairs
+    pairs_file: arb-pairs.yaml
+  same_platform:
+    enabled: true
+    scan_events: 100
+    max_outcomes: 30
+    no_basket: true
+    yes_basket: true
+  risk:
+    position_size_fraction: 0.1   # $100 per arb on a $1,000 paper bankroll
+    bankroll_usd: 1000
+    max_position_usd: 100
+    max_open_positions: 5         # arbs, not legs
+    fire_after_n_losses: 2        # an arb that loses means a bad match — pause after 2
+    pause_hours_after_losses: 48
+    daily_loss_cap_usd: 50
+    reentry_cooldown_hours: 24
+  paper:
+    slippage: 0.005
+    include_fees: true
+
 rules:
   # ── Alerts ────────────────────────────────────────────────────────────────
   - id: mid-prob-politics-alert

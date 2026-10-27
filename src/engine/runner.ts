@@ -7,6 +7,7 @@ import { evaluateEntry, type PriorPrice } from "./evaluate.js";
 import { checkEntryRisk, defaultRiskState, type RiskState } from "./risk.js";
 import type { EventSink } from "./events.js";
 import { consoleSink } from "./events.js";
+import { arbConfig, arbScanLimit, emitArbSignals, findOpportunities, slicePerPlatform } from "./arb-runtime.js";
 
 export interface SignalArgs {
   rule: Rule;
@@ -253,6 +254,7 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
   const file = await loadRulesFile(opts.rulesPath);
   const rules = enabledRules(file);
   const now = new Date();
+  const arbCfg = arbConfig(file);
 
   await push({
     at: now.toISOString(),
@@ -265,7 +267,7 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
   try {
     adapters = createAdapters({
       demo: opts.demo,
-      platforms: platformsFromRules(rules),
+      platforms: arbCfg ? ["kalshi", "polymarket"] : platformsFromRules(rules),
       fixturePath: opts.fixturePath,
     });
   } catch (err) {
@@ -277,7 +279,9 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     return events;
   }
 
-  const { markets } = await fetchMarkets(adapters, opts.limitPerPlatform ?? 80, push);
+  const limit = opts.limitPerPlatform ?? 80;
+  const { markets: fetched } = await fetchMarkets(adapters, arbScanLimit(arbCfg, limit), push);
+  const markets = slicePerPlatform(fetched, limit);
 
   if (markets.length === 0) {
     await push({
@@ -300,13 +304,33 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     onSignal: opts.onSignal,
   });
 
+  let arbFound = 0;
+  if (arbCfg) {
+    const { quotes } = await findOpportunities({
+      cfg: arbCfg,
+      rulesPath: opts.rulesPath,
+      adapters,
+      markets: fetched,
+      lookup: async (platform, id) => {
+        const a = adapters.find((x) => x.id === platform);
+        return a?.getMarket ? a.getMarket(id).catch(() => null) : null;
+      },
+      push,
+      now,
+    });
+    arbFound = quotes.length;
+    // scan / watch never trade: arbitrage opportunities are alerts here.
+    await emitArbSignals(quotes, push, now, { action: "alert", lastMatched: opts.lastMatched });
+  }
+
   await push({
     at: new Date().toISOString(),
     type: "scan_end",
     message:
-      `Done. ${markets.length} markets scanned, ${signals} entry signal(s).` +
+      `Done. ${fetched.length} markets scanned, ${signals} entry signal(s).` +
+      (arbCfg ? ` ${arbFound} arbitrage opportunit${arbFound === 1 ? "y" : "ies"}.` : "") +
       (suppressed ? ` ${suppressed} repeat match(es) suppressed.` : ""),
-    data: { markets: markets.length, signals, suppressed },
+    data: { markets: fetched.length, signals, suppressed, arb: arbFound },
   });
 
   return events;

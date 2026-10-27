@@ -33,6 +33,20 @@ import {
   platformsFromRules,
 } from "./runner.js";
 import { dayKeyLA } from "./clock.js";
+import { arbitrageAsRule } from "../rules/schema.js";
+import {
+  arbConfig,
+  arbScanLimit,
+  emitArbSignals,
+  finalizeArbGroups,
+  findOpportunities,
+  openArbGroups,
+  quoteEnv,
+  slicePerPlatform,
+  summarizeQuote,
+  unwindArbGroups,
+  type ArbOpportunity,
+} from "./arb-runtime.js";
 
 /**
  * One paper-trading cycle against the ledger. Hypothetical only: this module
@@ -61,9 +75,16 @@ export interface PaperCycleOptions {
 
 export interface PaperCycleResult {
   events: EngineEvent[];
+  /** Per-market rule positions (arbitrage is reported separately in `arb`). */
   opened: number;
   closed: number;
   realizedPnlUsd: number;
+  arb?: {
+    opportunities: ArbOpportunity[];
+    opened: number;
+    closed: number;
+    realizedPnlUsd: number;
+  };
 }
 
 function money(n: number): string {
@@ -94,21 +115,28 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
   // entries use enabled rules only.
   const allRules = new Map(file.rules.map((r) => [r.id, r]));
   const rules = enabledRules(file);
+  const arbCfg = arbConfig(file);
+  const arbRule = file.arbitrage ? arbitrageAsRule(file.arbitrage) : undefined;
 
   return withLedgerLock(opts.ledgerPath, async () => {
     const ledger = await loadLedger(opts.ledgerPath, { demo });
     let opened = 0;
     let closed = 0;
     let realized = 0;
+    const arb = { opportunities: [] as ArbOpportunity[], opened: 0, closed: 0, realizedPnlUsd: 0 };
 
     await push({
       at: now.toISOString(),
       type: "scan_start",
-      message: `Paper cycle: ${rules.length} rule(s), ${openPositions(ledger).length} open position(s)${demo ? " [DEMO]" : ""}`,
+      message: `Paper cycle: ${rules.length} rule(s)${arbCfg ? " + arbitrage" : ""}, ${openPositions(ledger).length} open position(s)${demo ? " [DEMO]" : ""}`,
       data: { rulesPath: opts.rulesPath, ledger: opts.ledgerPath, demo },
     });
 
     const platforms = new Set<PlatformId>(platformsFromRules(rules));
+    if (arbCfg) {
+      platforms.add("kalshi");
+      platforms.add("polymarket");
+    }
     for (const p of openPositions(ledger)) platforms.add(p.platform);
 
     let adapters: PlatformAdapter[];
@@ -118,12 +146,31 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         createAdapters({ demo, platforms: [...platforms], fixturePath: opts.fixturePath });
     } catch (err) {
       await push({ at: now.toISOString(), type: "adapter_error", message: (err as Error).message });
-      return { events, opened, closed, realizedPnlUsd: realized };
+      return { events, opened, closed, realizedPnlUsd: realized, arb };
     }
     const adapterFor = (id: PlatformId) => adapters.find((a) => a.id === id);
 
-    const { markets, failed } = await fetchMarkets(adapters, opts.limitPerPlatform ?? 80, push);
-    const listed = new Map(markets.map((m) => [marketKey(m), m]));
+    const limit = opts.limitPerPlatform ?? 80;
+    const { markets: fetched, failed } = await fetchMarkets(adapters, arbScanLimit(arbCfg, limit), push);
+    // Per-market rules see the usual top `limit` per platform; arbitrage matching sees the wider scan.
+    const markets = slicePerPlatform(fetched, limit);
+    const listed = new Map(fetched.map((m) => [marketKey(m), m]));
+    const lookups = new Map<string, Promise<NormalizedMarket | null>>();
+    const getMarket = async (platform: PlatformId, id: string): Promise<NormalizedMarket | null | undefined> => {
+      const key = `${platform}:${id}`;
+      const hit = listed.get(key);
+      if (hit) return hit;
+      const adapter = adapterFor(platform);
+      if (!adapter?.getMarket || failed.has(platform)) return undefined;
+      if (!lookups.has(key)) lookups.set(key, adapter.getMarket(id).catch(() => null));
+      return lookups.get(key)!;
+    };
+    const arbCtx =
+      arbCfg && arbRule
+        ? { ledger, cfg: arbCfg, rule: arbRule, env: quoteEnv(arbCfg, adapters, now), now, push, getMarket }
+        : undefined;
+    // Arbitrage groups are managed as a whole: sell every leg early when that already pays in full.
+    if (arbCtx) await unwindArbGroups(arbCtx);
 
     // ---- 1. Exits / settlement -------------------------------------------------
     for (const pos of openPositions(ledger)) {
@@ -216,8 +263,10 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
 
       if (!exit) continue;
       const pnl = closePosition(ledger, pos, { ...exit, at: now });
-      closed += 1;
-      realized += pnl;
+      if (!pos.groupId) {
+        closed += 1;
+        realized += pnl;
+      }
       await push({
         at: now.toISOString(),
         type: "paper_exit",
@@ -246,6 +295,13 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         };
         for (const e of riskEvents) await push(e);
       }
+    }
+
+    // Arbitrage groups whose legs have all settled are scored once, as one trade.
+    if (arbCtx) {
+      const f = await finalizeArbGroups(arbCtx);
+      arb.closed += f.closed;
+      arb.realizedPnlUsd += f.realizedPnlUsd;
     }
 
     // ---- 2. Entries ---------------------------------------------------------------
@@ -342,6 +398,21 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       pruneLastPrices(ledger, now);
     }
 
+    if (arbCfg && arbCtx && fetched.length > 0) {
+      const { quotes } = await findOpportunities({
+        cfg: arbCfg,
+        rulesPath: opts.rulesPath,
+        adapters,
+        markets: fetched,
+        lookup: async (p, id) => (await getMarket(p, id)) ?? null,
+        push,
+        now,
+      });
+      arb.opportunities = quotes.map(summarizeQuote);
+      await emitArbSignals(quotes, push, now, { action: arbCfg.action });
+      if (arbCfg.action === "paper") arb.opened += (await openArbGroups(arbCtx, quotes)).opened;
+    }
+
     // ---- 3. Summary + persist -----------------------------------------------------
     const { total } = summarizeLedger(ledger);
     await push({
@@ -361,14 +432,26 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       message:
         markets.length === 0
           ? "No markets available (all adapters failed or empty). Open positions were not re-marked. Try --demo."
-          : `Done. ${markets.length} markets scanned, ${entrySignals} entry signal(s), ${opened} opened, ${closed} closed (realized ${money(realized)}).` +
+          : `Done. ${fetched.length} markets scanned, ${entrySignals} entry signal(s), ${opened} opened, ${closed} closed (realized ${money(realized)}).` +
+            (arbCfg
+              ? ` Arbitrage: ${arb.opportunities.length} found, ${arb.opened} opened, ${arb.closed} closed (${money(arb.realizedPnlUsd)}).`
+              : "") +
             (Object.keys(skipReasons).length
               ? ` Skipped: ${Object.entries(skipReasons).map(([k, v]) => `${v} ${k}`).join(", ")}.`
               : ""),
-      data: { markets: markets.length, signals: entrySignals, opened, closed, realizedPnlUsd: realized, skipped: skipReasons },
+      data: {
+        markets: fetched.length,
+        signals: entrySignals,
+        opened,
+        closed,
+        realizedPnlUsd: realized,
+        skipped: skipReasons,
+        arb: { found: arb.opportunities.length, opened: arb.opened, closed: arb.closed, realizedPnlUsd: arb.realizedPnlUsd },
+      },
     });
 
-    return { events, opened, closed, realizedPnlUsd: Math.round(realized * 100) / 100 };
+    arb.realizedPnlUsd = Math.round(arb.realizedPnlUsd * 100) / 100;
+    return { events, opened, closed, realizedPnlUsd: Math.round(realized * 100) / 100, arb };
   });
 }
 

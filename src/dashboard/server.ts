@@ -3,7 +3,10 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadRulesFile } from "../rules/loader.js";
-import { loadLedger, summarizeLedger, type PaperPosition } from "../ledger/paper.js";
+import { loadLedger, summarizeLedger, type ArbGroupRecord, type PaperLedger, type PaperPosition } from "../ledger/paper.js";
+import { ARB_RULE_ID } from "../rules/schema.js";
+import { kindLabel } from "../engine/arb.js";
+import type { ArbOpportunity } from "../engine/arb-runtime.js";
 import type { EngineEvent } from "../types.js";
 
 /**
@@ -27,6 +30,9 @@ export interface LoopState {
   nextRunAt?: string;
   lastError?: string;
   lastResult?: { opened: number; closed: number; realizedPnlUsd: number; markets?: number };
+  /** Arbitrage opportunities found on the latest check. */
+  arbOpportunities?: ArbOpportunity[];
+  arbCheckedAt?: string;
 }
 
 export interface DashboardOptions {
@@ -64,6 +70,46 @@ function slimPosition(p: PaperPosition) {
   };
 }
 
+function arbView(ledger: PaperLedger, g: ArbGroupRecord) {
+  const byId = new Map(ledger.positions.map((p) => [p.id, p]));
+  const legs = g.legIds.map((id) => byId.get(id)).filter((p): p is PaperPosition => p != null);
+  const unrealized = legs.filter((l) => l.status === "open").reduce((a, l) => a + (l.unrealizedPnlUsd ?? 0), 0);
+  const realizedSoFar = legs.filter((l) => l.status === "closed").reduce((a, l) => a + (l.realizedPnlUsd ?? 0), 0);
+  return {
+    id: g.id,
+    key: g.key,
+    kind: g.kind,
+    kindLabel: kindLabel(g.kind),
+    title: g.title,
+    matchedBy: g.matchedBy,
+    score: g.score,
+    status: g.status,
+    openedAt: g.openedAt,
+    closedAt: g.closedAt,
+    closeReason: g.closeReason,
+    sets: g.sets,
+    costUsd: g.costUsd,
+    feesUsd: g.entryFeesUsd,
+    expectedProfitUsd: g.expectedProfitUsd,
+    edge: g.edge,
+    realizedPnlUsd: g.realizedPnlUsd,
+    /** Open arbs: P/L if every leg were sold right now (usually below the locked-in profit until it settles). */
+    markPnlUsd: Math.round((unrealized + realizedSoFar) * 100) / 100,
+    legs: legs.map((l) => ({
+      platform: l.platform,
+      marketId: l.marketId,
+      title: l.title,
+      url: l.url,
+      side: l.side,
+      status: l.status,
+      entryPrice: l.entryPrice,
+      lastMarkPrice: l.lastMarkPrice,
+      exitPrice: l.exitPrice,
+      marketStatus: l.marketStatus,
+    })),
+  };
+}
+
 export async function buildState(opts: DashboardOptions) {
   const now = new Date();
   const fileInfo = await stat(opts.ledgerPath).catch(() => null);
@@ -72,9 +118,14 @@ export async function buildState(opts: DashboardOptions) {
 
   let ruleMeta = new Map<string, { name: string; action: string; enabled: boolean }>();
   let rulesError: string | undefined;
+  let arbEnabled = false;
   try {
     const file = await loadRulesFile(opts.rulesPath);
     ruleMeta = new Map(file.rules.map((r) => [r.id, { name: r.name, action: r.action, enabled: r.enabled }]));
+    if (file.arbitrage) {
+      arbEnabled = file.arbitrage.enabled;
+      ruleMeta.set(ARB_RULE_ID, { name: file.arbitrage.name, action: file.arbitrage.action, enabled: file.arbitrage.enabled });
+    }
   } catch (err) {
     rulesError = (err as Error).message;
   }
@@ -100,43 +151,62 @@ export async function buildState(opts: DashboardOptions) {
   }
   const rules = [...byId.values()]
     .map((s) => ({ ...s, ...(ruleMeta.get(s.ruleId) ?? { name: s.ruleId, action: "unknown", enabled: false }) }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => Number(b.ruleId === ARB_RULE_ID) - Number(a.ruleId === ARB_RULE_ID) || a.name.localeCompare(b.name));
 
+  const groups = Object.values(ledger.arbGroups ?? {});
+  const groupedIds = new Set(groups.flatMap((g) => g.legIds));
   const open = ledger.positions
-    .filter((p) => p.status === "open")
+    .filter((p) => p.status === "open" && !p.groupId)
     .sort((a, b) => b.entryAt.localeCompare(a.entryAt))
     .map(slimPosition);
   const closedAsc = ledger.positions
-    .filter((p) => p.status === "closed" && p.exitAt)
+    .filter((p) => p.status === "closed" && p.exitAt && !p.groupId)
     .sort((a, b) => a.exitAt!.localeCompare(b.exitAt!));
 
+  // Each arbitrage counts once, when its last leg settles.
+  const closes = [
+    ...closedAsc.map((p) => ({ at: p.exitAt!, pnlUsd: p.realizedPnlUsd ?? 0, title: p.title, ruleId: p.ruleId })),
+    ...groups
+      .filter((g) => g.status === "closed" && g.closedAt)
+      .map((g) => ({ at: g.closedAt!, pnlUsd: g.realizedPnlUsd ?? 0, title: g.title, ruleId: g.ruleId })),
+  ].sort((a, b) => a.at.localeCompare(b.at));
   let cum = 0;
-  const pnlSeries = closedAsc.map((p) => {
-    cum += p.realizedPnlUsd ?? 0;
-    return {
-      at: p.exitAt!,
-      cumPnlUsd: Math.round(cum * 100) / 100,
-      pnlUsd: p.realizedPnlUsd ?? 0,
-      title: p.title,
-      ruleId: p.ruleId,
-    };
+  const pnlSeries = closes.map((c) => {
+    cum += c.pnlUsd;
+    return { ...c, cumPnlUsd: Math.round(cum * 100) / 100 };
   });
 
-  const journal = ledger.fills
-    .filter((f) => f.kind === "open" || f.kind === "close")
-    .slice(-60)
-    .reverse()
-    .map((f) => ({
-      at: f.at,
-      kind: f.kind,
-      ruleId: f.ruleId,
-      title: f.title,
-      side: f.side,
-      price: f.price,
-      sizeUsd: f.sizeUsd,
-      pnlUsd: f.pnlUsd,
-      reason: f.reason,
-    }));
+  const journal = [
+    ...ledger.fills
+      .filter((f) => (f.kind === "open" || f.kind === "close") && !(f.positionId && groupedIds.has(f.positionId)))
+      .map((f) => ({
+        at: f.at,
+        kind: f.kind as string,
+        ruleId: f.ruleId,
+        title: f.title,
+        side: f.side as string | undefined,
+        price: f.price as number | undefined,
+        sizeUsd: f.sizeUsd,
+        pnlUsd: f.pnlUsd,
+        reason: f.reason as string | undefined,
+      })),
+    ...groups.map((g) => ({ at: g.openedAt, kind: "arb_open", ruleId: g.ruleId, title: g.title, sizeUsd: g.costUsd, pnlUsd: g.expectedProfitUsd, side: undefined, price: undefined, reason: undefined })),
+    ...groups
+      .filter((g) => g.closedAt)
+      .map((g) => ({ at: g.closedAt!, kind: "arb_close", ruleId: g.ruleId, title: g.title, sizeUsd: g.costUsd, pnlUsd: g.realizedPnlUsd, side: undefined, price: undefined, reason: g.closeReason })),
+  ]
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, 60);
+
+  const arbs = {
+    enabled: arbEnabled,
+    open: groups.filter((g) => g.status === "open").sort((a, b) => b.openedAt.localeCompare(a.openedAt)).map((g) => arbView(ledger, g)),
+    closed: groups
+      .filter((g) => g.status === "closed")
+      .sort((a, b) => (b.closedAt ?? "").localeCompare(a.closedAt ?? ""))
+      .slice(0, 50)
+      .map((g) => arbView(ledger, g)),
+  };
 
   return {
     ok: true as const,
@@ -159,6 +229,7 @@ export async function buildState(opts: DashboardOptions) {
     closed: closedAsc.slice(-100).reverse().map(slimPosition),
     pnlSeries,
     journal,
+    arbs,
     loop: opts.getLoop?.() ?? { enabled: false, running: false },
     events: (opts.getEvents?.() ?? []).slice(-80).reverse(),
   };
