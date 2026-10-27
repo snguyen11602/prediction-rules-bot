@@ -87,7 +87,8 @@ export type PaperExitReason =
   | "max_hold"
   | "resolved"
   | "manual"
-  | "arb_unwind";
+  | "arb_unwind"
+  | "trailing_stop";
 
 /**
  * Append-only journal row in the paper ledger. v1 ledgers only had opening

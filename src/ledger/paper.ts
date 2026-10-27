@@ -47,6 +47,8 @@ export interface PaperPosition {
   entryFeeUsd: number;
   lastMarkPrice?: number;
   lastMarkAt?: string;
+  /** Best mark (sell price) seen since entry, for trailing stops. */
+  peakMarkPrice?: number;
   marketStatus?: "open" | "closed" | "resolved";
   unrealizedPnlUsd?: number;
   exitAt?: string;
@@ -361,6 +363,7 @@ export function markPosition(
 ): void {
   pos.lastMarkPrice = markPrice;
   pos.lastMarkAt = at.toISOString();
+  pos.peakMarkPrice = Math.max(pos.peakMarkPrice ?? markPrice, markPrice);
   pos.marketStatus = marketStatus;
   pos.unrealizedPnlUsd = round2(pos.contracts * markPrice - pos.costUsd - pos.entryFeeUsd);
 }

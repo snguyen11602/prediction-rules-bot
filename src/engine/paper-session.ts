@@ -33,6 +33,7 @@ import {
   platformsFromRules,
 } from "./runner.js";
 import { dayKeyLA } from "./clock.js";
+import { loadSeries, saveSeries, seriesPathFor } from "./series.js";
 import { ArbitrageSchema, arbitrageAsRule } from "../rules/schema.js";
 import {
   arbConfig,
@@ -324,6 +325,10 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       rules.map((r) => [r.id, riskStateFromLedger(ledger, r.id, now)]),
     );
     const history = new Map<string, PriorPrice>(Object.entries(ledger.lastPrices));
+    // Price / volume history for unusual-move rules, kept next to the ledger.
+    const seriesPath = seriesPathFor(opts.ledgerPath);
+    const series = await loadSeries(seriesPath);
+    series.record(markets, now);
 
     const skipMarket = (rule: Rule, market: NormalizedMarket, side: "yes" | "no"): string | null => {
       if (findOpenPosition(ledger, rule.id, market.platform, market.id)) return "already holding";
@@ -350,6 +355,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         history,
         riskByRule,
         paperAll: opts.paperAll,
+        series,
         skipMarket,
         onSignal: async ({ rule, market, side, sizeUsd }) => {
           if (!papersRule(rule, opts.paperAll)) return false;
@@ -404,6 +410,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       for (const [k, v] of history) ledger.lastPrices[k] = v;
       pruneLastPrices(ledger, now);
     }
+    if (markets.length > 0) await saveSeries(seriesPath, series).catch(() => undefined);
 
     if (arbCfg && arbCtx && fetched.length > 0) {
       const universePath = universePathFor(opts.ledgerPath);
@@ -443,7 +450,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       message:
         markets.length === 0
           ? "No markets available (all adapters failed or empty). Open positions were not re-marked. Try --demo."
-          : `Done. ${fetched.length} markets scanned, ${entrySignals} entry signal(s), ${opened} opened, ${closed} closed (realized ${money(realized)}).` +
+          : `Done. ${markets.length} markets checked by rules${fetched.length > markets.length ? ` (${fetched.length} fetched for arbitrage)` : ""}, ${entrySignals} entry signal(s), ${opened} opened, ${closed} closed (realized ${money(realized)}).` +
             (arbCfg
               ? ` Arbitrage: ${arb.opportunities.length} found, ${arb.opened} opened, ${arb.closed} closed (${money(arb.realizedPnlUsd)}).`
               : "") +

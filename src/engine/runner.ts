@@ -4,6 +4,7 @@ import { createAdapters, type PlatformAdapter } from "../platforms/index.js";
 import type { EngineEvent, NormalizedMarket, PlatformId, SignalSide } from "../types.js";
 import { dayKeyLA } from "./clock.js";
 import { evaluateEntry, type PriorPrice } from "./evaluate.js";
+import { SeriesStore } from "./series.js";
 import { checkEntryRisk, defaultRiskState, type RiskState } from "./risk.js";
 import type { EventSink } from "./events.js";
 import { consoleSink } from "./events.js";
@@ -36,6 +37,8 @@ export interface RunnerOptions {
   lastMatched?: Set<string>;
   /** Watch: keep the arbitrage event cache between polls. */
   arbUniverse?: ArbUniverse;
+  /** Watch: rolling price / volume history for unusual-move rules. */
+  series?: SeriesStore;
   /**
    * Called for each entry signal. In paper mode, return the USD exposure actually
    * added (or `true` for the signalled size) when a position was opened; anything
@@ -122,6 +125,8 @@ export interface EvaluateOptions {
   /** Paper rules only: return a reason to skip this market (already held, cooldown…). */
   skipMarket?: (rule: Rule, market: NormalizedMarket, side: SignalSide) => string | null;
   lastMatched?: Set<string>;
+  /** Price / volume history (already including this scan's snapshot). */
+  series?: SeriesStore;
   onSignal?: RunnerOptions["onSignal"];
 }
 
@@ -158,7 +163,7 @@ export async function evaluateRules(
 
     for (const market of markets) {
       const key = marketKey(market);
-      const match = evaluateEntry(rule, market, priors.get(key), now);
+      const match = evaluateEntry(rule, market, priors.get(key), now, { series: opts.series?.get(key) });
       if (!match) continue;
 
       const edgeKey = `${rule.id}|${key}`;
@@ -203,7 +208,9 @@ export async function evaluateRules(
         at: now.toISOString(),
         type: "entry_signal",
         ruleId: rule.id,
-        message: `${action.toUpperCase()} ${match.side.toUpperCase()} ~$${sizeUsd.toFixed(2)} — ${market.title}`,
+        message:
+          `${action.toUpperCase()} ${match.side.toUpperCase()} ~$${sizeUsd.toFixed(2)} — ${market.title}` +
+          (match.unusual ? ` (${match.reason})` : ""),
         market: marketRef(market),
         side: match.side,
         sizeUsd,
@@ -212,6 +219,7 @@ export async function evaluateRules(
           rule_action: rule.action,
           position_size_fraction: rule.risk.position_size_fraction,
           reason: match.reason,
+          ...(match.unusual ? { unusual: match.unusual } : {}),
         },
       });
       signals += 1;
@@ -294,6 +302,7 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     return events;
   }
 
+  opts.series?.record(markets, now);
   const { signals, suppressed } = await evaluateRules({
     rules,
     markets,
@@ -303,6 +312,7 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     history: opts.priceHistory ?? new Map<string, PriorPrice>(),
     riskByRule: opts.riskByRule ?? new Map<string, RiskState>(),
     lastMatched: opts.lastMatched,
+    series: opts.series,
     onSignal: opts.onSignal,
   });
 

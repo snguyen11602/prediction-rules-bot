@@ -195,6 +195,18 @@
     </table></div>
   </section>
 
+  <section class="card section" id="unusualSection">
+    <div class="arb-head">
+      <h2>Unusual moves</h2>
+      <span class="arb-note">Sharp moves on a volume spike that haven't reversed — what informed trading often looks like. Public data only; news and big traders cause it too.</span>
+    </div>
+    <div class="meta" id="historyNote" style="margin-bottom:8px"></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Market</th><th class="num">Move</th><th class="num">vs normal</th><th class="num">Volume</th><th>Bot's call</th></tr></thead>
+      <tbody id="unusualBody"></tbody>
+    </table></div>
+  </section>
+
   <div class="grid2">
     <section class="card">
       <h2>Profit / loss from closed trades over time</h2>
@@ -302,6 +314,7 @@
     max_hold: "Held too long",
     manual: "Closed by hand",
     arb_unwind: "Sold early",
+    trailing_stop: "Sold near the high (trailing stop)",
     mixed: "Partly sold, partly settled",
   };
   const MATCHED = { auto: "auto-matched", confirmed: "confirmed pair", platform: "" };
@@ -567,7 +580,8 @@
       for (const e of state.events) {
         const rule = (state.ruleNames || {})[e.ruleId] || rulesById[e.ruleId]?.name || e.ruleId || "";
         const title = e.market?.title || "";
-        if (e.type === "entry_signal" && e.data?.action === "alert") items.push({ at: e.at, kind: "Alert", msg: `${rule}: ${title} (YES ${cents(e.market?.yesPrice)})` });
+        if (e.type === "entry_signal" && e.data?.unusual) items.push({ at: e.at, kind: "Unusual move", msg: `${title} — ${e.data.reason}` });
+        else if (e.type === "entry_signal" && e.data?.action === "alert") items.push({ at: e.at, kind: "Alert", msg: `${rule}: ${title} (YES ${cents(e.market?.yesPrice)})` });
         else if (e.type === "paper_fill") items.push({ at: e.at, kind: "Bought", msg: `${title} — ${usd(e.sizeUsd)} of ${String(e.side).toUpperCase()}` });
         else if (e.type === "paper_exit") items.push({ at: e.at, kind: "Sold", msg: `${title} — ${REASONS[e.data?.reason] || e.data?.reason}`, pnl: e.data?.pnlUsd });
         else if (e.type === "risk_block" && /pause armed/i.test(e.message)) items.push({ at: e.at, kind: "Paused", msg: `${rule} paused after a losing streak` });
@@ -675,6 +689,35 @@
     }
   }
 
+  function renderUnusual(rulesById) {
+    const loop = state.loop || {};
+    const h = state.history || { hours: 0, markets: 0 };
+    const need = 13;
+    $("historyNote").textContent = h.hours >= need
+      ? `Price history: ${h.hours}h on ${h.markets} markets — enough to judge what's normal.`
+      : `Price history: ${h.hours}h of ~${need}h needed (${h.markets} markets). Unusual moves start showing once there's enough to know what's normal for each market.`;
+    const body = $("unusualBody");
+    body.replaceChildren();
+    if (!loop.enabled) { body.append(emptyRow(5, "Shows here while npm run paper:watch is running.")); return; }
+    const list = loop.unusualMoves || [];
+    if (!list.length) { body.append(emptyRow(5, h.hours >= need ? "Nothing unusual on the last check." : "Collecting price history…")); return; }
+    for (const u of list.slice(0, 20)) {
+      const href = safeUrl(u.url);
+      const title = href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: u.title }) : el("span", { text: u.title });
+      const m = u.move;
+      const call = u.action === "paper"
+        ? `Paper ${String(u.side).toUpperCase()} (${(state.ruleNames || {})[u.ruleId] || rulesById[u.ruleId]?.name || u.ruleId})`
+        : `Alert — would ${m.direction === "up" ? "buy YES" : "buy NO"}`;
+      body.append(el("tr", null,
+        el("td", { class: "title" }, title, el("div", { class: "meta", text: `${u.platform === "kalshi" ? "Kalshi" : "Polymarket"} · now ${cents(u.yesPrice)}` })),
+        el("td", { class: "num" }, el("span", { class: m.direction === "up" ? "pos" : "neg", text: `${m.direction === "up" ? "+" : MINUS}${(Math.abs(m.move) * 100).toFixed(1)}¢` }), el("div", { class: "meta", text: `${cents(m.from)} → ${cents(m.to)} in ${m.windowMinutes}m` })),
+        el("td", { class: "num", text: `${m.zscore}σ` }),
+        el("td", { class: "num", text: m.volumeRatio != null ? `${m.volumeRatio}×` : "—" }),
+        el("td", { text: call }),
+      ));
+    }
+  }
+
   function render() {
     if (!state || !state.ok) return;
     const rulesById = Object.fromEntries(state.rules.map((r) => [r.ruleId, r]));
@@ -682,6 +725,7 @@
     $("ledgerPath").textContent = `Trade file: ${state.ledger.path}`;
     renderKpis();
     renderArbs();
+    renderUnusual(rulesById);
     renderChart();
     renderRules(rulesById);
     renderOpen(rulesById);

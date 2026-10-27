@@ -6,6 +6,7 @@ import { hoursToResolve } from "./evaluate.js";
 export interface ExitablePosition {
   entryAt: string;
   entryPrice: number;
+  peakMarkPrice?: number;
 }
 
 export interface ExitDecision {
@@ -37,6 +38,16 @@ export function evaluateExit(
   }
   if (exit.stop_loss_pct != null && ret <= -exit.stop_loss_pct + EPS) {
     return { reason: "stop_loss", detail: `return ${pct} <= -${(exit.stop_loss_pct * 100).toFixed(1)}%` };
+  }
+  if (exit.trailing_stop != null && position.peakMarkPrice != null) {
+    const peak = Math.max(position.peakMarkPrice, markPrice);
+    const armed = peak - position.entryPrice >= (exit.trailing_activation ?? 0) - EPS;
+    if (armed && markPrice <= peak - exit.trailing_stop + EPS) {
+      return {
+        reason: "trailing_stop",
+        detail: `mark ${markPrice.toFixed(3)} is ${((peak - markPrice) * 100).toFixed(1)}¢ below the high of ${peak.toFixed(3)}`,
+      };
+    }
   }
   if (exit.take_profit_price != null && markPrice >= exit.take_profit_price - EPS) {
     return { reason: "take_profit", detail: `mark ${markPrice.toFixed(3)} >= target ${exit.take_profit_price}` };

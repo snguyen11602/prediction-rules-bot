@@ -44,13 +44,16 @@ const SIGNAL_PREFIX = "§arb|";
 /**
  * Rolling cache of platform events for cross-platform matching. Kalshi has
  * thousands of events and rate-limits, so each scan reads one more page and
- * matching uses everything seen in the last `ttlHours`. Prices in the cache are
+ * matching uses the most recent `maxEvents` seen in the last `ttlHours`. Prices in the cache are
  * only for matching; quotes are always refreshed before pricing an arb.
  */
 export class ArbUniverse {
   private cursors: Record<string, string | undefined> = {};
   private events = new Map<string, { at: number; group: EventGroup }>();
-  constructor(private readonly ttlHours = 12) {}
+  constructor(
+    private readonly ttlHours = 6,
+    private readonly maxEvents = 2000,
+  ) {}
 
   cursor(platform: PlatformId): string | undefined {
     return this.cursors[platform];
@@ -60,13 +63,28 @@ export class ArbUniverse {
   }
   add(groups: EventGroup[], now: Date): void {
     for (const g of groups) {
-      this.events.set(`${g.platform}:${g.eventId}`, {
-        at: now.getTime(),
-        group: { ...g, markets: g.markets.map(({ raw: _raw, ...m }) => m) },
-      });
+      // Keep only what matching needs, and only markets someone is quoting (others can't be arbed).
+      const markets = g.markets
+        .filter((m) => (m.status ?? "open") === "open" && (m.yesBid != null || m.yesAsk != null))
+        .map((m) => ({
+          platform: m.platform,
+          id: m.id,
+          title: m.title,
+          ...(m.subtitle ? { subtitle: m.subtitle } : {}),
+          yesPrice: m.yesPrice,
+          ...(m.closesAt ? { closesAt: m.closesAt } : {}),
+          ...(m.outcomes ? { outcomes: m.outcomes } : {}),
+          ...(m.eventId ? { eventId: m.eventId } : {}),
+        }));
+      const key = `${g.platform}:${g.eventId}`;
+      this.events.delete(key); // re-insert so Map order = least recently seen first
+      if (markets.length) {
+        this.events.set(key, { at: now.getTime(), group: { platform: g.platform, eventId: g.eventId, title: g.title, mutuallyExclusive: g.mutuallyExclusive, exhaustive: false, markets } });
+      }
     }
     const cutoff = now.getTime() - this.ttlHours * 3600_000;
     for (const [k, v] of this.events) if (v.at < cutoff) this.events.delete(k);
+    for (const k of [...this.events.keys()].slice(0, Math.max(0, this.events.size - this.maxEvents))) this.events.delete(k);
   }
   markets(): NormalizedMarket[] {
     return [...this.events.values()].flatMap((e) => e.group.markets);

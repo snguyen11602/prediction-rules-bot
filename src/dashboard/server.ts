@@ -7,6 +7,7 @@ import { loadLedger, summarizeLedger, type ArbGroupRecord, type PaperLedger, typ
 import { ARB_RULE_ID } from "../rules/schema.js";
 import { kindLabel } from "../engine/arb.js";
 import type { ArbOpportunity } from "../engine/arb-runtime.js";
+import { loadSeries, seriesPathFor } from "../engine/series.js";
 import type { EngineEvent } from "../types.js";
 
 /**
@@ -33,6 +34,18 @@ export interface LoopState {
   /** Arbitrage opportunities found on the latest check. */
   arbOpportunities?: ArbOpportunity[];
   arbCheckedAt?: string;
+  /** Unusual moves flagged on the latest check. */
+  unusualMoves?: Array<{
+    ruleId?: string;
+    action?: string;
+    platform: string;
+    id: string;
+    title: string;
+    url?: string;
+    yesPrice: number;
+    side?: string;
+    move: { direction: string; move: number; zscore: number; volumeRatio?: number; windowMinutes: number; from: number; to: number };
+  }>;
 }
 
 export interface DashboardOptions {
@@ -208,10 +221,23 @@ export async function buildState(opts: DashboardOptions) {
       .map((g) => arbView(ledger, g)),
   };
 
+  // How much price history unusual-move rules have to work with.
+  const series = await loadSeries(seriesPathFor(opts.ledgerPath));
+  let historyHours = 0;
+  let historyMarkets = 0;
+  for (const key of Object.keys(series.toFile().series)) {
+    const t = series.get(key);
+    if (t.length < 2) continue;
+    historyMarkets += 1;
+    historyHours = Math.max(historyHours, (t.at(-1)!.t - t[0].t) / 3600_000);
+  }
+  const usesUnusual = [...ruleMeta.keys()].length > 0;
+
   return {
     ok: true as const,
     now: now.toISOString(),
     hypothetical: true,
+    history: { hours: Math.round(historyHours * 10) / 10, markets: historyMarkets, tracked: usesUnusual },
     ledger: {
       path: opts.ledgerPath,
       demo: ledger.demo,

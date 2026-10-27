@@ -136,6 +136,20 @@ async function main() {
         markets: typeof end?.data?.markets === "number" ? end.data.markets : undefined,
       };
       loop.arbOpportunities = res.arb?.opportunities;
+      loop.unusualMoves = res.events
+        .filter((e) => e.type === "entry_signal" && e.data?.unusual && e.market)
+        .map((e) => ({
+          ruleId: e.ruleId,
+          action: String(e.data?.action ?? ""),
+          platform: e.market!.platform,
+          id: e.market!.id,
+          title: e.market!.title,
+          url: e.market!.url,
+          yesPrice: e.market!.yesPrice,
+          side: e.side,
+          move: e.data!.unusual as NonNullable<LoopState["unusualMoves"]>[number]["move"],
+        }))
+        .filter((m, i, all) => all.findIndex((x) => x.platform === m.platform && x.id === m.id) === i);
       loop.arbCheckedAt = new Date().toISOString();
       loop.lastError = undefined;
     } catch (err) {

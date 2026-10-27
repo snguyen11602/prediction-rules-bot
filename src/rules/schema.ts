@@ -49,8 +49,29 @@ export const EntryConditionsSchema = z.object({
    * last check" doesn't silently become "moved since yesterday" when runs are sparse.
    */
   max_prior_age_minutes: z.number().positive().optional(),
-  /** Preferred side when entering. Default yes. */
-  side: z.enum(["yes", "no"]).default("yes"),
+  /**
+   * Unusual move screen (needs a few hours of price history from watch / paper runs).
+   * mode require: only enter on an unusual move. mode exclude: stay out while one is happening
+   * (e.g. don't buy a "dip" that looks like informed selling).
+   */
+  unusual_move: z
+    .object({
+      mode: z.enum(["require", "exclude"]).default("require"),
+      window_minutes: z.number().positive().default(60),
+      lookback_hours: z.number().positive().default(12),
+      min_move: z.number().min(0).max(1).default(0.05),
+      min_zscore: z.number().nonnegative().default(3),
+      min_volume_ratio: z.number().nonnegative().default(3),
+      max_retrace: z.number().min(0).max(1).default(0.35),
+      min_history_points: z.number().int().positive().default(12),
+      direction: z.enum(["up", "down", "any"]).default("any"),
+    })
+    .optional(),
+  /**
+   * Side when entering. yes / no, or relative to the price move:
+   * with_move = buy YES after a rise, NO after a drop; against_move = the opposite (buy the dip).
+   */
+  side: z.enum(["yes", "no", "with_move", "against_move"]).default("yes"),
 });
 
 /**
@@ -72,6 +93,10 @@ export const ExitConditionsSchema = z.object({
   max_hours_to_resolve: z.number().positive().optional(),
   /** Exit after holding this many hours. */
   max_hold_hours: z.number().positive().optional(),
+  /** Sell when the held contract falls this far (0–1) below its best price since entry. */
+  trailing_stop: z.number().positive().max(1).optional(),
+  /** Only start trailing once the best price is at least this far above entry (lock in gains). */
+  trailing_activation: z.number().min(0).max(1).optional(),
 }).optional();
 
 export const RiskSchema = z.object({

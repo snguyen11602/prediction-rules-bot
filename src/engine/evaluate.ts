@@ -1,5 +1,7 @@
 import type { Rule } from "../rules/schema.js";
 import type { NormalizedMarket, SignalSide } from "../types.js";
+import type { Tick } from "./series.js";
+import { describeMove, detectUnusualMove, type UnusualMove } from "./unusual.js";
 
 export interface PriorPrice {
   yesPrice: number;
@@ -10,6 +12,13 @@ export interface EvalMatch {
   market: NormalizedMarket;
   side: SignalSide;
   reason: string;
+  /** Set when the rule required an unusual move and one was found. */
+  unusual?: UnusualMove;
+}
+
+export interface EvalContext {
+  /** This market's recent price / volume snapshots (for unusual_move). */
+  series?: Tick[];
 }
 
 export function hoursToResolve(market: NormalizedMarket, now: Date): number | undefined {
@@ -78,11 +87,26 @@ export function evaluateEntry(
   market: NormalizedMarket,
   prior?: PriorPrice,
   now = new Date(),
+  ctx: EvalContext = {},
 ): EvalMatch | null {
   if (!marketPassesFilters(rule, market, now)) return null;
 
   const e = rule.entry;
   const reasons: string[] = [];
+  let moveDir: "up" | "down" | undefined;
+  let unusual: UnusualMove | undefined;
+
+  if (e.unusual_move) {
+    const res = detectUnusualMove(ctx.series ?? [], now.getTime(), e.unusual_move);
+    if (e.unusual_move.mode === "require") {
+      if (!res.move) return null;
+      unusual = res.move;
+      moveDir = res.move.direction;
+      reasons.push(describeMove(res.move));
+    } else if (res.move) {
+      return null; // exclude: something unusual (possibly informed) is happening — stay out
+    }
+  }
 
   if (e.yes_price_above != null && market.yesPrice < e.yes_price_above) return null;
   if (e.yes_price_above != null) reasons.push(`yes>=${e.yes_price_above}`);
@@ -97,6 +121,7 @@ export function evaluateEntry(
       if (!(ageMin <= e.max_prior_age_minutes)) return null;
     }
     const delta = market.yesPrice - prior.yesPrice;
+    moveDir ??= delta > 0 ? "up" : delta < 0 ? "down" : undefined;
     if (e.move_direction === "up" && delta <= 0) return null;
     if (e.move_direction === "down" && delta >= 0) return null;
     const abs = Math.abs(delta);
@@ -116,9 +141,19 @@ export function evaluateEntry(
     reasons.push("filters_matched");
   }
 
+  let side: SignalSide;
+  if (e.side === "with_move" || e.side === "against_move") {
+    if (!moveDir) return null; // relative sides need a move to be relative to
+    const up = moveDir === "up";
+    side = (e.side === "with_move") === up ? "yes" : "no";
+  } else {
+    side = e.side;
+  }
+
   return {
     market,
-    side: e.side,
+    side,
     reason: reasons.join(", "),
+    unusual,
   };
 }
