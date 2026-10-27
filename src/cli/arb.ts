@@ -42,7 +42,8 @@ async function find() {
     if (e.type === "adapter_error") console.error(`⚠ ${e.message}`);
   });
   // Kalshi's real questions live in its events list; read a few pages (politely — it rate-limits).
-  const pages = Number(process.env.ARB_FIND_PAGES ?? (args.all ? 6 : 3));
+  const pagesEnv = Number(process.env.ARB_FIND_PAGES);
+  const pages = Number.isInteger(pagesEnv) && pagesEnv > 0 ? Math.min(pagesEnv, 20) : args.all ? 6 : 3;
   const groups: EventGroup[] = [];
   for (const a of adapters) {
     try {

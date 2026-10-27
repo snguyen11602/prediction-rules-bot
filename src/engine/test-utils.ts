@@ -16,6 +16,8 @@ export async function rulesWithAllArbPaths(): Promise<string> {
   const data = parse(await readFile(path.join(ROOT, "rules/example.yaml"), "utf8"));
   data.arbitrage.cross_platform.auto_trade = true;
   data.arbitrage.same_platform.yes_basket = true;
+  // Demo fixtures have no price history; let the dip rule trade anyway so its path stays covered.
+  for (const r of data.rules) if (r.entry?.unusual_move?.mode === "exclude") r.entry.unusual_move.on_missing_data = "allow";
   const file = path.join(dir, "rules.yaml");
   await writeFile(file, stringify(data));
   await copyFile(path.join(ROOT, "rules/arb-pairs.yaml"), path.join(dir, "arb-pairs.yaml"));

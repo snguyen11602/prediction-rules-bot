@@ -360,10 +360,12 @@ export function markPosition(
   markPrice: number,
   at: Date,
   marketStatus: PaperPosition["marketStatus"] = "open",
+  opts: { tradable?: boolean } = {},
 ): void {
   pos.lastMarkPrice = markPrice;
   pos.lastMarkAt = at.toISOString();
-  pos.peakMarkPrice = Math.max(pos.peakMarkPrice ?? markPrice, markPrice);
+  // Trailing-stop highs only come from prices you could actually sell at (not a mid with no bid).
+  if (opts.tradable !== false) pos.peakMarkPrice = Math.max(pos.peakMarkPrice ?? markPrice, markPrice);
   pos.marketStatus = marketStatus;
   pos.unrealizedPnlUsd = round2(pos.contracts * markPrice - pos.costUsd - pos.entryFeeUsd);
 }

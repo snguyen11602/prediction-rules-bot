@@ -13,11 +13,15 @@ export async function getJson<T>(url: string | URL, label: string, opts: { retri
   const retries = opts.retries ?? 3;
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000) });
-    if (res.status === 404) return { status: 404 };
+    if (res.status === 404) {
+      await res.body?.cancel().catch(() => undefined);
+      return { status: 404 };
+    }
     if ((res.status === 429 || res.status >= 500) && attempt < retries) {
       const after = Number(res.headers.get("retry-after"));
       await res.body?.cancel().catch(() => undefined);
-      await sleep(Number.isFinite(after) && after > 0 ? Math.min(after, 30) * 1000 : 1000 * 2 ** attempt);
+      // Short waits only: a paper cycle holds the ledger lock while it runs.
+      await sleep(Number.isFinite(after) && after > 0 ? Math.min(after, 10) * 1000 : 1000 * 2 ** attempt);
       continue;
     }
     if (!res.ok) {

@@ -231,13 +231,12 @@ export async function buildState(opts: DashboardOptions) {
     historyMarkets += 1;
     historyHours = Math.max(historyHours, (t.at(-1)!.t - t[0].t) / 3600_000);
   }
-  const usesUnusual = [...ruleMeta.keys()].length > 0;
 
   return {
     ok: true as const,
     now: now.toISOString(),
     hypothetical: true,
-    history: { hours: Math.round(historyHours * 10) / 10, markets: historyMarkets, tracked: usesUnusual },
+    history: { hours: Math.round(historyHours * 10) / 10, markets: historyMarkets },
     ledger: {
       path: opts.ledgerPath,
       demo: ledger.demo,

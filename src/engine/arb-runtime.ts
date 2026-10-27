@@ -52,7 +52,7 @@ export class ArbUniverse {
   private events = new Map<string, { at: number; group: EventGroup }>();
   constructor(
     private readonly ttlHours = 6,
-    private readonly maxEvents = 2000,
+    private readonly maxEvents = 1000,
   ) {}
 
   cursor(platform: PlatformId): string | undefined {
@@ -83,7 +83,7 @@ export class ArbUniverse {
       }
     }
     const cutoff = now.getTime() - this.ttlHours * 3600_000;
-    for (const [k, v] of this.events) if (v.at < cutoff) this.events.delete(k);
+    for (const [k, v] of this.events) if (!(v.at >= cutoff)) this.events.delete(k); // also drops entries with no timestamp
     for (const k of [...this.events.keys()].slice(0, Math.max(0, this.events.size - this.maxEvents))) this.events.delete(k);
   }
   markets(): NormalizedMarket[] {
@@ -256,12 +256,14 @@ export async function findOpportunities(args: {
       if (a.listEventGroupsPage) {
         const page = await a.listEventGroupsPage({ limit: cfg.same_platform.scan_events, cursor: universe.cursor(a.id) });
         freshGroups.push(...page.groups);
-        universe.setCursor(a.id, page.cursor); // undefined → start over next time
+        // No cursor, or an empty page: start over from the first page next time.
+        universe.setCursor(a.id, page.groups.length ? page.cursor : undefined);
       } else if (a.listEventGroups) {
         freshGroups.push(...(await a.listEventGroups({ limit: cfg.same_platform.scan_events })));
       }
     } catch (err) {
       complete = false;
+      universe.setCursor(a.id, undefined); // a rejected / expired cursor must not repeat forever
       await push({
         at: now.toISOString(),
         type: "adapter_error",
@@ -305,6 +307,7 @@ export async function findOpportunities(args: {
   for (const [platform, ids] of stale) {
     const a = adapters.find((x) => x.id === platform);
     try {
+      if (!a?.getMarkets && ids.size > 30) complete = false; // some pairs won't be priced this cycle
       const list = a?.getMarkets
         ? await a.getMarkets([...ids])
         : (await Promise.all([...ids].slice(0, 30).map((id) => args.lookup(platform, id)))).filter((m): m is NormalizedMarket => !!m);
@@ -322,7 +325,13 @@ export async function findOpportunities(args: {
   const current = (m: NormalizedMarket) => fresh.get(`${m.platform}:${m.id}`) ?? refreshed.get(`${m.platform}:${m.id}`);
   const baskets = discovery.baskets
     .filter((b) => b.legs.every((l) => current(l.market)))
-    .map((b) => ({ ...b, legs: b.legs.map((l) => ({ ...l, market: current(l.market)! })) }));
+    .map((b) => ({ ...b, legs: b.legs.map((l) => ({ ...l, market: current(l.market)! })) }))
+    // Re-check the "probably different questions" guard on fresh prices, not cached ones.
+    .filter(
+      (b) =>
+        b.matchedBy !== "auto" ||
+        Math.abs(b.legs[0].market.yesPrice - b.legs[1].market.yesPrice) <= cfg.cross_platform.max_price_gap,
+    );
 
   const env = quoteEnv(cfg, adapters, now);
   const size = positionSizeUsd(arbitrageAsRule(cfg).risk);

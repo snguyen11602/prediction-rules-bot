@@ -43,10 +43,12 @@ export interface UnusualResult {
   move?: UnusualMove;
   /** Why nothing was flagged (for debugging / UI). */
   reason: string;
+  /** True when there wasn't enough data to judge (vs "judged, and nothing unusual"). */
+  insufficient?: boolean;
 }
 
-/** Smallest "normal" move we assume for a window, so flat markets don't divide by ~0. */
-const SIGMA_FLOOR = 0.005;
+/** Smallest "normal" move we assume for a window: one price tick (1¢), so quiet markets don't divide by ~0. */
+const SIGMA_FLOOR = 0.01;
 /** Latest snapshot must be this fresh to say anything about "now". */
 const MAX_STALE_MS = 20 * 60_000;
 
@@ -55,18 +57,23 @@ export function detectUnusualMove(ticks: Tick[], nowMs: number, p: UnusualParams
   const lookStart = nowMs - p.lookback_hours * 3600_000 - winMs;
   const series = ticks.filter((t) => t.t >= lookStart && t.t <= nowMs).sort((a, b) => a.t - b.t);
   const latest = series.at(-1);
-  if (!latest || nowMs - latest.t > MAX_STALE_MS) return { reason: "no recent price" };
+  if (!latest || nowMs - latest.t > MAX_STALE_MS) return { reason: "no recent price", insufficient: true };
 
   const ws = nowMs - winMs;
   const base = series.filter((t) => t.t <= ws);
   const start = base.at(-1);
-  if (!start || base.length < p.min_history_points || ws - base[0].t < winMs) {
+  // "Normal" needs a real baseline: at least 3 windows (or the whole lookback, if shorter).
+  const needMs = Math.min(p.lookback_hours * 3600_000, 3 * winMs);
+  if (!start || base.length < p.min_history_points || ws - base[0].t < needMs) {
     const hrs = base.length ? (ws - base[0].t) / 3600_000 : 0;
-    return { reason: `not enough history yet (${hrs.toFixed(1)}h)` };
+    return { reason: `not enough history yet (${hrs.toFixed(1)}h)`, insufficient: true };
   }
+  // A hole in the history (bot was off) would make an old drift look like a fresh move.
+  if (ws - start.t > 0.25 * winMs) return { reason: "gap in price history", insufficient: true };
 
   const move = latest.p - start.p;
   const abs = Math.abs(move);
+  if (abs === 0) return { reason: "no move" };
   if (abs < p.min_move) return { reason: "move too small" };
   const direction = move > 0 ? "up" : "down";
   if (p.direction !== "any" && p.direction !== direction) return { reason: `move is ${direction}` };
@@ -87,14 +94,19 @@ export function detectUnusualMove(ticks: Tick[], nowMs: number, p: UnusualParams
 
   // Volume: platforms give a rolling 24h total. Volume in the window ≈ change in that total
   // plus what rolled off the back (about one average window's worth).
+  // Baseline = median 24h volume over the baseline period (one snapshot can be a fluke or a reset).
   let volumeRatio: number | undefined;
-  if (latest.v != null && start.v != null) {
-    const avgPerWindow = (start.v * p.window_minutes) / 1440;
-    const inWin = Math.max(0, latest.v - start.v + avgPerWindow);
-    volumeRatio = avgPerWindow > 0 ? inWin / avgPerWindow : inWin > 0 ? 99 : 0;
+  const baseVols = base.map((t) => t.v).filter((v): v is number => v != null && Number.isFinite(v)).sort((a, b) => a - b);
+  if (latest.v != null && start.v != null && baseVols.length >= Math.min(p.min_history_points, 6)) {
+    const median = baseVols[Math.floor(baseVols.length / 2)];
+    const avgPerWindow = (median * p.window_minutes) / 1440;
+    if (avgPerWindow > 0) {
+      const inWin = Math.max(0, latest.v - start.v + avgPerWindow);
+      volumeRatio = inWin / avgPerWindow;
+    }
   }
   if (p.min_volume_ratio > 0) {
-    if (volumeRatio == null) return { reason: "no volume data" };
+    if (volumeRatio == null) return { reason: "no usable volume data", insufficient: true };
     if (volumeRatio < p.min_volume_ratio) return { reason: `no volume spike (${volumeRatio.toFixed(1)}×)` };
   }
 
@@ -121,6 +133,7 @@ function typicalWindowMove(base: Tick[], winMs: number): number {
     const target = base[i].t - winMs;
     if (target < base[0].t) continue;
     while (j + 1 < base.length && base[j + 1].t <= target) j++;
+    if (base[i].t - base[j].t > 1.5 * winMs) continue; // spans a gap in history
     const d = base[i].p - base[j].p;
     sum += d * d;
     n++;

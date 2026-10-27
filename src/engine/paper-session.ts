@@ -237,7 +237,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         // Empty bid for the held side: there is nothing to sell into, so hold.
         // Mark at the mid for reporting only; never treat an empty book as a 0 price.
         const mid = pos.side === "yes" ? market.yesPrice : market.noPrice ?? 1 - market.yesPrice;
-        markPosition(pos, mid, now, "open");
+        markPosition(pos, mid, now, "open", { tradable: false });
         await push({
           at: now.toISOString(),
           type: "info",

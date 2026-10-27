@@ -65,6 +65,11 @@ export const EntryConditionsSchema = z.object({
       max_retrace: z.number().min(0).max(1).default(0.35),
       min_history_points: z.number().int().positive().default(12),
       direction: z.enum(["up", "down", "any"]).default("any"),
+      /**
+       * exclude mode only: what to do when there isn't enough history / volume to tell.
+       * skip (default) = don't enter, since we can't rule out an informed move; allow = enter anyway.
+       */
+      on_missing_data: z.enum(["skip", "allow"]).default("skip"),
     })
     .optional(),
   /**
@@ -260,6 +265,18 @@ export const RulesFileSchema = z.object({
       }
     });
   }
+  file.rules.forEach((r, i) => {
+    const relative = r.entry.side === "with_move" || r.entry.side === "against_move";
+    const hasMove =
+      r.entry.unusual_move?.mode === "require" || r.entry.yes_price_move_abs != null || r.entry.yes_price_move_pct != null;
+    if (relative && !hasMove) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rules", i, "entry", "side"],
+        message: `side: ${r.entry.side} needs a move to follow — add unusual_move (mode: require) or yes_price_move_abs / _pct`,
+      });
+    }
+  });
   const seen = new Set<string>();
   file.rules.forEach((r, i) => {
     if (seen.has(r.id)) {

@@ -42,7 +42,7 @@ export class SeriesStore {
   constructor(opts: SeriesOptions = {}, initial?: Record<string, Tick[]>) {
     this.maxAgeMs = (opts.maxAgeHours ?? 36) * 3600_000;
     this.minSpacingMs = (opts.minSpacingSec ?? 45) * 1000;
-    this.maxTicks = opts.maxTicks ?? 800;
+    this.maxTicks = opts.maxTicks ?? 3000; // ≥ 36h at one snapshot per minute
     for (const [k, v] of Object.entries(initial ?? {})) this.data.set(k, [...v].sort((a, b) => a.t - b.t));
   }
 

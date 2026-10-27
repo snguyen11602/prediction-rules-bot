@@ -81,6 +81,40 @@ test("rules: require / exclude modes and sides relative to the move", () => {
   const prior = { yesPrice: 0.4, at: new Date(NOW - 300_000).toISOString() };
   assert.equal(evaluateEntry(dip, market, prior, now, { series: down }), null);
   assert.equal(evaluateEntry(dip, market, prior, now, { series: chart(0.4, spike(0.3, 0)) })?.side, "yes");
+  // Not enough history to tell → the dip rule stays out by default…
+  assert.equal(evaluateEntry(dip, market, prior, now, { series: [] }), null);
+  const lenient = RuleSchema.parse({ id: "y", name: "y", entry: { unusual_move: { mode: "exclude", on_missing_data: "allow" }, yes_price_move_abs: 0.05, side: "against_move" } });
+  assert.equal(evaluateEntry(lenient, market, prior, now, { series: [] })?.side, "yes", "…unless told to allow it");
+});
+
+test("review fixes: history gaps, zero-volume baselines, flat markets", () => {
+  // Bot was off for 3h while the price drifted up: not a 60-minute move.
+  const quiet = chart(0.5, []).filter((t) => t.t <= NOW - 3 * 3600_000);
+  const gap = [...quiet, { t: NOW - 60_000, p: 0.58, v: 20_000 }, { t: NOW, p: 0.58, v: 20_100 }];
+  assert.match(detectUnusualMove(gap, NOW, P).reason, /gap in price history/);
+  // A market whose 24h volume was ~0 isn't "99× normal" after one trade.
+  const dead = chart(0.4, spike(0.5, 500), { vol: 0 }).map((t) => ({ ...t, v: t.v! < 5000 ? 0 : t.v }));
+  assert.notEqual(detectUnusualMove(dead.map((t, i) => ({ ...t, v: i < dead.length - 12 ? 0 : 400 })), NOW, P).move?.volumeRatio, 99);
+  // A perfectly flat market with every threshold at 0 has no "move".
+  const flat = chart(0.4, [{ p: 0.395 }], { noise: 0 }).map((t) => ({ ...t, p: 0.4 }));
+  assert.equal(detectUnusualMove(flat, NOW, { ...P, min_move: 0, min_zscore: 0, min_volume_ratio: 0 }).move, undefined);
+});
+
+test("rules file rejects side: with_move with nothing to follow", async () => {
+  const { RulesFileSchema } = await import("../rules/schema.js");
+  const r = RulesFileSchema.safeParse({ rules: [{ id: "a", name: "a", entry: { side: "with_move" } }] });
+  assert.equal(r.success, false);
+});
+
+test("trailing stop: a no-bid mid never raises the high", async () => {
+  const { emptyLedger, openPosition, markPosition } = await import("../ledger/paper.js");
+  const l = emptyLedger(true);
+  const pos = openPosition(l, { ruleId: "r", platform: "kalshi", marketId: "m", title: "m", side: "yes", price: 0.5, sizeUsd: 50 });
+  markPosition(pos, 0.5, new Date());
+  markPosition(pos, 0.57, new Date(), "open", { tradable: false });
+  assert.equal(pos.peakMarkPrice, 0.5);
+  const m: NormalizedMarket = { platform: "kalshi", id: "m", title: "m", yesPrice: 0.53 };
+  assert.equal(evaluateExit({ trailing_stop: 0.04, trailing_activation: 0.03 }, pos, m, 0.53, new Date()), null);
 });
 
 test("trailing stop sells after a pullback from the high, once activated", () => {

@@ -105,6 +105,8 @@ export function evaluateEntry(
       reasons.push(describeMove(res.move));
     } else if (res.move) {
       return null; // exclude: something unusual (possibly informed) is happening — stay out
+    } else if (res.insufficient && e.unusual_move.on_missing_data === "skip") {
+      return null; // can't tell whether this move is informed — don't bet against it
     }
   }
 

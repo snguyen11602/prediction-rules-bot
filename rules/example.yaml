@@ -146,7 +146,8 @@ rules:
   # Flags a move that is large FOR THAT MARKET (vs its own last 12h), comes with a volume
   # spike, and hasn't reversed — the footprint traders with better information often leave.
   # It uses public prices only; news, whales and thin books cause the same pattern, so it's a
-  # signal, not proof. Needs ~13h of price history from paper:watch / watch before it fires.
+  # signal, not proof. Needs at least 3h of price history (12h for a full baseline) from
+  # paper:watch / watch before it fires.
   - id: unusual-move-alert
     name: Unusual move on a volume spike (possible informed trading)
     enabled: true
