@@ -8,6 +8,7 @@ import { DemoAdapter } from "../platforms/demo.js";
 import type { EngineEvent } from "../types.js";
 import { runPaperCycle } from "./paper-session.js";
 import type { PaperLedger } from "../ledger/paper.js";
+import { rulesWithAllArbPaths } from "./test-utils.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const RULES = path.join(ROOT, "rules/example.yaml");
@@ -20,10 +21,11 @@ function adapters(fixturePath: string, now: Date) {
   return (["kalshi", "polymarket"] as const).map((id) => new DemoAdapter(id, { fixturePath, now: () => now }));
 }
 
+let rulesPath = RULES;
 async function cycle(ledgerPath: string, fixture: string, now: Date) {
   const events: EngineEvent[] = [];
   const res = await runPaperCycle({
-    rulesPath: RULES,
+    rulesPath,
     ledgerPath,
     demo: true,
     now,
@@ -35,24 +37,43 @@ async function cycle(ledgerPath: string, fixture: string, now: Date) {
   return { ...res, events };
 }
 
+test("default arbitrage settings: auto-matched pairs alert but don't trade", async () => {
+  rulesPath = RULES;
+  const ledgerPath = path.join(await mkdtemp(path.join(tmpdir(), "prb-")), "ledger.json");
+  const r = await cycle(ledgerPath, SNAP1, T0);
+  assert.equal(r.arb?.opened, 1, "only the mayor NO basket (platform-flagged) trades by default");
+  const fed = r.events.find((e) => e.type === "arb_signal" && /Fed decision/.test(e.message));
+  assert.ok(fed && /arb:confirm/.test(fed.message), "the auto-matched Fed pair is reported with how to confirm it");
+  assert.ok(!r.events.some((e) => e.type === "arb_signal" && /YES on all/.test(e.message)), "YES baskets are off by default");
+});
+
 test("demo paper flow: entries, no duplicates, exits, PnL and loss pause", async () => {
+  rulesPath = await rulesWithAllArbPaths();
   const ledgerPath = path.join(await mkdtemp(path.join(tmpdir(), "prb-")), "ledger.json");
 
   const r1 = await cycle(ledgerPath, SNAP1, T0);
   assert.equal(r1.opened, 4);
   assert.equal(r1.closed, 0);
+  assert.equal(r1.arb?.opened, 3, "film YES basket, Fed cross pair, mayor NO basket");
   // Alert rules never write to the ledger.
   assert.ok(r1.events.some((e) => e.type === "entry_signal" && e.data?.action === "alert"));
 
   const r2 = await cycle(ledgerPath, SNAP1, new Date(T0.getTime() + 60_000));
   assert.equal(r2.opened, 0, "re-running the same snapshot must not double-buy");
+  assert.equal(r2.arb?.opened, 0, "arbs already held are not bought again");
 
   const r3 = await cycle(ledgerPath, SNAP2, T1);
   assert.equal(r3.closed, 4);
   assert.equal(r3.opened, 1); // dip-reversion entry on the 8¢ drop
   assert.equal(r3.realizedPnlUsd, -29.06); // Kalshi fills are whole contracts
 
-  const reasons = r3.events.filter((e) => e.type === "paper_exit").map((e) => e.data?.reason).sort();
+  assert.equal(r3.arb?.closed, 2, "Fed pair sold early, mayor basket resolved");
+  assert.equal(r3.arb?.realizedPnlUsd, 7.66);
+
+  const reasons = r3.events
+    .filter((e) => e.type === "paper_exit" && e.ruleId !== "arbitrage")
+    .map((e) => e.data?.reason)
+    .sort();
   assert.deepEqual(reasons, ["resolved", "stop_loss", "stop_loss", "take_profit"]);
   assert.ok(
     r3.events.some((e) => e.type === "risk_block" && e.ruleId === "favorite-carry-no-paper" && /paused until/.test(e.message)),
@@ -63,8 +84,11 @@ test("demo paper flow: entries, no duplicates, exits, PnL and loss pause", async
   assert.equal(ledger.version, 2);
   assert.equal(ledger.demo, true);
   assert.ok(ledger.ruleState["favorite-carry-no-paper"].pausedUntil);
-  assert.equal(ledger.positions.filter((p) => p.status === "open").length, 1);
-  assert.equal(ledger.fills.filter((f) => f.kind === "close").length, 4);
+  const solo = ledger.positions.filter((p) => !p.groupId);
+  assert.equal(solo.filter((p) => p.status === "open").length, 1);
+  assert.equal(ledger.fills.filter((f) => f.kind === "close" && f.ruleId !== "arbitrage").length, 4);
+  // A winning arb whose single leg lost must not count toward the loss streak.
+  assert.equal(ledger.ruleState.arbitrage?.consecutiveLosses ?? 0, 0);
   const dip = ledger.positions.find((p) => p.ruleId === "dip-reversion-paper")!;
   assert.ok((dip.unrealizedPnlUsd ?? 0) < 0, "fresh fills are marked at the bid, so the spread shows as a cost");
 
@@ -72,6 +96,7 @@ test("demo paper flow: entries, no duplicates, exits, PnL and loss pause", async
   const r4 = await cycle(ledgerPath, SNAP2, new Date(T1.getTime() + 60_000));
   assert.equal(r4.opened, 0);
   assert.equal(r4.closed, 0);
+  assert.equal(r4.arb?.opened, 0);
 });
 
 test("an empty bid on the held side holds the position instead of selling at 0", async () => {

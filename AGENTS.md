@@ -45,6 +45,28 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 
 `src/engine/risk.ts` owns consecutive-loss pause, sizing and the bankroll/exposure gate. If you change pause semantics, update the example rule comments and README table.
 
+## Arbitrage
+
+- `src/engine/match.ts` (pure title matching), `src/engine/arb.ts` (baskets + quotes, pure), and
+  `src/engine/arb-runtime.ts` (discovery, alerts, paper open / unwind / finalize).
+- A basket is legs (market + side) plus a guaranteed payout per set. New arbitrage kinds should be new
+  basket builders in `discoverBaskets`, not new paths in the paper session.
+- Arbitrage legs carry `groupId` and ruleId `arbitrage` (reserved). They are never exited by per-market
+  rule logic. Groups are scored once when every leg has closed (`ledger.arbGroups`).
+- Matching must stay conservative: a false match is two bets that can both lose. Add tests to
+  `match.test.ts` for any loosening, including look-alikes that must NOT match.
+- Same-site baskets rely only on platform flags (`mutually_exclusive`, neg-risk, "Other"), never on
+  guessing from titles.
+
+## Price history and unusual moves
+
+- `src/engine/series.ts` stores our own snapshots (YES mid + 24h volume) per market; it's a cache next to
+  the ledger (`*.history.json`), written under the ledger lock, safe to delete.
+- `src/engine/unusual.ts` is pure. "Normal" is the RMS of window-length changes in the baseline,
+  not tick variance scaled up (bid/ask flicker would look like volatility).
+- Unusual-move signals are public-data heuristics. Keep the wording honest in UI and docs: the bot
+  never claims to know who is trading.
+
 ## Paper ledger
 
 - `src/ledger/paper.ts` is the only writer of `data/paper-ledger*.json` (gitignored). Bump `version` and add a migration if you change its shape; v1 → v2 already exists.

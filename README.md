@@ -14,6 +14,7 @@ npm run paper         # marks/exits open paper positions, then paper-enters new 
 npm run paper:report  # offline PnL report from the paper ledger
 npm run paper:close -- --id <id> --price <0-1>   # manually close a stuck paper position
 npm run paper:watch   # paper trade every 5 min + live dashboard at http://localhost:4321
+npm run arb:find      # review likely Kalshi ↔ Polymarket pairs for the arbitrage strategy
 npm test              # unit + demo end-to-end tests (no network)
 npm run live          # exits with “not implemented / needs keys”
 ```
@@ -27,6 +28,63 @@ Node 20+ recommended. Uses `tsx` so you don’t need a build step for day-to-day
 3. Evaluates filters + entry conditions + risk gates.
 4. Emits events to the console (optional webhook / JSONL file).
 5. In paper mode, also manages hypothetical positions in a local ledger (below).
+
+## Main strategy: arbitrage
+
+Configured in the `arbitrage:` block at the top of `rules/example.yaml`. It looks for sets of
+contracts that pay a guaranteed amount, and paper-buys them when they cost less than that amount
+after the bid/ask spread, slippage and fees.
+
+| Kind | When | Trade | Guaranteed payout per set |
+|------|------|-------|---------------------------|
+| Kalshi ↔ Polymarket | Same question priced differently on the two sites | YES on one, NO on the other | $1 |
+| Same site, NO basket | Outcomes where only one can win (the platform says so) and YES bids add up to more than $1 | NO on each outcome | $1 × (outcomes − 1) |
+| Same site, YES basket | Outcomes where exactly one must win and YES asks add up to less than $1 | YES on every outcome | $1 |
+
+- **Matching across sites** is the hard part. Pairs are found automatically only when the numbers,
+  years, direction and timing words (cut/hike, above/below, before/after, "at any time"), election
+  and role words (primary/general, vice), and names (in the same order) all agree, and the titles
+  are similar. Even then, **auto-matched pairs only alert**: paper trades need you to confirm the
+  pair (`npm run arb:find`, then `npm run arb:confirm -- <#>` or `npm run arb:block -- <#>`, saved
+  in `rules/arb-pairs.yaml`). On live data this already rejects look-alikes such as "Presidential
+  nominee" vs "Vice-Presidential nominee", and the same meeting question with different deadlines.
+- **Kalshi coverage:** Kalshi has thousands of events and rate-limits, so each check reads one more
+  page of events and matching uses a rolling cache (`data/*.arb-cache.json`). It takes about two hours
+  of checks to page through everything. Matched markets are always re-priced before quoting.
+- **Same-site baskets** only use the platforms' own flags: Kalshi's `mutually_exclusive` events and
+  Polymarket's neg-risk events. NO baskets are on. YES baskets are off by default, because neither
+  site guarantees that one listed outcome must win.
+- **Sizing and risk** use the same knobs as the other rules: `position_size_fraction`, `max_position_usd`,
+  `max_open_positions` (counted per arb, not per leg) and the consecutive-loss pause. An arb that
+  loses money means the legs didn't hedge (usually a bad match), so the default pauses after 2.
+- **Exits:** each arb is held until every leg settles, or sold early (`unwind_early`) when selling every
+  leg already returns the full guaranteed payout. Each arb counts as one trade in the stats.
+- **Limits:** paper trading assumes the best price is available for the whole size and that both legs
+  fill at once; real books are thin and prices move. Real opportunities are rare and usually a few
+  cents. Live trading would also need money on both sites. Opportunities only need public data,
+  so `npm run scan` and `npm run watch` report them as alerts.
+
+## Unusual moves (possible informed trading)
+
+The bot can't know who is trading or why. What it can spot in public prices is the footprint informed
+traders often leave. It saves a price/volume snapshot per market on every check
+(`data/*.history.json`) and flags a move when it is:
+
+- **big:** at least `min_move` in the last `window_minutes`;
+- **big for this market:** `min_zscore` × its typical change over the same span in the previous 12 hours;
+- **on volume:** at least `min_volume_ratio` × its normal volume;
+- **holding:** it has given back at most `max_retrace` of the move.
+
+The rules that use it:
+
+| Rule | What it does |
+|------|--------------|
+| `unusual-move-alert` | Alert only: shows up in the terminal, webhook and the dashboard's **Unusual moves** panel |
+| `follow-unusual-move-paper` | Paper-buys in the direction of the move (`side: with_move`), then a trailing stop sells near the high |
+| `dip-reversion-paper` | Still buys ordinary dips, but `unusual_move: { mode: exclude }` keeps it out of drops that look informed |
+
+It needs at least 3 hours of snapshots (12 for a full baseline) before it can judge what's normal, so leave `npm run paper:watch` running. Until then, the dip rule stays out rather than guess.
+News, big traders and thin order books cause the same pattern, so treat it as a lead, not proof.
 
 ## Paper trading
 
@@ -112,6 +170,9 @@ reversion in liquid markets). The paper strategies are hypotheses, not proven ed
 | `filters` | `max_spread` | Max YES bid/ask spread; markets without quotes fail |
 | `entry` | `move_direction` | `up` / `down` / `any` (default) for the move conditions |
 | `entry` | `max_prior_age_minutes` | Ignore the previous observation if it is older than this |
+| `entry` | `unusual_move` | `mode: require` / `exclude` plus thresholds (see Unusual moves) |
+| `entry` | `side: with_move` / `against_move` | Buy in / against the direction of the move |
+| `exit` | `trailing_stop`, `trailing_activation` | Sell when the price falls this far from its best since entry, once it's been this far in profit |
 | `exit` | `take_profit_pct`, `stop_loss_pct` | Return vs entry price |
 | `exit` | `max_hold_hours` | Time stop |
 | `risk` | `reentry_cooldown_hours` | Default 24 |

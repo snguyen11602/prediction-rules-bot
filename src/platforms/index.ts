@@ -4,7 +4,7 @@ import { PolymarketAdapter } from "./polymarket.js";
 import type { PlatformAdapter } from "./types.js";
 import type { PlatformId } from "../types.js";
 
-export type { PlatformAdapter, ListMarketsOptions } from "./types.js";
+export type { PlatformAdapter, ListMarketsOptions, EventGroup } from "./types.js";
 export { KalshiAdapter } from "./kalshi.js";
 export { PolymarketAdapter } from "./polymarket.js";
 export { DemoAdapter } from "./demo.js";

@@ -9,11 +9,13 @@ import http from "node:http";
 import { DemoAdapter } from "../platforms/demo.js";
 import { runPaperCycle } from "../engine/paper-session.js";
 import { createDashboardServer } from "./server.js";
+import { rulesWithAllArbPaths } from "../engine/test-utils.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const RULES = path.join(ROOT, "rules/example.yaml");
+let RULES = path.join(ROOT, "rules/example.yaml");
 
 async function ledgerWithTrades(): Promise<string> {
+  RULES = await rulesWithAllArbPaths();
   const ledgerPath = path.join(await mkdtemp(path.join(tmpdir(), "prb-dash-")), "ledger.json");
   const t0 = new Date("2026-10-26T19:00:00Z");
   const t1 = new Date("2026-10-26T19:30:00Z");
@@ -52,9 +54,16 @@ test("dashboard serves the page and a ledger snapshot", async () => {
     assert.equal(state.ledger.demo, true);
     assert.equal(state.open.length, 1);
     assert.equal(state.closed.length, 4);
-    assert.equal(state.pnlSeries.length, 4);
-    assert.equal(state.pnlSeries.at(-1).cumPnlUsd, -29.06);
-    assert.equal(state.totals.realizedPnlUsd, -29.06);
+    // 4 single trades + 2 arbitrage trades (each counted once, not per leg)
+    assert.equal(state.pnlSeries.length, 6);
+    assert.equal(state.pnlSeries.at(-1).cumPnlUsd, -21.4);
+    assert.equal(state.totals.realizedPnlUsd, -21.4);
+    assert.equal(state.arbs.enabled, true);
+    assert.equal(state.arbs.open.length, 1);
+    assert.equal(state.arbs.open[0].kind, "yes_basket");
+    assert.equal(state.arbs.open[0].legs.length, 4);
+    assert.deepEqual(state.arbs.closed.map((a: { realizedPnlUsd: number }) => a.realizedPnlUsd).sort(), [2.3, 5.36]);
+    assert.equal(state.rules[0].ruleId, "arbitrage", "arbitrage is listed first as the main strategy");
     assert.equal(state.ruleNames["macro-econ-alert"], "Fed / CPI / jobs markets resolving within two weeks");
     assert.ok(state.rules.some((r: { ruleId: string; pausedUntil?: string }) => r.ruleId === "favorite-carry-no-paper" && r.pausedUntil));
   } finally {

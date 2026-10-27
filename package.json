@@ -18,7 +18,10 @@
     "live": "tsx src/cli/live.ts",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc",
+    "arb:find": "tsx src/cli/arb.ts find",
+    "arb:confirm": "tsx src/cli/arb.ts confirm",
+    "arb:block": "tsx src/cli/arb.ts block"
   },
   "dependencies": {
     "yaml": "^2.7.0",

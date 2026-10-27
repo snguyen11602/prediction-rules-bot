@@ -15,6 +15,10 @@ async function main() {
   const riskByRule = new Map<string, RiskState>();
   // Edge-triggered: alert when a market starts matching, not on every poll.
   const lastMatched = new Set<string>();
+  const { ArbUniverse } = await import("../engine/arb-runtime.js");
+  const arbUniverse = new ArbUniverse();
+  const { SeriesStore } = await import("../engine/series.js");
+  const series = new SeriesStore(); // price history for unusual-move rules (builds up while watching)
 
   // eslint-disable-next-line no-console
   console.log(`Watching every ${args.intervalSec}s (Ctrl+C to stop)${args.demo ? " [DEMO]" : ""}`);
@@ -30,6 +34,8 @@ async function main() {
       priceHistory,
       riskByRule,
       lastMatched,
+      arbUniverse,
+      series,
     });
     await sleep(Math.max(5, args.intervalSec) * 1000);
   }

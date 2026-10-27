@@ -140,6 +140,16 @@
   .feed .kind { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-2); }
   .feed .msg { font-size: 13px; overflow-wrap: anywhere; }
 
+  .arb-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 12px; }
+  .arb-head h2 { margin: 0; }
+  .arb-note { color: var(--muted); font-size: 12.5px; }
+  .sub-h { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin: 16px 0 6px; }
+  .legs { margin: 4px 0 0; padding: 0; list-style: none; }
+  .legs li { color: var(--ink-2); font-size: 12px; overflow-wrap: anywhere; }
+  .legs li .side { margin-right: 4px; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: var(--badge); color: var(--ink-2); margin-left: 6px; white-space: nowrap; }
+  .tag.warn { background: color-mix(in srgb, var(--warn) 30%, transparent); color: var(--ink); }
+
   footer { color: var(--muted); font-size: 12px; margin-top: 24px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
@@ -161,6 +171,40 @@
     <div class="card kpi"><div class="label">On open trades</div><div class="value" id="kUnrealized">—</div><div class="sub">if sold right now</div></div>
     <div class="card kpi"><div class="label">Open trades</div><div class="value" id="kOpen">—</div><div class="sub" id="kOpenSub"></div></div>
     <div class="card kpi"><div class="label">Win rate</div><div class="value" id="kWin">—</div><div class="sub" id="kWinSub"></div></div>
+  </section>
+
+  <section class="card section" id="arbSection" hidden>
+    <div class="arb-head">
+      <h2>Arbitrage</h2>
+      <span class="arb-note">Buys sets of contracts that pay a guaranteed amount, for less than that amount (after fees).</span>
+    </div>
+    <div class="sub-h" id="oppTitle">Opportunities right now</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Trade</th><th class="num">Profit per $1</th><th class="num">Profit</th><th class="num">Ties up</th><th class="num">Resolves</th></tr></thead>
+      <tbody id="oppBody"></tbody>
+    </table></div>
+    <div class="sub-h">Open arbitrage trades</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Trade</th><th class="num">Cost</th><th class="num">Locked in</th><th class="num">If sold now</th><th class="num">Opened</th></tr></thead>
+      <tbody id="arbOpenBody"></tbody>
+    </table></div>
+    <div class="sub-h">Closed arbitrage trades</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Trade</th><th>How it closed</th><th class="num">Expected</th><th class="num">Actual</th><th class="num">Closed</th></tr></thead>
+      <tbody id="arbClosedBody"></tbody>
+    </table></div>
+  </section>
+
+  <section class="card section" id="unusualSection">
+    <div class="arb-head">
+      <h2>Unusual moves</h2>
+      <span class="arb-note">Sharp moves on a volume spike that haven't reversed — what informed trading often looks like. Public data only; news and big traders cause it too.</span>
+    </div>
+    <div class="meta" id="historyNote" style="margin-bottom:8px"></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Market</th><th class="num">Move</th><th class="num">vs normal</th><th class="num">Volume</th><th>Bot's call</th></tr></thead>
+      <tbody id="unusualBody"></tbody>
+    </table></div>
   </section>
 
   <div class="grid2">
@@ -269,7 +313,11 @@
     time_to_resolve: "Close to resolving",
     max_hold: "Held too long",
     manual: "Closed by hand",
+    arb_unwind: "Sold early",
+    trailing_stop: "Sold near the high (trailing stop)",
+    mixed: "Partly sold, partly settled",
   };
+  const MATCHED = { auto: "auto-matched", confirmed: "confirmed pair", platform: "" };
 
   // ---------- status ----------
   function renderStatus() {
@@ -532,15 +580,21 @@
       for (const e of state.events) {
         const rule = (state.ruleNames || {})[e.ruleId] || rulesById[e.ruleId]?.name || e.ruleId || "";
         const title = e.market?.title || "";
-        if (e.type === "entry_signal" && e.data?.action === "alert") items.push({ at: e.at, kind: "Alert", msg: `${rule}: ${title} (YES ${cents(e.market?.yesPrice)})` });
+        if (e.type === "entry_signal" && e.data?.unusual) items.push({ at: e.at, kind: "Unusual move", msg: `${title} — ${e.data.reason}` });
+        else if (e.type === "entry_signal" && e.data?.action === "alert") items.push({ at: e.at, kind: "Alert", msg: `${rule}: ${title} (YES ${cents(e.market?.yesPrice)})` });
         else if (e.type === "paper_fill") items.push({ at: e.at, kind: "Bought", msg: `${title} — ${usd(e.sizeUsd)} of ${String(e.side).toUpperCase()}` });
         else if (e.type === "paper_exit") items.push({ at: e.at, kind: "Sold", msg: `${title} — ${REASONS[e.data?.reason] || e.data?.reason}`, pnl: e.data?.pnlUsd });
         else if (e.type === "risk_block" && /pause armed/i.test(e.message)) items.push({ at: e.at, kind: "Paused", msg: `${rule} paused after a losing streak` });
         else if (e.type === "adapter_error") items.push({ at: e.at, kind: "Problem", msg: e.message });
+        else if (e.type === "arb_signal") items.push({ at: e.at, kind: "Arb found", msg: `${e.data?.title || title} — ${((e.data?.edge || 0) * 100).toFixed(1)}¢ per $1` + (e.data?.matchedBy === "auto" ? " (auto-matched)" : "") });
+        else if (e.type === "arb_open") items.push({ at: e.at, kind: "Arb opened", msg: `${e.data?.title || ""} — locks in`, pnl: e.data?.profitUsd });
+        else if (e.type === "arb_close") items.push({ at: e.at, kind: "Arb closed", msg: (e.message.split(" — ").slice(1).join(" — ") || e.message), pnl: e.data?.pnlUsd });
       }
     } else {
       for (const f of state.journal) {
-        items.push(f.kind === "open"
+        if (f.kind === "arb_open") items.push({ at: f.at, kind: "Arb opened", msg: `${f.title} — locks in`, pnl: f.pnlUsd });
+        else if (f.kind === "arb_close") items.push({ at: f.at, kind: "Arb closed", msg: `${f.title} — ${REASONS[f.reason] || f.reason || ""}`, pnl: f.pnlUsd });
+        else items.push(f.kind === "open"
           ? { at: f.at, kind: "Bought", msg: `${f.title} — ${usd(f.sizeUsd)} of ${String(f.side).toUpperCase()}` }
           : { at: f.at, kind: "Sold", msg: `${f.title} — ${REASONS[f.reason] || f.reason || ""}`, pnl: f.pnlUsd });
       }
@@ -553,12 +607,125 @@
     }
   }
 
+  // ---------- arbitrage ----------
+  function legList(legs, priceKey) {
+    const ul = el("ul", { class: "legs" });
+    for (const l of legs.slice(0, 8)) {
+      const href = safeUrl(l.url);
+      const name = href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: l.title }) : el("span", { text: l.title });
+      ul.append(el("li", null, el("span", { class: "side", text: String(l.side).toUpperCase() }), `${l.platform === "kalshi" ? "Kalshi" : "Polymarket"} @ ${cents(l[priceKey])} · `, name));
+    }
+    if (legs.length > 8) ul.append(el("li", { text: `+ ${legs.length - 8} more` }));
+    return ul;
+  }
+  function arbTitleCell(a) {
+    const head = el("div", null, el("span", { text: a.title }));
+    const m = MATCHED[a.matchedBy];
+    if (m) head.append(el("span", { class: a.matchedBy === "auto" ? "tag warn" : "tag", text: m, title: a.matchedBy === "auto" ? "Found by title matching — check both questions really resolve the same way" : "" }));
+    return el("td", { class: "title" }, head, el("div", { class: "meta", text: a.kindLabel }), legList(a.legs, a.status === "closed" ? "exitPrice" : "entryPrice"));
+  }
+  function hoursText(h) {
+    if (h == null) return "—";
+    return h < 48 ? `${Math.round(h)}h` : `${Math.round(h / 24)}d`;
+  }
+  function renderArbs() {
+    const sec = $("arbSection");
+    const arbs = state.arbs || { enabled: false, open: [], closed: [] };
+    const loop = state.loop || {};
+    sec.hidden = !arbs.enabled && !arbs.open.length && !arbs.closed.length;
+    if (sec.hidden) return;
+
+    const opp = $("oppBody");
+    opp.replaceChildren();
+    if (!loop.enabled) {
+      opp.append(emptyRow(5, "Live opportunities show here while npm run paper:watch is running."));
+    } else if (!loop.arbOpportunities) {
+      opp.append(emptyRow(5, "Waiting for the first check…"));
+    } else if (!loop.arbOpportunities.length) {
+      opp.append(emptyRow(5, `None worth taking on the last check (${ago(loop.arbCheckedAt)}). Real ones are rare and usually small.`));
+    } else {
+      const held = new Set(arbs.open.map((a) => a.key));
+      for (const o of loop.arbOpportunities.slice(0, 15)) {
+        const a = { ...o, status: "open", legs: o.legs.map((l) => ({ ...l, entryPrice: l.price })) };
+        const cell = arbTitleCell(a);
+        if (held.has(o.key)) cell.firstChild.append(el("span", { class: "tag", text: "already holding" }));
+        const ann = o.annualizedReturn != null ? el("div", { class: "meta", text: `${(o.annualizedReturn * 100).toFixed(0)}%/yr` }) : null;
+        opp.append(el("tr", null,
+          cell,
+          el("td", { class: "num" }, el("span", { class: "pos", text: `${(o.edge * 100).toFixed(1)}¢` }), ann),
+          el("td", { class: "num" }, pnlNode(o.profitUsd)),
+          el("td", { class: "num", text: usd(o.costUsd) }),
+          el("td", { class: "num", text: hoursText(o.hoursToResolve) }),
+        ));
+      }
+    }
+
+    const ob = $("arbOpenBody");
+    ob.replaceChildren();
+    if (!arbs.open.length) ob.append(emptyRow(5, "No open arbitrage trades."));
+    for (const a of arbs.open) {
+      ob.append(el("tr", null,
+        arbTitleCell(a),
+        el("td", { class: "num" }, el("div", { text: usd(a.costUsd) }), el("div", { class: "meta", text: `+ ${usd(a.feesUsd)} fees` })),
+        el("td", { class: "num" }, pnlNode(a.expectedProfitUsd), el("div", { class: "meta", text: "if it settles" })),
+        el("td", { class: "num" }, pnlNode(a.markPnlUsd)),
+        el("td", { class: "num", text: ago(a.openedAt) }),
+      ));
+    }
+
+    const cb = $("arbClosedBody");
+    cb.replaceChildren();
+    if (!arbs.closed.length) cb.append(emptyRow(5, "No closed arbitrage trades yet."));
+    for (const a of arbs.closed.slice(0, 20)) {
+      const why = el("td", null, el("div", { text: REASONS[a.closeReason] || a.closeReason || "—" }));
+      if ((a.realizedPnlUsd || 0) < 0) why.append(el("div", { class: "meta neg", text: "⚠ legs didn't hedge — check the match" }));
+      cb.append(el("tr", null,
+        arbTitleCell(a),
+        why,
+        el("td", { class: "num" }, pnlNode(a.expectedProfitUsd)),
+        el("td", { class: "num" }, pnlNode(a.realizedPnlUsd || 0)),
+        el("td", { class: "num", text: ago(a.closedAt) }),
+      ));
+    }
+  }
+
+  function renderUnusual(rulesById) {
+    const loop = state.loop || {};
+    const h = state.history || { hours: 0, markets: 0 };
+    const need = 3;
+    $("historyNote").textContent = h.hours >= need
+      ? `Price history: ${h.hours}h on ${h.markets} markets — enough to judge what's normal (12h gives the best baseline).`
+      : `Price history: ${h.hours}h of ~${need}h needed (${h.markets} markets). Unusual moves start showing once there's enough to know what's normal for each market.`;
+    const body = $("unusualBody");
+    body.replaceChildren();
+    if (!loop.enabled) { body.append(emptyRow(5, "Shows here while npm run paper:watch is running.")); return; }
+    const list = loop.unusualMoves || [];
+    if (!list.length) { body.append(emptyRow(5, h.hours >= need ? "Nothing unusual on the last check." : "Collecting price history…")); return; }
+    for (const u of list.slice(0, 20)) {
+      const href = safeUrl(u.url);
+      const title = href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: u.title }) : el("span", { text: u.title });
+      const m = u.move;
+      const call = u.action === "paper"
+        ? `Paper ${String(u.side).toUpperCase()} (${(state.ruleNames || {})[u.ruleId] || rulesById[u.ruleId]?.name || u.ruleId})`
+        : `Alert — would ${m.direction === "up" ? "buy YES" : "buy NO"}`;
+      body.append(el("tr", null,
+        el("td", { class: "title" }, title, el("div", { class: "meta", text: `${u.platform === "kalshi" ? "Kalshi" : "Polymarket"} · now ${cents(u.yesPrice)}` })),
+        el("td", { class: "num" }, el("span", { class: m.direction === "up" ? "pos" : "neg", text: `${m.direction === "up" ? "+" : MINUS}${(Math.abs(m.move) * 100).toFixed(1)}¢` }), el("div", { class: "meta", text: `${cents(m.from)} → ${cents(m.to)} in ${m.windowMinutes}m` })),
+        el("td", { class: "num", text: `${m.zscore}σ` }),
+        el("td", { class: "num", text: m.volumeRatio != null ? `${m.volumeRatio}×` : "—" }),
+        el("td", { text: call }),
+      ));
+    }
+  }
+
   function render() {
     if (!state || !state.ok) return;
     const rulesById = Object.fromEntries(state.rules.map((r) => [r.ruleId, r]));
     $("demoBadge").hidden = !state.ledger.demo;
     $("ledgerPath").textContent = `Trade file: ${state.ledger.path}`;
     renderKpis();
+    renderArbs();
+    renderUnusual(rulesById);
     renderChart();
     renderRules(rulesById);
     renderOpen(rulesById);

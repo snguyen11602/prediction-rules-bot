@@ -4,9 +4,11 @@ import { createAdapters, type PlatformAdapter } from "../platforms/index.js";
 import type { EngineEvent, NormalizedMarket, PlatformId, SignalSide } from "../types.js";
 import { dayKeyLA } from "./clock.js";
 import { evaluateEntry, type PriorPrice } from "./evaluate.js";
+import { SeriesStore } from "./series.js";
 import { checkEntryRisk, defaultRiskState, type RiskState } from "./risk.js";
 import type { EventSink } from "./events.js";
 import { consoleSink } from "./events.js";
+import { arbConfig, arbScanLimit, emitArbSignals, findOpportunities, slicePerPlatform, type ArbUniverse } from "./arb-runtime.js";
 
 export interface SignalArgs {
   rule: Rule;
@@ -33,6 +35,10 @@ export interface RunnerOptions {
    * previous scan are suppressed until they stop matching and match again.
    */
   lastMatched?: Set<string>;
+  /** Watch: keep the arbitrage event cache between polls. */
+  arbUniverse?: ArbUniverse;
+  /** Watch: rolling price / volume history for unusual-move rules. */
+  series?: SeriesStore;
   /**
    * Called for each entry signal. In paper mode, return the USD exposure actually
    * added (or `true` for the signalled size) when a position was opened; anything
@@ -119,6 +125,8 @@ export interface EvaluateOptions {
   /** Paper rules only: return a reason to skip this market (already held, cooldown…). */
   skipMarket?: (rule: Rule, market: NormalizedMarket, side: SignalSide) => string | null;
   lastMatched?: Set<string>;
+  /** Price / volume history (already including this scan's snapshot). */
+  series?: SeriesStore;
   onSignal?: RunnerOptions["onSignal"];
 }
 
@@ -155,7 +163,7 @@ export async function evaluateRules(
 
     for (const market of markets) {
       const key = marketKey(market);
-      const match = evaluateEntry(rule, market, priors.get(key), now);
+      const match = evaluateEntry(rule, market, priors.get(key), now, { series: opts.series?.get(key) });
       if (!match) continue;
 
       const edgeKey = `${rule.id}|${key}`;
@@ -200,7 +208,9 @@ export async function evaluateRules(
         at: now.toISOString(),
         type: "entry_signal",
         ruleId: rule.id,
-        message: `${action.toUpperCase()} ${match.side.toUpperCase()} ~$${sizeUsd.toFixed(2)} — ${market.title}`,
+        message:
+          `${action.toUpperCase()} ${match.side.toUpperCase()} ~$${sizeUsd.toFixed(2)} — ${market.title}` +
+          (match.unusual ? ` (${match.reason})` : ""),
         market: marketRef(market),
         side: match.side,
         sizeUsd,
@@ -209,6 +219,7 @@ export async function evaluateRules(
           rule_action: rule.action,
           position_size_fraction: rule.risk.position_size_fraction,
           reason: match.reason,
+          ...(match.unusual ? { unusual: match.unusual } : {}),
         },
       });
       signals += 1;
@@ -253,6 +264,7 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
   const file = await loadRulesFile(opts.rulesPath);
   const rules = enabledRules(file);
   const now = new Date();
+  const arbCfg = arbConfig(file);
 
   await push({
     at: now.toISOString(),
@@ -265,7 +277,7 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
   try {
     adapters = createAdapters({
       demo: opts.demo,
-      platforms: platformsFromRules(rules),
+      platforms: arbCfg ? ["kalshi", "polymarket"] : platformsFromRules(rules),
       fixturePath: opts.fixturePath,
     });
   } catch (err) {
@@ -277,7 +289,9 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     return events;
   }
 
-  const { markets } = await fetchMarkets(adapters, opts.limitPerPlatform ?? 80, push);
+  const limit = opts.limitPerPlatform ?? 80;
+  const { markets: fetched } = await fetchMarkets(adapters, arbScanLimit(arbCfg, limit), push);
+  const markets = slicePerPlatform(fetched, limit);
 
   if (markets.length === 0) {
     await push({
@@ -288,6 +302,7 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     return events;
   }
 
+  opts.series?.record(markets, now);
   const { signals, suppressed } = await evaluateRules({
     rules,
     markets,
@@ -297,16 +312,38 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     history: opts.priceHistory ?? new Map<string, PriorPrice>(),
     riskByRule: opts.riskByRule ?? new Map<string, RiskState>(),
     lastMatched: opts.lastMatched,
+    series: opts.series,
     onSignal: opts.onSignal,
   });
+
+  let arbFound = 0;
+  if (arbCfg) {
+    const { quotes, complete } = await findOpportunities({
+      cfg: arbCfg,
+      rulesPath: opts.rulesPath,
+      adapters,
+      universe: opts.arbUniverse,
+      markets: fetched,
+      lookup: async (platform, id) => {
+        const a = adapters.find((x) => x.id === platform);
+        return a?.getMarket ? a.getMarket(id).catch(() => null) : null;
+      },
+      push,
+      now,
+    });
+    arbFound = quotes.length;
+    // scan / watch never trade: arbitrage opportunities are alerts here.
+    await emitArbSignals(quotes, push, now, { action: "alert", cfg: arbCfg, lastMatched: opts.lastMatched, complete });
+  }
 
   await push({
     at: new Date().toISOString(),
     type: "scan_end",
     message:
-      `Done. ${markets.length} markets scanned, ${signals} entry signal(s).` +
+      `Done. ${markets.length} markets checked by rules${fetched.length > markets.length ? ` (${fetched.length} fetched for arbitrage)` : ""}, ${signals} entry signal(s).` +
+      (arbCfg ? ` ${arbFound} arbitrage opportunit${arbFound === 1 ? "y" : "ies"}.` : "") +
       (suppressed ? ` ${suppressed} repeat match(es) suppressed.` : ""),
-    data: { markets: markets.length, signals, suppressed },
+    data: { markets: fetched.length, signals, suppressed, arb: arbFound },
   });
 
   return events;

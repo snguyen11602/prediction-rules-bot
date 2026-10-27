@@ -15,6 +15,52 @@
 # The paper strategies below are hypotheses to test in paper mode, not proven edges.
 # Check `npm run paper:report` after a few weeks before trusting any of them.
 version: 1
+
+# ── Main strategy: arbitrage ────────────────────────────────────────────────
+# Buys a set of contracts that is guaranteed to pay out, for less than the payout.
+#   Kalshi ↔ Polymarket: same question on both → YES on the cheaper side, NO on the other.
+#   Same site:           outcomes where only one can win (e.g. a Fed decision, a race) →
+#                        NO on every outcome when YES prices add up to more than $1,
+#                        YES on every outcome when they add up to less (only when one must win).
+# Prices use the real bid/ask plus slippage and fees, so a "4¢ gap" on screen is often 0¢ after costs.
+# Risks it can't remove: two markets that look alike but resolve differently (check auto-matched
+# pairs — `npm run arb:find`), money locked up until resolution, and prices moving before both
+# legs fill in real life. Paper only.
+arbitrage:
+  enabled: true
+  action: paper              # alert = report only; paper = also take hypothetical trades
+  min_edge: 0.02             # at least 2¢ locked in per $1 of payout, after fees and slippage
+  max_hours_to_resolve: 1440 # don't tie money up for more than 60 days
+  min_hours_to_resolve: 1    # quotes go stale right before resolution
+  unwind_early: true         # sell all legs early once that already pays the full amount
+  cross_platform:
+    enabled: true
+    auto_match: true         # look for pairs by title (strict: numbers, directions and names must agree)
+    auto_trade: false        # auto pairs only ALERT until you confirm them: npm run arb:find → arb:confirm
+    min_score: 0.5
+    max_close_gap_hours: 168
+    max_price_gap: 0.15      # an "arb" wider than 15¢ is almost always two different questions
+    scan_limit: 400          # markets per platform to look through for pairs
+    pairs_file: arb-pairs.yaml
+  same_platform:
+    enabled: true
+    scan_events: 100
+    max_outcomes: 30
+    no_basket: true          # NO on every outcome when YES prices add up to more than $1
+    yes_basket: false        # needs "one of these must win", which the platforms rarely guarantee
+  risk:
+    position_size_fraction: 0.1   # $100 per arb on a $1,000 paper bankroll
+    bankroll_usd: 1000
+    max_position_usd: 100
+    max_open_positions: 5         # arbs, not legs
+    fire_after_n_losses: 2        # an arb that loses means a bad match — pause after 2
+    pause_hours_after_losses: 48
+    daily_loss_cap_usd: 50
+    reentry_cooldown_hours: 24
+  paper:
+    slippage: 0.005
+    include_fees: true
+
 rules:
   # ── Alerts ────────────────────────────────────────────────────────────────
   - id: mid-prob-politics-alert
@@ -96,7 +142,78 @@ rules:
       fire_after_n_losses: 3
       pause_hours_after_losses: 24
 
+  # ── Unusual moves (possible informed trading) ─────────────────────────────
+  # Flags a move that is large FOR THAT MARKET (vs its own last 12h), comes with a volume
+  # spike, and hasn't reversed — the footprint traders with better information often leave.
+  # It uses public prices only; news, whales and thin books cause the same pattern, so it's a
+  # signal, not proof. Needs at least 3h of price history (12h for a full baseline) from
+  # paper:watch / watch before it fires.
+  - id: unusual-move-alert
+    name: Unusual move on a volume spike (possible informed trading)
+    enabled: true
+    action: alert
+    filters:
+      keywords_exclude: [parlay, same game]
+      min_liquidity_usd: 2000
+      max_spread: 0.05
+      min_hours_to_resolve: 1
+    entry:
+      unusual_move:
+        window_minutes: 60
+        min_move: 0.05          # at least 5¢ in the last hour…
+        min_zscore: 3           # …and 3× bigger than this market's normal hourly move
+        min_volume_ratio: 3     # …on 3× its normal volume
+        max_retrace: 0.35       # …and not already reversing
+      side: with_move
+    risk:
+      position_size_fraction: 0.05
+      bankroll_usd: 1000
+      max_open_positions: 5
+      fire_after_n_losses: 3
+      pause_hours_after_losses: 24
+
   # ── Paper strategies ──────────────────────────────────────────────────────
+  # Follow informed-looking flow: buy in the direction of a sharp, high-volume move that holds,
+  # then let a trailing stop sell near the high. Stricter thresholds than the alert above.
+  - id: follow-unusual-move-paper
+    name: Follow sharp high-volume moves; sell near the high
+    enabled: true
+    action: paper
+    filters:
+      keywords_exclude: [parlay, same game]
+      min_price: 0.10
+      max_price: 0.90
+      min_liquidity_usd: 10000
+      min_volume_24h_usd: 5000
+      max_spread: 0.02
+      min_hours_to_resolve: 6
+      max_hours_to_resolve: 720
+    entry:
+      unusual_move:
+        window_minutes: 60
+        min_move: 0.06
+        min_zscore: 3.5
+        min_volume_ratio: 4
+        max_retrace: 0.25
+      side: with_move           # rising → buy YES, falling → buy NO
+    exit:
+      trailing_stop: 0.04       # sell once it falls 4¢ from its best price…
+      trailing_activation: 0.03 # …after it has been at least 3¢ in profit
+      stop_loss_pct: 0.20       # the move was wrong: get out
+      max_hold_hours: 168
+    risk:
+      position_size_fraction: 0.05
+      bankroll_usd: 1000
+      max_position_usd: 50
+      max_open_positions: 4
+      fire_after_n_losses: 3
+      pause_hours_after_losses: 24
+      daily_loss_cap_usd: 100
+      reentry_cooldown_hours: 24
+    paper:
+      slippage: 0.005
+      include_fees: true
+
   # Favorite carry: buy the heavy favorite shortly before resolution and hold
   # to settlement. Small wins, occasional large losses — so it is sized small,
   # stops out if the favorite slips, and pauses after only 2 straight losses.
@@ -164,8 +281,9 @@ rules:
       slippage: 0.005
       include_fees: true
 
-  # Dip reversion: in deep, liquid markets, fade a sharp drop since the previous
-  # paper cycle and take a quick partial rebound. Tests whether moves overshoot.
+  # Dip reversion: in deep, liquid markets, buy a sharp drop since the previous
+  # paper cycle and sell into the rebound. Tests whether moves overshoot.
+  # Stays OUT of drops that look informed (unusual volume) — those tend to keep going.
   # Run paper every 5–15 minutes (cron or --loop); drops measured against a
   # price older than 60 minutes are ignored.
   - id: dip-reversion-paper
@@ -187,8 +305,12 @@ rules:
       move_direction: down
       yes_price_move_abs: 0.06
       max_prior_age_minutes: 60
+      unusual_move:
+        mode: exclude            # don't catch a falling knife: skip drops on a volume spike
     exit:
       take_profit_pct: 0.10      # +10% on the YES contract
+      trailing_stop: 0.03        # or sell 3¢ off the rebound high…
+      trailing_activation: 0.03  # …once it's 3¢ in profit
       stop_loss_pct: 0.15        # −15%
       max_hold_hours: 48         # thesis is a short-term overshoot; don't hold drift
       max_hours_to_resolve: 12   # never carry into resolution

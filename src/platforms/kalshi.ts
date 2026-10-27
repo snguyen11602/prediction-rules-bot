@@ -1,5 +1,6 @@
 import type { NormalizedMarket } from "../types.js";
-import type { ListMarketsOptions, PlatformAdapter } from "./types.js";
+import type { EventGroup, ListMarketsOptions, PlatformAdapter } from "./types.js";
+import { getJson } from "./http.js";
 
 /**
  * Kalshi public market data (no API key).
@@ -13,14 +14,11 @@ const DEFAULT_BASE =
   process.env.KALSHI_API_BASE?.replace(/\/$/, "") ??
   "https://api.elections.kalshi.com/trade-api/v2";
 
-const HEADERS = {
-  Accept: "application/json",
-  "User-Agent": "prediction-rules-bot/0.1 (public-read)",
-};
-
 interface KalshiMarket {
   ticker: string;
   title?: string;
+  /** The specific outcome, e.g. "Cut 25bps" under "Fed decision in December?". */
+  yes_sub_title?: string;
   /** initialized | active | inactive | closed | determined | disputed | amended | finalized */
   status?: string;
   /** "yes" | "no" | "scalar" | "" once determined. */
@@ -36,6 +34,21 @@ interface KalshiMarket {
   open_interest_fp?: string;
   close_time?: string;
   event_ticker?: string;
+}
+
+interface KalshiEvent {
+  event_ticker: string;
+  title?: string;
+  sub_title?: string;
+  /** "If true, only one market in this event can resolve to 'yes'." */
+  mutually_exclusive?: boolean;
+  /** Only populated with with_nested_markets=true. */
+  markets?: KalshiMarket[];
+}
+
+interface KalshiEventsResponse {
+  events?: KalshiEvent[];
+  cursor?: string;
 }
 
 interface KalshiMarketsResponse {
@@ -104,10 +117,15 @@ function normalize(m: KalshiMarket): NormalizedMarket | null {
   const { bid, ask } = lifecycle.status === "open" ? quotes(m) : {};
   const oi = parseDollars(m.open_interest_fp);
   const vol24 = parseDollars(m.volume_24h_fp);
+  const base = (m.title ?? m.ticker).trim();
+  const sub = m.yes_sub_title?.trim();
+  // Many Kalshi markets share an event-level title and differ only in yes_sub_title.
+  const informative = !!sub && sub.toLowerCase() !== "yes" && !base.toLowerCase().includes(sub.toLowerCase());
   return {
     platform: "kalshi",
     id: m.ticker,
-    title: m.title ?? m.ticker,
+    title: informative ? `${base} — ${sub}` : base,
+    subtitle: informative ? sub : undefined,
     yesPrice: clamp01(yes),
     noPrice: clamp01(1 - yes),
     lastPrice: parseDollars(m.last_price_dollars),
@@ -117,6 +135,7 @@ function normalize(m: KalshiMarket): NormalizedMarket | null {
     liquidityUsd: oi,
     volume24hUsd: vol24,
     closesAt: m.close_time,
+    eventId: m.event_ticker,
     ...lifecycle,
     tags: m.event_ticker ? [m.event_ticker] : undefined,
     url: `https://kalshi.com/markets/${encodeURIComponent(m.ticker)}`,
@@ -153,16 +172,7 @@ export class KalshiAdapter implements PlatformAdapter {
       url.searchParams.set("mve_filter", "exclude");
       if (cursor) url.searchParams.set("cursor", cursor);
 
-      const res = await fetch(url, { headers: HEADERS });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(
-          `Kalshi HTTP ${res.status} ${res.statusText}: ${body.slice(0, 200)}`,
-        );
-      }
-
-      const data = (await res.json()) as KalshiMarketsResponse;
+      const data = (await getJson<KalshiMarketsResponse>(url, "Kalshi")).data ?? {};
       const batch = data.markets ?? [];
       if (batch.length === 0) break;
 
@@ -188,19 +198,65 @@ export class KalshiAdapter implements PlatformAdapter {
 
   async getMarket(id: string): Promise<NormalizedMarket | null> {
     const url = `${this.baseUrl}/markets/${encodeURIComponent(id)}`;
-    const res = await fetch(url, { headers: HEADERS });
-    if (res.status === 404) return null;
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Kalshi HTTP ${res.status} ${res.statusText}: ${body.slice(0, 200)}`);
-    }
-    const data = (await res.json()) as { market?: KalshiMarket } & KalshiMarket;
+    const { status, data } = await getJson<{ market?: KalshiMarket } & KalshiMarket>(url, "Kalshi");
+    if (status === 404 || !data) return null;
     const m = data.market ?? (data.ticker ? data : undefined);
     return m ? normalize(m) : null;
   }
 
   estimateTakerFeeUsd(contracts: number, price: number): number {
     return kalshiTakerFeeUsd(contracts, price);
+  }
+
+  /** Current prices for many markets in one request (Kalshi's `tickers` filter). */
+  async getMarkets(ids: string[]): Promise<NormalizedMarket[]> {
+    const out: NormalizedMarket[] = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100);
+      const url = new URL(`${this.baseUrl}/markets`);
+      url.searchParams.set("tickers", chunk.join(","));
+      url.searchParams.set("limit", String(chunk.length));
+      const data = (await getJson<KalshiMarketsResponse>(url, "Kalshi")).data ?? {};
+      for (const m of data.markets ?? []) {
+        const n = normalize(m);
+        if (n) out.push(n);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * One page of open events with nested markets, from `cursor`. Kalshi says whether an
+   * event's outcomes are mutually exclusive, not whether one must win (never exhaustive).
+   */
+  async listEventGroupsPage(opts: { limit?: number; cursor?: string } = {}): Promise<{ groups: EventGroup[]; cursor?: string }> {
+    const url = new URL(`${this.baseUrl}/events`);
+    url.searchParams.set("status", "open");
+    url.searchParams.set("with_nested_markets", "true");
+    url.searchParams.set("limit", String(Math.min(200, Math.max(opts.limit ?? 100, 1))));
+    if (opts.cursor) url.searchParams.set("cursor", opts.cursor);
+    const data = (await getJson<KalshiEventsResponse>(url, "Kalshi")).data ?? {};
+    const groups: EventGroup[] = [];
+    for (const ev of data.events ?? []) {
+      const markets = (ev.markets ?? [])
+        .map((m) => normalize({ ...m, event_ticker: m.event_ticker ?? ev.event_ticker }))
+        .filter((m): m is NormalizedMarket => m != null);
+      if (!markets.length) continue;
+      groups.push({
+        platform: "kalshi",
+        eventId: ev.event_ticker,
+        title: ev.title ?? ev.event_ticker,
+        mutuallyExclusive: ev.mutually_exclusive === true,
+        exhaustive: false,
+        markets,
+        url: `https://kalshi.com/events/${encodeURIComponent(ev.event_ticker)}`,
+      });
+    }
+    return { groups, cursor: data.cursor || undefined };
+  }
+
+  async listEventGroups(opts: { limit?: number } = {}): Promise<EventGroup[]> {
+    return (await this.listEventGroupsPage({ limit: opts.limit })).groups;
   }
 
   /** Kalshi trades whole contracts. */
