@@ -21,6 +21,14 @@ export interface CliArgs {
   id?: string;
   /** paper:close — exit price for the held side (0–1). */
   price?: number;
+  /** dashboard — local port (default 4321). */
+  port: number;
+  /** dashboard — also run paper cycles in this process. */
+  paper: boolean;
+  /** dashboard — don't open a browser window. */
+  noOpen: boolean;
+  /** True when --interval was passed explicitly. */
+  intervalSet: boolean;
 }
 
 function intArg(name: string, raw: string | undefined, min: number): number {
@@ -43,6 +51,10 @@ export function parseArgs(argv: string[]): CliArgs {
     paperAll: false,
     loop: false,
     json: false,
+    port: 4321,
+    paper: false,
+    noOpen: false,
+    intervalSet: process.env.POLL_INTERVAL_SEC != null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -50,7 +62,13 @@ export function parseArgs(argv: string[]): CliArgs {
     if (a === "--demo") out.demo = true;
     else if (a === "--rules" && args[i + 1]) out.rules = path.resolve(args[++i]);
     else if (a === "--limit") out.limit = intArg("--limit", args[++i], 1);
-    else if (a === "--interval") out.intervalSec = intArg("--interval", args[++i], 1);
+    else if (a === "--interval") {
+      out.intervalSec = intArg("--interval", args[++i], 1);
+      out.intervalSet = true;
+    }
+    else if (a === "--port") out.port = intArg("--port", args[++i], 1);
+    else if (a === "--paper") out.paper = true;
+    else if (a === "--no-open") out.noOpen = true;
     else if (a === "--log-file" && args[i + 1]) out.logFile = path.resolve(args[++i]);
     else if (a === "--webhook" && args[i + 1]) out.webhook = args[++i];
     else if (a === "--fixture" && args[i + 1]) out.fixture = path.resolve(args[++i]);
@@ -76,6 +94,8 @@ export function parseArgs(argv: string[]): CliArgs {
   npm run paper -- [--demo [--fixture path]] [--ledger path] [--paper-all] [--loop [--interval sec]] ...
   npm run paper:report -- [--demo] [--ledger path] [--json]
   npm run paper:close -- --id <position id> --price <0-1> [--demo] [--ledger path]
+  npm run paper:watch -- [--demo] [--interval sec] [--port N] [--no-open]   # paper loop + dashboard
+  npm run dashboard -- [--demo] [--ledger path] [--port N] [--no-open]      # dashboard only (read-only)
   npm run live   # stub only — refuses unless gates pass (still not implemented)
 
 Paper ledger defaults: data/paper-ledger.json (real data), data/paper-ledger.demo.json (--demo).

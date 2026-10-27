@@ -13,6 +13,7 @@ npm run watch         # poll on an interval; alerts when a market starts matchin
 npm run paper         # marks/exits open paper positions, then paper-enters new signals
 npm run paper:report  # offline PnL report from the paper ledger
 npm run paper:close -- --id <id> --price <0-1>   # manually close a stuck paper position
+npm run paper:watch   # paper trade every 5 min + live dashboard at http://localhost:4321
 npm test              # unit + demo end-to-end tests (no network)
 npm run live          # exits with “not implemented / needs keys”
 ```
@@ -65,6 +66,21 @@ Run it on a schedule (cron) or keep it running with `npm run paper -- --loop --i
 markets, payouts the adapter can't read) can be closed with
 `npm run paper:close -- --id <id from paper:report> --price <held-side value>`; manual closes record
 PnL but don't change the loss streak.
+
+### Dashboard
+
+```bash
+npm run paper:watch          # trades every 5 minutes and opens http://localhost:4321
+npm run dashboard            # just the dashboard (read-only), if paper runs elsewhere (cron, --loop)
+npm run paper:watch -- --demo --fixture fixtures/markets.later.json   # try it on demo data
+```
+
+The page refreshes every 5 seconds. It shows total, closed-trade and open-trade profit/loss, win rate,
+a chart of closed-trade profit/loss over time, each strategy (including loss-streak pauses), open and
+closed trades, and new alerts. It only listens on `127.0.0.1`, is read-only, and warns you when paper
+trading has stopped. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C finishes the current check
+and exits. Don't run `paper:watch` and `paper -- --loop` at the same time; the second one just waits
+for the lock.
 
 ### Try the full flow offline
 

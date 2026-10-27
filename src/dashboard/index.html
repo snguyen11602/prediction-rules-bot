@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Trading</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --series-1: #2a78d6;
+    --up: #006300;
+    --down: #d03b3b;
+    --warn: #fab219;
+    --good: #0ca30c;
+    --hover: rgba(11, 11, 11, 0.04);
+    --badge: #f0efec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #f0efec;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --series-1: #3987e5;
+      --up: #0ca30c;
+      --down: #e66767;
+      --hover: rgba(255, 255, 255, 0.05);
+      --badge: #2c2c2a;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --up: #0ca30c;
+    --down: #e66767;
+    --hover: rgba(255, 255, 255, 0.05);
+    --badge: #2c2c2a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  h2 { font-size: 14px; margin: 0 0 12px; font-weight: 600; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 550;
+    background: var(--badge); color: var(--ink-2); white-space: nowrap;
+  }
+  .badge.demo { background: var(--warn); color: #0b0b0b; }
+  .status { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.live { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent); }
+  .dot.busy { background: var(--series-1); animation: pulse 1s ease-in-out infinite alternate; }
+  .dot.stale { background: var(--warn); }
+  @keyframes pulse { from { opacity: 0.35; } to { opacity: 1; } }
+
+  .banner {
+    display: none; margin-bottom: 16px; padding: 10px 14px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+  }
+  .banner.show { display: block; }
+  .banner strong { margin-right: 6px; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--badge); padding: 1px 5px; border-radius: 4px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .kpi .label { color: var(--ink-2); font-size: 12.5px; }
+  .kpi .value { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; margin-top: 4px; }
+  .kpi .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .pos { color: var(--up); }
+  .neg { color: var(--down); }
+
+  .grid2 { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
+  @media (max-width: 880px) { .grid2 { grid-template-columns: minmax(0, 1fr); } .status { margin-left: 0; width: 100%; } }
+
+  #chart { position: relative; height: 240px; }
+  #chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .gridline { stroke: var(--grid); stroke-width: 1; }
+  .zero { stroke: var(--axis); stroke-width: 1; }
+  .line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; }
+  .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+  .marker { fill: var(--series-1); stroke: var(--surface); stroke-width: 2; }
+  .tip {
+    position: absolute; pointer-events: none; display: none; z-index: 2;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 12.5px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    max-width: 260px;
+  }
+  .tip .t { color: var(--muted); font-size: 11.5px; }
+  .tip .v { font-weight: 650; font-size: 15px; margin: 2px 0; }
+  .empty { color: var(--muted); padding: 20px 0; text-align: center; }
+
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-weight: 550; color: var(--ink-2); font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--hover); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.title { min-width: 220px; }
+  td.title a { color: var(--ink); text-decoration: none; }
+  td.title a:hover { text-decoration: underline; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .side { font-size: 11px; font-weight: 650; padding: 1px 6px; border-radius: 4px; background: var(--badge); color: var(--ink-2); }
+  .section { margin-bottom: 16px; }
+
+  .feed { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow-y: auto; }
+  .feed li { display: grid; grid-template-columns: 68px 1fr; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--grid); }
+  .feed li:last-child { border-bottom: none; }
+  .feed .when { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .feed .kind { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-2); }
+  .feed .msg { font-size: 13px; overflow-wrap: anywhere; }
+
+  footer { color: var(--muted); font-size: 12px; margin-top: 24px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Paper Trading</h1>
+    <span class="badge">Pretend money only</span>
+    <span class="badge demo" id="demoBadge" hidden>Demo data</span>
+    <div class="status" aria-live="polite"><span class="dot" id="statusDot"></span><span id="statusText">Loading…</span></div>
+  </header>
+
+  <div class="banner" id="banner" role="status"></div>
+
+  <section class="kpis" aria-label="Totals">
+    <div class="card kpi"><div class="label">Total profit / loss</div><div class="value" id="kTotal">—</div><div class="sub">closed + still open</div></div>
+    <div class="card kpi"><div class="label">From closed trades</div><div class="value" id="kRealized">—</div><div class="sub" id="kRealizedSub"></div></div>
+    <div class="card kpi"><div class="label">On open trades</div><div class="value" id="kUnrealized">—</div><div class="sub">if sold right now</div></div>
+    <div class="card kpi"><div class="label">Open trades</div><div class="value" id="kOpen">—</div><div class="sub" id="kOpenSub"></div></div>
+    <div class="card kpi"><div class="label">Win rate</div><div class="value" id="kWin">—</div><div class="sub" id="kWinSub"></div></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Profit / loss from closed trades over time</h2>
+      <div id="chart" role="img" aria-label="Cumulative profit and loss from closed trades"></div>
+      <div class="tip" id="tip"></div>
+    </section>
+    <section class="card">
+      <h2>Strategies</h2>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Strategy</th><th class="num">Open</th><th class="num">W / L</th><th class="num">P/L</th></tr></thead>
+        <tbody id="rulesBody"></tbody>
+      </table></div>
+    </section>
+  </div>
+
+  <section class="card section">
+    <h2>Open trades</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Market</th><th>Bet</th><th class="num">Bought at</th><th class="num">Worth now</th><th class="num">Cost</th><th class="num">P/L</th><th class="num">Opened</th></tr></thead>
+      <tbody id="openBody"></tbody>
+    </table></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Closed trades</h2>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Market</th><th>Why it closed</th><th class="num">Bought → sold</th><th class="num">P/L</th><th class="num">Closed</th></tr></thead>
+        <tbody id="closedBody"></tbody>
+      </table></div>
+    </section>
+    <section class="card">
+      <h2 id="feedTitle">Recent activity</h2>
+      <ul class="feed" id="feed"></ul>
+    </section>
+  </div>
+
+  <footer>
+    <span>Nothing here places real orders. Prices come from public Kalshi and Polymarket data.</span>
+    <span id="ledgerPath"></span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const POLL_MS = 5000;
+  const $ = (id) => document.getElementById(id);
+  let state = null;
+  let clockOffset = 0; // serverNow - clientNow
+  let lastOk = 0;
+
+  // ---------- helpers ----------
+  function el(tag, props, ...kids) {
+    const n = document.createElement(tag);
+    if (props) for (const [k, v] of Object.entries(props)) {
+      if (v == null || v === false) continue;
+      if (k === "class") n.className = v;
+      else if (k === "text") n.textContent = v;
+      else n.setAttribute(k, v);
+    }
+    for (const k of kids) if (k != null) n.append(k instanceof Node ? k : String(k));
+    return n;
+  }
+  const MINUS = "−";
+  function usd(n, signed) {
+    const v = Number(n) || 0;
+    const s = Math.abs(v).toLocaleString("en-US", { style: "currency", currency: "USD" });
+    if (signed) return (v > 0.004 ? "+" : v < -0.004 ? MINUS : "") + s;
+    return (v < -0.004 ? MINUS : "") + s;
+  }
+  function cents(p) { return p == null ? "—" : `${(p * 100).toFixed(1).replace(/\.0$/, "")}¢`; }
+  function cls(n) { return n > 0.004 ? "pos" : n < -0.004 ? "neg" : ""; }
+  function pnlNode(n, tag) {
+    return el(tag || "span", { class: cls(n), text: usd(n, true) });
+  }
+  function nowMs() { return Date.now() + clockOffset; }
+  function ago(iso) {
+    if (!iso) return "—";
+    const s = Math.round((nowMs() - new Date(iso).getTime()) / 1000);
+    if (s < 45) return "just now";
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 36) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  }
+  function clock(iso) {
+    return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  function safeUrl(u) { return typeof u === "string" && /^https?:\/\//i.test(u) ? u : null; }
+  function marketCell(p, rulesById) {
+    const href = safeUrl(p.url);
+    const title = href
+      ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: p.title })
+      : el("span", { text: p.title });
+    const rule = rulesById[p.ruleId]?.name || p.ruleId;
+    return el("td", { class: "title" }, title, el("div", { class: "meta", text: `${rule} · ${p.platform === "kalshi" ? "Kalshi" : "Polymarket"}` }));
+  }
+  const REASONS = {
+    take_profit: "Hit profit target",
+    stop_loss: "Hit stop loss",
+    resolved: "Market resolved",
+    time_to_resolve: "Close to resolving",
+    max_hold: "Held too long",
+    manual: "Closed by hand",
+  };
+
+  // ---------- status ----------
+  function renderStatus() {
+    const dot = $("statusDot"), text = $("statusText");
+    if (!state) return;
+    const loop = state.loop || {};
+    dot.className = "dot";
+    if (Date.now() - lastOk > POLL_MS * 3) {
+      dot.classList.add("stale");
+      text.textContent = "Can't reach the dashboard server — is it still running?";
+      return;
+    }
+    if (loop.enabled) {
+      if (loop.running) { dot.classList.add("busy"); text.textContent = "Checking markets…"; return; }
+      dot.classList.add("live");
+      const secs = loop.nextRunAt ? Math.max(0, Math.round((new Date(loop.nextRunAt).getTime() - nowMs()) / 1000)) : null;
+      const last = loop.lastRunAt ? `last check ${ago(loop.lastRunAt)}` : "";
+      text.textContent = secs == null
+        ? `Running · ${last}`
+        : `Running · next check in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}${last ? ` · ${last}` : ""}`;
+      return;
+    }
+    const updated = state.ledger.updatedAt;
+    const staleMin = updated ? (nowMs() - new Date(updated).getTime()) / 60000 : Infinity;
+    if (staleMin > 20) {
+      dot.classList.add("stale");
+      text.textContent = updated ? `Not trading · last update ${ago(updated)}` : "Not trading yet";
+    } else {
+      dot.classList.add("live");
+      text.textContent = `Watching · last update ${ago(updated)}`;
+    }
+  }
+  setInterval(renderStatus, 1000);
+
+  function renderBanner() {
+    const b = $("banner");
+    b.replaceChildren();
+    b.classList.remove("show");
+    if (!state) return;
+    const loop = state.loop || {};
+    if (loop.lastError) {
+      b.append(el("strong", { text: "⚠ Last check failed:" }), loop.lastError, " — it will retry automatically.");
+      b.classList.add("show");
+      return;
+    }
+    const errors = (state.events || []).filter((e) => e.type === "adapter_error" && nowMs() - new Date(e.at).getTime() < 15 * 60000);
+    if (errors.length) {
+      b.append(el("strong", { text: "⚠ Data problem:" }), errors[0].message);
+      b.classList.add("show");
+      return;
+    }
+    if (!loop.enabled) {
+      const updated = state.ledger.updatedAt;
+      const staleMin = updated ? (nowMs() - new Date(updated).getTime()) / 60000 : Infinity;
+      if (staleMin > 20) {
+        b.append(el("strong", { text: "⚠ Paper trading isn't running." }), "Stop this window and start ", el("code", { text: "npm run paper:watch" }), " to trade and watch in one go.");
+        b.classList.add("show");
+      }
+    }
+  }
+
+  // ---------- KPIs ----------
+  function setKpi(id, n) {
+    const node = $(id);
+    node.textContent = usd(n, true);
+    node.className = "value " + cls(n);
+  }
+  function renderKpis() {
+    const t = state.totals;
+    setKpi("kTotal", t.realizedPnlUsd + t.unrealizedPnlUsd);
+    setKpi("kRealized", t.realizedPnlUsd);
+    setKpi("kUnrealized", t.unrealizedPnlUsd);
+    $("kRealizedSub").textContent = `${t.closed} closed · fees ${usd(t.feesUsd)}`;
+    $("kOpen").textContent = String(t.open);
+    $("kOpenSub").textContent = `${usd(t.exposureUsd)} in play`;
+    const decided = t.wins + t.losses;
+    $("kWin").textContent = decided ? `${Math.round((t.wins / decided) * 100)}%` : "—";
+    $("kWinSub").textContent = decided ? `${t.wins} won · ${t.losses} lost` : "no closed trades yet";
+  }
+
+  // ---------- chart ----------
+  const SVGNS = "http://www.w3.org/2000/svg";
+  function s(tag, attrs) {
+    const n = document.createElementNS(SVGNS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
+    return n;
+  }
+  function niceTicks(min, max, count) {
+    if (min === max) { min -= 1; max += 1; }
+    const span = max - min;
+    const step0 = span / Math.max(1, count);
+    const mag = Math.pow(10, Math.floor(Math.log10(step0)));
+    const norm = step0 / mag;
+    const step = (norm >= 5 ? 10 : norm >= 2 ? 5 : norm >= 1 ? 2 : 1) * mag;
+    const lo = Math.floor(min / step) * step;
+    const hi = Math.ceil(max / step) * step;
+    const out = [];
+    for (let v = lo; v <= hi + step / 2; v += step) out.push(Math.round(v * 100) / 100);
+    return out;
+  }
+  function shortUsd(v) {
+    const a = Math.abs(v);
+    const body = a >= 1000 ? `$${(a / 1000).toFixed(a >= 10000 ? 0 : 1)}k` : `$${a % 1 ? a.toFixed(2) : a}`;
+    return (v < 0 ? MINUS : "") + body;
+  }
+  function renderChart() {
+    const box = $("chart"), tip = $("tip");
+    box.replaceChildren();
+    tip.style.display = "none";
+    const series = state.pnlSeries || [];
+    if (!series.length) {
+      box.append(el("div", { class: "empty", text: "No closed trades yet. This line starts once the first trade closes." }));
+      box.style.height = "auto";
+      return;
+    }
+    box.style.height = "";
+    const W = box.clientWidth || 600, H = box.clientHeight || 240;
+    const m = { l: 52, r: 14, t: 10, b: 26 };
+    const t0 = Math.min(new Date(state.ledger.createdAt || series[0].at).getTime(), new Date(series[0].at).getTime());
+    const t1 = Math.max(nowMs(), new Date(series[series.length - 1].at).getTime() + 1);
+    const pts = [{ t: t0, v: 0, p: null }].concat(series.map((d) => ({ t: new Date(d.at).getTime(), v: d.cumPnlUsd, p: d })));
+    const vs = pts.map((p) => p.v);
+    const ticks = niceTicks(Math.min(0, ...vs), Math.max(0, ...vs), 4);
+    const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+    const x = (t) => m.l + ((t - t0) / (t1 - t0)) * (W - m.l - m.r);
+    const y = (v) => m.t + (1 - (v - y0) / (y1 - y0)) * (H - m.t - m.b);
+
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, "aria-hidden": "true" });
+    for (const v of ticks) {
+      svg.append(s("line", { class: v === 0 ? "zero" : "gridline", x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
+      const lab = s("text", { class: "tick", x: m.l - 8, y: y(v) + 4, "text-anchor": "end" });
+      lab.textContent = shortUsd(v);
+      svg.append(lab);
+    }
+    const spanDays = (t1 - t0) / 86400000;
+    const fmt = (t) => new Date(t).toLocaleString([], spanDays > 2 ? { month: "short", day: "numeric" } : { hour: "numeric", minute: "2-digit" });
+    const xTicks = W < 420 ? [t0, t1] : [t0, t0 + (t1 - t0) / 2, t1];
+    let prevLabel = null;
+    xTicks.forEach((t, i) => {
+      const text = fmt(t);
+      if (text === prevLabel) return; // short spans: don't repeat the same time
+      prevLabel = text;
+      const lab = s("text", { class: "tick", x: x(t), y: H - 6, "text-anchor": i === 0 ? "start" : i === xTicks.length - 1 ? "end" : "middle" });
+      lab.textContent = text;
+      svg.append(lab);
+    });
+
+    // Step line: P/L only changes when a trade closes.
+    let d = `M${x(pts[0].t)},${y(pts[0].v)}`;
+    for (let i = 1; i < pts.length; i++) d += `H${x(pts[i].t)}V${y(pts[i].v)}`;
+    d += `H${x(t1)}`;
+    svg.append(s("path", { class: "line", d }));
+
+    const cross = s("line", { class: "cross", y1: m.t, y2: H - m.b, visibility: "hidden" });
+    const marker = s("circle", { class: "marker", r: 5, visibility: "hidden" });
+    svg.append(cross, marker);
+    const hit = s("rect", { x: m.l, y: 0, width: W - m.l - m.r, height: H, fill: "transparent" });
+    svg.append(hit);
+    box.append(svg);
+
+    const closes = pts.slice(1);
+    function show(evt) {
+      const rect = svg.getBoundingClientRect();
+      const px = ((evt.clientX - rect.left) / rect.width) * W;
+      let best = closes[0], bd = Infinity;
+      for (const p of closes) { const dd = Math.abs(x(p.t) - px); if (dd < bd) { bd = dd; best = p; } }
+      const cx = x(best.t), cy = y(best.v);
+      cross.setAttribute("x1", cx); cross.setAttribute("x2", cx); cross.setAttribute("visibility", "visible");
+      marker.setAttribute("cx", cx); marker.setAttribute("cy", cy); marker.setAttribute("visibility", "visible");
+      tip.replaceChildren(
+        el("div", { class: "t", text: new Date(best.t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) }),
+        el("div", { class: "v" }, pnlNode(best.v)),
+        el("div", { class: "meta", text: "total from closed trades" }),
+        el("div", { style: "margin-top:6px" }, pnlNode(best.p.pnlUsd), " ", el("span", { text: best.p.title })),
+      );
+      tip.style.display = "block";
+      const host = box.getBoundingClientRect();
+      const card = box.parentElement.getBoundingClientRect();
+      const left = host.left - card.left + (cx / W) * host.width;
+      const top = host.top - card.top + (cy / H) * host.height;
+      const tw = tip.offsetWidth;
+      tip.style.left = `${Math.min(Math.max(8, left + 12 + tw > card.width ? left - tw - 12 : left + 12), card.width - tw - 8)}px`;
+      tip.style.top = `${Math.max(8, top - 20)}px`;
+    }
+    function hide() {
+      cross.setAttribute("visibility", "hidden");
+      marker.setAttribute("visibility", "hidden");
+      tip.style.display = "none";
+    }
+    hit.addEventListener("pointermove", show);
+    hit.addEventListener("pointerdown", show);
+    hit.addEventListener("pointerleave", hide);
+  }
+
+  // ---------- tables ----------
+  function emptyRow(cols, text) {
+    return el("tr", null, el("td", { colspan: cols, class: "empty", text }));
+  }
+  function renderRules(rulesById) {
+    const body = $("rulesBody");
+    body.replaceChildren();
+    if (!state.rules.length) { body.append(emptyRow(4, "No paper strategies in the rules file.")); return; }
+    for (const r of state.rules.filter((r) => r.action !== "alert")) {
+      const paused = r.pausedUntil && new Date(r.pausedUntil).getTime() > nowMs();
+      const name = el("td", null, el("div", { text: r.name }));
+      if (paused) name.append(el("div", { class: "meta", text: `⏸ Paused after losses until ${new Date(r.pausedUntil).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }));
+      else if (r.action === "alert") name.append(el("div", { class: "meta", text: "alerts only" }));
+      else if (!r.enabled) name.append(el("div", { class: "meta", text: "turned off" }));
+      body.append(el("tr", null,
+        name,
+        el("td", { class: "num", text: String(r.open) }),
+        el("td", { class: "num", text: `${r.wins} / ${r.losses}` }),
+        el("td", { class: "num" }, pnlNode(r.realizedPnlUsd + r.unrealizedPnlUsd)),
+      ));
+    }
+  }
+  function renderOpen(rulesById) {
+    const body = $("openBody");
+    body.replaceChildren();
+    if (!state.open.length) { body.append(emptyRow(7, "No open trades right now.")); return; }
+    for (const p of state.open) {
+      const pnl = p.unrealizedPnlUsd || 0;
+      const pct = p.costUsd ? (pnl / p.costUsd) * 100 : 0;
+      const pnlCell = el("td", { class: "num" }, pnlNode(pnl), el("div", { class: `meta ${cls(pnl)}`, text: `${pct > 0 ? "+" : pct < 0 ? MINUS : ""}${Math.abs(pct).toFixed(1)}%` }));
+      const worth = el("td", { class: "num", text: cents(p.lastMarkPrice) });
+      if (p.marketStatus && p.marketStatus !== "open") worth.append(el("div", { class: "meta", text: "waiting for result" }));
+      body.append(el("tr", null,
+        marketCell(p, rulesById),
+        el("td", null, el("span", { class: "side", text: p.side.toUpperCase() })),
+        el("td", { class: "num", text: cents(p.entryPrice) }),
+        worth,
+        el("td", { class: "num", text: usd(p.costUsd) }),
+        pnlCell,
+        el("td", { class: "num", text: ago(p.entryAt) }),
+      ));
+    }
+  }
+  function renderClosed(rulesById) {
+    const body = $("closedBody");
+    body.replaceChildren();
+    if (!state.closed.length) { body.append(emptyRow(5, "No closed trades yet.")); return; }
+    for (const p of state.closed.slice(0, 40)) {
+      const why = el("td", null, el("div", { text: REASONS[p.exitReason] || p.exitReason || "—" }), el("span", { class: "side", text: p.side.toUpperCase() }));
+      body.append(el("tr", null,
+        marketCell(p, rulesById),
+        why,
+        el("td", { class: "num", text: `${cents(p.entryPrice)} → ${cents(p.exitPrice)}` }),
+        el("td", { class: "num" }, pnlNode(p.realizedPnlUsd || 0)),
+        el("td", { class: "num", text: ago(p.exitAt) }),
+      ));
+    }
+  }
+  function renderFeed(rulesById) {
+    const feed = $("feed");
+    feed.replaceChildren();
+    const loopOn = state.loop && state.loop.enabled;
+    $("feedTitle").textContent = loopOn ? "Recent activity & alerts" : "Recent activity";
+    const items = [];
+    if (loopOn) {
+      for (const e of state.events) {
+        const rule = (state.ruleNames || {})[e.ruleId] || rulesById[e.ruleId]?.name || e.ruleId || "";
+        const title = e.market?.title || "";
+        if (e.type === "entry_signal" && e.data?.action === "alert") items.push({ at: e.at, kind: "Alert", msg: `${rule}: ${title} (YES ${cents(e.market?.yesPrice)})` });
+        else if (e.type === "paper_fill") items.push({ at: e.at, kind: "Bought", msg: `${title} — ${usd(e.sizeUsd)} of ${String(e.side).toUpperCase()}` });
+        else if (e.type === "paper_exit") items.push({ at: e.at, kind: "Sold", msg: `${title} — ${REASONS[e.data?.reason] || e.data?.reason}`, pnl: e.data?.pnlUsd });
+        else if (e.type === "risk_block" && /pause armed/i.test(e.message)) items.push({ at: e.at, kind: "Paused", msg: `${rule} paused after a losing streak` });
+        else if (e.type === "adapter_error") items.push({ at: e.at, kind: "Problem", msg: e.message });
+      }
+    } else {
+      for (const f of state.journal) {
+        items.push(f.kind === "open"
+          ? { at: f.at, kind: "Bought", msg: `${f.title} — ${usd(f.sizeUsd)} of ${String(f.side).toUpperCase()}` }
+          : { at: f.at, kind: "Sold", msg: `${f.title} — ${REASONS[f.reason] || f.reason || ""}`, pnl: f.pnlUsd });
+      }
+    }
+    if (!items.length) { feed.append(el("li", { class: "empty", text: "Nothing yet." })); return; }
+    for (const it of items.slice(0, 60)) {
+      const msg = el("div", { class: "msg", text: it.msg });
+      if (it.pnl != null) msg.append(" ", pnlNode(it.pnl));
+      feed.append(el("li", null, el("div", { class: "when", text: clock(it.at) }), el("div", null, el("div", { class: "kind", text: it.kind }), msg)));
+    }
+  }
+
+  function render() {
+    if (!state || !state.ok) return;
+    const rulesById = Object.fromEntries(state.rules.map((r) => [r.ruleId, r]));
+    $("demoBadge").hidden = !state.ledger.demo;
+    $("ledgerPath").textContent = `Trade file: ${state.ledger.path}`;
+    renderKpis();
+    renderChart();
+    renderRules(rulesById);
+    renderOpen(rulesById);
+    renderClosed(rulesById);
+    renderFeed(rulesById);
+    renderBanner();
+    renderStatus();
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch("/api/state", { cache: "no-store" });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      clockOffset = new Date(data.now).getTime() - Date.now();
+      state = data;
+      lastOk = Date.now();
+      render();
+    } catch (err) {
+      const b = $("banner");
+      b.replaceChildren(el("strong", { text: "⚠ Couldn't load data:" }), String(err.message || err));
+      b.classList.add("show");
+      renderStatus();
+    }
+  }
+  let resizeTimer;
+  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => state && renderChart(), 150); });
+  poll();
+  setInterval(poll, POLL_MS);
+})();
+</script>
+</body>
+</html>
