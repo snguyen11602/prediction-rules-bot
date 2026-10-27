@@ -13,6 +13,8 @@
     "paper": "tsx src/cli/paper.ts",
     "paper:report": "tsx src/cli/paper-report.ts",
     "paper:close": "tsx src/cli/paper-close.ts",
+    "paper:watch": "tsx src/cli/dashboard.ts --paper",
+    "dashboard": "tsx src/cli/dashboard.ts",
     "live": "tsx src/cli/live.ts",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
