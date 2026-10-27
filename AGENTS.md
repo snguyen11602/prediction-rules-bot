@@ -58,6 +58,15 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 - Same-site baskets rely only on platform flags (`mutually_exclusive`, neg-risk, "Other"), never on
   guessing from titles.
 
+## Price history and unusual moves
+
+- `src/engine/series.ts` stores our own snapshots (YES mid + 24h volume) per market; it's a cache next to
+  the ledger (`*.history.json`), written under the ledger lock, safe to delete.
+- `src/engine/unusual.ts` is pure. "Normal" is the RMS of window-length changes in the baseline,
+  not tick variance scaled up (bid/ask flicker would look like volatility).
+- Unusual-move signals are public-data heuristics. Keep the wording honest in UI and docs: the bot
+  never claims to know who is trading.
+
 ## Paper ledger
 
 - `src/ledger/paper.ts` is the only writer of `data/paper-ledger*.json` (gitignored). Bump `version` and add a migration if you change its shape; v1 → v2 already exists.

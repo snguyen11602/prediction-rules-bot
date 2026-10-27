@@ -149,6 +149,8 @@ async function main() {
           side: e.side,
           move: e.data!.unusual as NonNullable<LoopState["unusualMoves"]>[number]["move"],
         }))
+        // One row per market; if any rule paper-traded it, show that rather than the alert.
+        .sort((a, b) => Number(b.action === "paper") - Number(a.action === "paper"))
         .filter((m, i, all) => all.findIndex((x) => x.platform === m.platform && x.id === m.id) === i);
       loop.arbCheckedAt = new Date().toISOString();
       loop.lastError = undefined;
