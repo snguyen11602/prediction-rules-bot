@@ -150,6 +150,56 @@
   .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: var(--badge); color: var(--ink-2); margin-left: 6px; white-space: nowrap; }
   .tag.warn { background: color-mix(in srgb, var(--warn) 30%, transparent); color: var(--ink); }
 
+  /* How the bot decides */
+  .pipeline { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin: 4px 0 14px; }
+  @media (max-width: 880px) { .pipeline { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .stage-box { position: relative; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--page); }
+  .stage-box .lbl { color: var(--ink-2); font-size: 12px; }
+  .stage-box .num { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .stage-box .pct { color: var(--muted); font-size: 11.5px; }
+  .stage-box .bar { height: 4px; border-radius: 2px; background: var(--grid); margin-top: 8px; overflow: hidden; }
+  .stage-box .bar > i { display: block; height: 100%; background: var(--series-1); border-radius: 2px; transition: width .6s ease; }
+  .stage-box.final .bar > i { background: var(--good); }
+  .scanner { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; background: var(--page); min-height: 92px; }
+  .scan-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .scan-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scan-dots { display: flex; gap: 6px; margin: 10px 0 6px; flex-wrap: wrap; }
+  .scan-dot { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--badge); color: var(--muted); transition: background .15s, color .15s; }
+  .scan-dot.on { background: color-mix(in srgb, var(--good) 22%, transparent); color: var(--ink); }
+  .scan-dot.fail { background: color-mix(in srgb, var(--down) 22%, transparent); color: var(--ink); }
+  .scan-reason { color: var(--ink-2); font-size: 12.5px; min-height: 18px; }
+  .btn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
+  .btn:hover { background: var(--hover); }
+  .why { font-size: 12px; padding: 2px 8px; }
+  .outcome { display: inline-block; font-size: 11px; font-weight: 650; padding: 1px 7px; border-radius: 4px; white-space: nowrap; }
+  .outcome.ok { background: color-mix(in srgb, var(--good) 22%, transparent); }
+  .outcome.no { background: color-mix(in srgb, var(--down) 18%, transparent); }
+  .outcome.info { background: var(--badge); color: var(--ink-2); }
+  .decisions { list-style: none; margin: 0; padding: 0; }
+  #decisionList { max-height: 560px; overflow-y: auto; }
+  .decisions li.empty, #arbNear li { cursor: default; }
+  .decisions li.empty:hover, #arbNear li:hover { background: none; }
+  #funnelBody td:first-child { min-width: 170px; }
+  .stage-box .sub { display: block; }
+  @media (max-width: 560px) { .stage-box .sub { display: none; } #decideNote { display: none; } }
+  .decisions li { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--grid); cursor: pointer; }
+  .decisions li:hover { background: var(--hover); }
+  .decisions li:last-child { border-bottom: none; }
+  dialog.story { border: 1px solid var(--border); border-radius: 14px; padding: 0; max-width: 640px; width: calc(100% - 32px); background: var(--surface); color: var(--ink); box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+  dialog.story::backdrop { background: rgba(0,0,0,.35); }
+  .story-in { padding: 18px 20px 20px; max-height: 80vh; overflow-y: auto; }
+  .story h3 { margin: 0 0 2px; font-size: 16px; }
+  .story .close { position: absolute; top: 10px; right: 12px; }
+  .story-stage { margin-top: 14px; }
+  .story-stage h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); }
+  .chk { display: grid; grid-template-columns: 22px 150px 1fr; gap: 6px; padding: 4px 0; font-size: 13px; }
+  @media (max-width: 560px) { .chk { grid-template-columns: 22px 1fr; } .chk .d { grid-column: 2; } }
+  .chk .i { font-weight: 700; }
+  .chk.ok .i { color: var(--good); }
+  .chk.bad .i { color: var(--down); }
+  .chk .n { color: var(--ink-2); }
+  @media (prefers-reduced-motion: reduce) { .stage-box .bar > i, .scan-dot { transition: none; } }
+
   footer { color: var(--muted); font-size: 12px; margin-top: 24px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
@@ -172,6 +222,34 @@
     <div class="card kpi"><div class="label">Open trades</div><div class="value" id="kOpen">—</div><div class="sub" id="kOpenSub"></div></div>
     <div class="card kpi"><div class="label">Win rate</div><div class="value" id="kWin">—</div><div class="sub" id="kWinSub"></div></div>
   </section>
+
+  <section class="card section" id="decideSection">
+    <div class="arb-head">
+      <h2>How the bot decides</h2>
+      <span class="arb-note" id="decideNote">Every check, every market, every time. Click any trade below (or a signal here) to see why it was taken.</span>
+      <button class="btn" id="replayBtn" style="margin-left:auto">▶ Replay last scan</button>
+    </div>
+    <div class="pipeline" id="pipeline"></div>
+    <div class="scanner" id="scanner" aria-live="off"></div>
+    <div class="grid2" style="margin-bottom:0">
+      <div>
+        <div class="sub-h" style="margin-top:0">Per strategy (last check)</div>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Strategy</th><th class="num">Checked</th><th class="num">Filters</th><th class="num">Signal</th><th class="num">Risk OK</th><th class="num">Done</th><th>Most dropped by</th></tr></thead>
+          <tbody id="funnelBody"></tbody>
+        </table></div>
+        <div class="sub-h">Arbitrage (last check)</div>
+        <div class="meta" id="arbFunnel"></div>
+        <ul class="decisions" id="arbNear"></ul>
+      </div>
+      <div>
+        <div class="sub-h" style="margin-top:0">Signals this check</div>
+        <ul class="decisions" id="decisionList"></ul>
+      </div>
+    </div>
+  </section>
+
+  <dialog class="story" id="story"><div class="story-in" id="storyBody"></div></dialog>
 
   <section class="card section" id="arbSection" hidden>
     <div class="arb-head">
@@ -225,7 +303,7 @@
   <section class="card section">
     <h2>Open trades</h2>
     <div class="tablewrap"><table>
-      <thead><tr><th>Market</th><th>Bet</th><th class="num">Bought at</th><th class="num">Worth now</th><th class="num">Cost</th><th class="num">P/L</th><th class="num">Opened</th></tr></thead>
+      <thead><tr><th>Market</th><th>Bet</th><th class="num">Bought at</th><th class="num">Worth now</th><th class="num">Cost</th><th class="num">P/L</th><th class="num">Opened</th><th></th></tr></thead>
       <tbody id="openBody"></tbody>
     </table></div>
   </section>
@@ -234,7 +312,7 @@
     <section class="card">
       <h2>Closed trades</h2>
       <div class="tablewrap"><table>
-        <thead><tr><th>Market</th><th>Why it closed</th><th class="num">Bought → sold</th><th class="num">P/L</th><th class="num">Closed</th></tr></thead>
+        <thead><tr><th>Market</th><th>Why it closed</th><th class="num">Bought → sold</th><th class="num">P/L</th><th class="num">Closed</th><th></th></tr></thead>
         <tbody id="closedBody"></tbody>
       </table></div>
     </section>
@@ -537,7 +615,7 @@
   function renderOpen(rulesById) {
     const body = $("openBody");
     body.replaceChildren();
-    if (!state.open.length) { body.append(emptyRow(7, "No open trades right now.")); return; }
+    if (!state.open.length) { body.append(emptyRow(8, "No open trades right now.")); return; }
     for (const p of state.open) {
       const pnl = p.unrealizedPnlUsd || 0;
       const pct = p.costUsd ? (pnl / p.costUsd) * 100 : 0;
@@ -552,13 +630,14 @@
         el("td", { class: "num", text: usd(p.costUsd) }),
         pnlCell,
         el("td", { class: "num", text: ago(p.entryAt) }),
+        el("td", null, whyBtn(() => positionStory(p, rulesById))),
       ));
     }
   }
   function renderClosed(rulesById) {
     const body = $("closedBody");
     body.replaceChildren();
-    if (!state.closed.length) { body.append(emptyRow(5, "No closed trades yet.")); return; }
+    if (!state.closed.length) { body.append(emptyRow(6, "No closed trades yet.")); return; }
     for (const p of state.closed.slice(0, 40)) {
       const why = el("td", null, el("div", { text: REASONS[p.exitReason] || p.exitReason || "—" }), el("span", { class: "side", text: p.side.toUpperCase() }));
       body.append(el("tr", null,
@@ -567,6 +646,7 @@
         el("td", { class: "num", text: `${cents(p.entryPrice)} → ${cents(p.exitPrice)}` }),
         el("td", { class: "num" }, pnlNode(p.realizedPnlUsd || 0)),
         el("td", { class: "num", text: ago(p.exitAt) }),
+        el("td", null, whyBtn(() => positionStory(p, rulesById))),
       ));
     }
   }
@@ -620,6 +700,7 @@
   }
   function arbTitleCell(a) {
     const head = el("div", null, el("span", { text: a.title }));
+    if (a.entryTrace) head.append(" ", whyBtn(() => arbStory(a)));
     const m = MATCHED[a.matchedBy];
     if (m) head.append(el("span", { class: a.matchedBy === "auto" ? "tag warn" : "tag", text: m, title: a.matchedBy === "auto" ? "Found by title matching — check both questions really resolve the same way" : "" }));
     return el("td", { class: "title" }, head, el("div", { class: "meta", text: a.kindLabel }), legList(a.legs, a.status === "closed" ? "exitPrice" : "entryPrice"));
@@ -718,12 +799,222 @@
     }
   }
 
+  // ---------- how the bot decides ----------
+  const STAGE_LABEL = { filters: "Filters", signal: "Signal", position: "Position", risk: "Risk", fill: "Trade" };
+  const STAGE_TITLE = { filters: "1 · Market filters", signal: "2 · Entry signal", position: "3 · Position", risk: "4 · Risk limits", fill: "5 · Trade" };
+  const STAGE_ORDER = ["filters", "signal", "position", "risk", "fill"];
+  const OUTCOME = {
+    traded: ["ok", "Traded"], alerted: ["info", "Alert"], risk_blocked: ["no", "Blocked by risk"],
+    skipped: ["info", "Skipped"], not_filled: ["no", "Not filled"], near_miss: ["info", "Near miss"],
+  };
+  function whyBtn(fn) {
+    const b = el("button", { class: "btn why", type: "button", title: "See every check that led to this trade", text: "Why?" });
+    b.addEventListener("click", (ev) => { ev.stopPropagation(); fn(); });
+    return b;
+  }
+  function checklist(checks) {
+    const wrap = el("div");
+    for (const stage of STAGE_ORDER) {
+      const list = (checks || []).filter((c) => c.stage === stage);
+      if (!list.length) continue;
+      const box = el("div", { class: "story-stage" }, el("h4", { text: STAGE_TITLE[stage] }));
+      for (const c of list) {
+        box.append(el("div", { class: `chk ${c.ok ? "ok" : "bad"}` },
+          el("span", { class: "i", text: c.ok ? "✓" : "✗", "aria-label": c.ok ? "passed" : "failed" }),
+          el("span", { class: "n", text: c.name }),
+          el("span", { class: "d", text: c.detail })));
+      }
+      wrap.append(box);
+    }
+    return wrap;
+  }
+  function openStory(head, checks, extra) {
+    const body = $("storyBody");
+    const close = el("button", { class: "btn close", type: "button", text: "Close" });
+    close.addEventListener("click", () => $("story").close());
+    body.replaceChildren(close, ...head, checks && checks.length ? checklist(checks) : el("p", { class: "meta", text: "This trade was opened before the bot recorded its checks." }), ...(extra || []));
+    const d = $("story");
+    if (!d.open) d.showModal();
+  }
+  function positionStory(p, rulesById) {
+    const rule = rulesById[p.ruleId]?.name || p.ruleId;
+    const head = [
+      el("h3", { text: p.title }),
+      el("div", { class: "meta", text: `${rule} · ${p.platform === "kalshi" ? "Kalshi" : "Polymarket"} · ${p.side.toUpperCase()} · opened ${new Date(p.entryAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }),
+    ];
+    const after = el("div", { class: "story-stage" });
+    if (p.status === "open") {
+      const pnl = p.unrealizedPnlUsd || 0;
+      after.append(el("h4", { text: "6 · Since then" }),
+        el("div", { class: "chk ok" }, el("span", { class: "i", text: "•" }), el("span", { class: "n", text: "Worth now" }),
+          el("span", { class: "d" }, `${cents(p.lastMarkPrice)} (bought at ${cents(p.entryPrice)}) · P/L `, pnlNode(pnl))));
+      if (p.peakMarkPrice != null) after.append(el("div", { class: "chk ok" }, el("span", { class: "i", text: "•" }), el("span", { class: "n", text: "Best price so far" }), el("span", { class: "d", text: cents(p.peakMarkPrice) })));
+      after.append(el("p", { class: "meta", text: "Each check the bot re-prices this at the bid and tests its exits (stop loss, trailing stop, take profit, time limits) before looking for new trades." }));
+    } else {
+      after.append(el("h4", { text: "6 · How it closed" }),
+        el("div", { class: `chk ${(p.realizedPnlUsd || 0) >= 0 ? "ok" : "bad"}` }, el("span", { class: "i", text: (p.realizedPnlUsd || 0) >= 0 ? "✓" : "✗" }),
+          el("span", { class: "n", text: REASONS[p.exitReason] || p.exitReason || "Closed" }),
+          el("span", { class: "d" }, `${p.exitDetail ? p.exitDetail + " · " : ""}${cents(p.entryPrice)} → ${cents(p.exitPrice)} · P/L `, pnlNode(p.realizedPnlUsd || 0))));
+    }
+    openStory(head, p.entryTrace, [after]);
+  }
+  function arbStory(a) {
+    const head = [el("h3", { text: a.title }), el("div", { class: "meta", text: `${a.kindLabel} · opened ${new Date(a.openedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` })];
+    const after = el("div", { class: "story-stage" }, el("h4", { text: a.status === "open" ? "6 · Since then" : "6 · How it closed" }));
+    after.append(el("div", { class: "chk ok" }, el("span", { class: "i", text: "•" }), el("span", { class: "n", text: a.status === "open" ? "Locked in" : "Result" }),
+      el("span", { class: "d" }, a.status === "open" ? "" : `${REASONS[a.closeReason] || a.closeReason} · `, pnlNode(a.status === "open" ? a.expectedProfitUsd : a.realizedPnlUsd || 0), a.status === "open" ? " if every leg settles as expected" : ` (expected ${usd(a.expectedProfitUsd)})`)));
+    openStory(head, a.entryTrace, [after]);
+  }
+  function decisionStory(d, rulesById) {
+    const rule = rulesById[d.ruleId]?.name || (state.ruleNames || {})[d.ruleId] || d.ruleId;
+    const [k, label] = OUTCOME[d.outcome] || ["info", d.outcome];
+    openStory([el("h3", { text: d.market.title }), el("div", { class: "meta" }, `${rule} · ${d.market.platform === "kalshi" ? "Kalshi" : "Polymarket"} · YES ${cents(d.market.yesPrice)} · `, el("span", { class: `outcome ${k}`, text: label }))], d.checks);
+  }
+
+  let replayToken = 0;
+  let lastTraceAt = null;
+  function scannerIdle(text) {
+    $("scanner").replaceChildren(el("div", { class: "meta", text }));
+  }
+  function playReplay(sample, rulesById) {
+    const token = ++replayToken;
+    const box = $("scanner");
+    if (!sample || !sample.length) { scannerIdle("Nothing to replay yet."); return; }
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const show = (s, upto, failed) => {
+      const rule = rulesById[s.ruleId]?.name || (state.ruleNames || {})[s.ruleId] || s.ruleId;
+      const dots = el("div", { class: "scan-dots" });
+      const reach = STAGE_ORDER.indexOf(s.stage);
+      STAGE_ORDER.forEach((st, i) => {
+        let c = "scan-dot";
+        if (i < upto || (i === upto && !failed && upto <= reach)) c += " on";
+        if (failed && i === upto) c += " fail";
+        dots.append(el("span", { class: c }, (i < upto || (i === upto && !failed)) && i <= reach ? "✓ " : failed && i === upto ? "✗ " : "", STAGE_LABEL[st]));
+      });
+      box.replaceChildren(
+        el("div", { class: "scan-head" }, el("span", { class: "scan-title", text: s.title }), el("span", { class: "meta", text: `${rule} · ${s.platform === "kalshi" ? "Kalshi" : "Polymarket"}` })),
+        dots,
+        el("div", { class: "scan-reason", text: failed ? `Dropped: ${s.fail || ""}` : upto >= reach && s.passed ? "Passed every check → trade / alert" : "" }),
+      );
+    };
+    if (reduce) {
+      const s = sample.find((x) => x.passed) || sample[0];
+      show(s, STAGE_ORDER.indexOf(s.stage), !s.passed);
+      return;
+    }
+    let i = 0;
+    const nextMarket = () => {
+      if (token !== replayToken) return;
+      if (i >= sample.length) { scannerIdle(`Replayed ${sample.length} of this check's decisions. Next check soon.`); return; }
+      const s = sample[i++];
+      const reach = STAGE_ORDER.indexOf(s.stage);
+      let st = 0;
+      const step = () => {
+        if (token !== replayToken) return;
+        const failing = !s.passed && st === reach;
+        show(s, st, failing);
+        if (st < reach) { st++; setTimeout(step, 140); return; }
+        setTimeout(nextMarket, failing ? 650 : s.passed ? 1400 : 500);
+      };
+      step();
+    };
+    nextMarket();
+  }
+
+  function renderDecide(rulesById) {
+    const loop = state.loop || {};
+    const t = loop.trace;
+    const pipe = $("pipeline");
+    pipe.replaceChildren();
+    if (!loop.enabled || !t) {
+      $("decideNote").textContent = loop.enabled ? "Waiting for the first check…" : "The live scan shows here while npm run paper:watch is running. Trade stories (the Why? buttons) work any time.";
+      scannerIdle(loop.enabled ? "Waiting for the first check…" : "Not scanning right now.");
+      $("funnelBody").replaceChildren(emptyRow(7, "—"));
+      $("decisionList").replaceChildren(el("li", { class: "empty", text: "—" }));
+      $("arbFunnel").textContent = "";
+      $("arbNear").replaceChildren();
+      return;
+    }
+    const sum = (k) => t.rules.reduce((a, r) => a + r[k], 0);
+    const paperDone = t.rules.filter((r) => r.action === "paper").reduce((a, r) => a + r.done, 0);
+    const alertDone = t.rules.filter((r) => r.action === "alert").reduce((a, r) => a + r.done, 0);
+    $("decideNote").textContent = `Last check ${clock(t.at)}: ${t.markets} markets × ${t.rules.length} strategies = ${sum("scanned").toLocaleString()} checks. Click a signal or any Why? button to see the full checklist.`;
+    const stages = [
+      ["Checked", sum("scanned"), "market × strategy"],
+      ["Passed filters", sum("passedFilters"), "price, liquidity, spread, timing"],
+      ["Entry signal", sum("signals"), "the strategy's trigger"],
+      ["Position OK", sum("passedPosition"), "not held, no cool-down"],
+      ["Risk OK", sum("passedRisk"), "pause, caps, bankroll"],
+      ["Done", paperDone + alertDone, `${paperDone} paper trade${paperDone === 1 ? "" : "s"} · ${alertDone} alert${alertDone === 1 ? "" : "s"}`],
+    ];
+    const top = stages[0][1] || 1;
+    stages.forEach(([lbl, n, sub], i) => {
+      const prev = i ? stages[i - 1][1] : n;
+      const w = n ? Math.max(3, (Math.log10(n + 1) / Math.log10(top + 1)) * 100) : 0; // log scale: later stages stay visible
+      pipe.append(el("div", { class: `stage-box${i === stages.length - 1 ? " final" : ""}` },
+        el("div", { class: "lbl", text: lbl }),
+        el("div", { class: "num", text: n.toLocaleString() }),
+        el("div", { class: "pct" }, i ? `${prev ? Math.round((n / prev) * 100) : 0}% of previous` : "", el("span", { class: "sub", text: sub })),
+        el("div", { class: "bar" }, el("i", { style: `width:${w}%` }))));
+    });
+
+    const fb = $("funnelBody");
+    fb.replaceChildren();
+    for (const r of t.rules) {
+      const reason = r.topReasons[0];
+      fb.append(el("tr", null,
+        el("td", null, el("div", { text: r.name }), el("div", { class: "meta", text: r.action === "paper" ? "paper trades" : "alerts only" })),
+        el("td", { class: "num", text: String(r.scanned) }),
+        el("td", { class: "num", text: String(r.passedFilters) }),
+        el("td", { class: "num", text: String(r.signals) }),
+        el("td", { class: "num", text: String(r.passedRisk) }),
+        el("td", { class: "num" }, el("strong", { text: String(r.done) })),
+        el("td", { class: "meta", text: reason ? `${reason.name} (${reason.count})` : "—", title: r.topReasons.map((x) => `${STAGE_LABEL[x.stage]}: ${x.name} — ${x.count}`).join("\n") }),
+      ));
+    }
+
+    const dl = $("decisionList");
+    dl.replaceChildren();
+    const order = { traded: 0, alerted: 1, risk_blocked: 2, not_filled: 3, skipped: 4, near_miss: 5 };
+    const sorted = [...t.decisions].sort((a, b) => (order[a.outcome] ?? 9) - (order[b.outcome] ?? 9));
+    const acted = sorted.filter((d) => d.outcome !== "near_miss");
+    const near = sorted.filter((d) => d.outcome === "near_miss");
+    const NEAR_SHOWN = 6;
+    const ds = [...acted.slice(0, 30), ...near.slice(0, NEAR_SHOWN)];
+    if (!ds.length) dl.append(el("li", { class: "empty", text: "No market got past the filters this check." }));
+    for (const d of ds) {
+      const [k, label] = OUTCOME[d.outcome] || ["info", d.outcome];
+      const fail = d.checks.find((c) => !c.ok);
+      const li = el("li", { tabindex: "0", role: "button" },
+        el("span", { class: `outcome ${k}`, text: label }),
+        el("div", null, el("div", { text: d.market.title }), el("div", { class: "meta", text: `${rulesById[d.ruleId]?.name || (state.ruleNames || {})[d.ruleId] || d.ruleId}${fail ? ` — ${fail.name}: ${fail.detail}` : ""}` })));
+      li.addEventListener("click", () => decisionStory(d, rulesById));
+      li.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); decisionStory(d, rulesById); } });
+      dl.append(li);
+    }
+    if (near.length > NEAR_SHOWN) dl.append(el("li", { class: "empty", text: `+ ${near.length - NEAR_SHOWN} more near misses (passed filters, no signal yet)` }));
+
+    const a = loop.arbTrace;
+    $("arbFunnel").textContent = a
+      ? `${a.funnel.eventsCached} events cached → ${a.funnel.autoPairs} auto-matched + ${a.funnel.confirmedPairs} confirmed pairs, ${a.funnel.exclusiveEvents} exclusive events → ${a.funnel.setsChecked} sets priced → ${a.funnel.profitableBeforeLimits} cheaper than their payout → ${a.funnel.opportunities} worth taking → ${a.funnel.opened} opened`
+      : "Arbitrage is off or hasn't run yet.";
+    const an = $("arbNear");
+    an.replaceChildren();
+    for (const n of a?.nearMisses || []) an.append(el("li", null, el("span", { class: "outcome info", text: "Near miss" }), el("div", null, el("div", { text: n.title }), el("div", { class: "meta", text: `${n.kindLabel} — ${n.reason}` }))));
+
+    if (t.at !== lastTraceAt) {
+      lastTraceAt = t.at;
+      playReplay(t.sample, rulesById);
+    }
+  }
+
   function render() {
     if (!state || !state.ok) return;
     const rulesById = Object.fromEntries(state.rules.map((r) => [r.ruleId, r]));
     $("demoBadge").hidden = !state.ledger.demo;
     $("ledgerPath").textContent = `Trade file: ${state.ledger.path}`;
     renderKpis();
+    renderDecide(rulesById);
     renderArbs();
     renderUnusual(rulesById);
     renderChart();
@@ -751,6 +1042,10 @@
       renderStatus();
     }
   }
+  $("replayBtn").addEventListener("click", () => {
+    const t = state && state.loop && state.loop.trace;
+    if (t) playReplay(t.sample, Object.fromEntries(state.rules.map((r) => [r.ruleId, r])));
+  });
   let resizeTimer;
   window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => state && renderChart(), 150); });
   poll();

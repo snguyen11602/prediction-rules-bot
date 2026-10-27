@@ -140,6 +140,18 @@ trading has stopped. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C fi
 and exits. Don't run `paper:watch` and `paper -- --loop` at the same time; the second one just waits
 for the lock.
 
+**How the bot decides.** While `paper:watch` runs, the top of the page shows the last check as a
+funnel: every market × strategy → passed filters → entry signal → position OK → risk OK → traded or
+alerted. A replay strip steps through that check market by market and shows where each one dropped
+out (▶ Replay last scan to run it again). A per-strategy table lists the check that drops the most
+markets, and "Signals this check" lists every trade, alert, risk block, and near miss.
+
+Every trade has a **Why?** button. It opens the full checklist the bot passed for that trade, with
+the real numbers (for example "YES 89.5¢ is within 85–95¢" or "5% of $1,000, capped at $50 = $50"),
+the paper fill, and what has happened since. The engine records these checks from the same code
+that makes the decision (`src/engine/trace.ts`), so the dashboard can't drift from what the bot actually did.
+Trades opened before this version have no checklist.
+
 ### Try the full flow offline
 
 ```bash

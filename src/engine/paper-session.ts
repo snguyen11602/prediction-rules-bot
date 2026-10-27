@@ -33,6 +33,7 @@ import {
   platformsFromRules,
 } from "./runner.js";
 import { dayKeyLA } from "./clock.js";
+import { cents, type ScanTrace } from "./trace.js";
 import { loadSeries, saveSeries, seriesPathFor } from "./series.js";
 import { ArbitrageSchema, arbitrageAsRule } from "../rules/schema.js";
 import {
@@ -89,6 +90,9 @@ export interface PaperCycleResult {
     closed: number;
     realizedPnlUsd: number;
   };
+  /** What the scan looked at and why it did / didn't trade (for the dashboard). */
+  trace?: ScanTrace;
+  arbTrace?: import("./arb-runtime.js").ArbTrace;
 }
 
 function money(n: number): string {
@@ -344,6 +348,8 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     };
 
     let entrySignals = 0;
+    let trace: ScanTrace | undefined;
+    let arbTrace: import("./arb-runtime.js").ArbTrace | undefined;
     let skipReasons: Record<string, number> = {};
     if (markets.length > 0) {
       const res = await evaluateRules({
@@ -357,7 +363,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         paperAll: opts.paperAll,
         series,
         skipMarket,
-        onSignal: async ({ rule, market, side, sizeUsd }) => {
+        onSignal: async ({ rule, market, side, sizeUsd, checks }) => {
           if (!papersRule(rule, opts.paperAll)) return false;
           const price = buyPrice(market, side, rule.paper.slippage);
           const adapter = adapterFor(market.platform);
@@ -391,6 +397,13 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
           });
           // Mark at the sell side immediately so the spread shows up as unrealized cost.
           markPosition(pos, sellPrice(market, side), now, "open");
+          const fillCheck = {
+            stage: "fill" as const,
+            name: "Paper fill",
+            ok: true,
+            detail: `bought ${side.toUpperCase()} ${Number.isInteger(pos.contracts) ? pos.contracts : pos.contracts.toFixed(2)} @ ${cents(price)} = $${costUsd.toFixed(2)} + $${fee.toFixed(2)} fee (ask${rule.paper.slippage ? ` + ${cents(rule.paper.slippage)} slippage` : ""})`,
+          };
+          pos.entryTrace = [...checks, fillCheck];
           opened += 1;
           await push({
             at: now.toISOString(),
@@ -402,10 +415,11 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
             sizeUsd: costUsd,
             data: { positionId: pos.id, price, contracts: pos.contracts, feeUsd: fee },
           });
-          return costUsd;
+          return { exposureUsd: costUsd, fill: fillCheck };
         },
       });
       entrySignals = res.signals;
+      trace = res.trace;
       skipReasons = res.skipReasons;
       for (const [k, v] of history) ledger.lastPrices[k] = v;
       pruneLastPrices(ledger, now);
@@ -415,7 +429,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     if (arbCfg && arbCtx && fetched.length > 0) {
       const universePath = universePathFor(opts.ledgerPath);
       const universe = await loadUniverse(universePath);
-      const { quotes } = await findOpportunities({
+      const { quotes, trace: aTrace } = await findOpportunities({
         cfg: arbCfg,
         rulesPath: opts.rulesPath,
         adapters,
@@ -428,6 +442,8 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       arb.opportunities = quotes.map((q) => summarizeQuote(q, arbCfg));
       await emitArbSignals(quotes, push, now, { action: arbCfg.action, cfg: arbCfg });
       if (arbCfg.action === "paper") arb.opened += (await openArbGroups(arbCtx, quotes)).opened;
+      aTrace.funnel.opened = arb.opened;
+      arbTrace = aTrace;
       await saveUniverse(universePath, universe).catch(() => undefined);
     }
 
@@ -469,7 +485,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     });
 
     arb.realizedPnlUsd = Math.round(arb.realizedPnlUsd * 100) / 100;
-    return { events, opened, closed, realizedPnlUsd: Math.round(realized * 100) / 100, arb };
+    return { events, opened, closed, realizedPnlUsd: Math.round(realized * 100) / 100, arb, trace, arbTrace };
   });
 }
 

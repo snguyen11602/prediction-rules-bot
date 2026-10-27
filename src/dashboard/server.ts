@@ -6,7 +6,8 @@ import { loadRulesFile } from "../rules/loader.js";
 import { loadLedger, summarizeLedger, type ArbGroupRecord, type PaperLedger, type PaperPosition } from "../ledger/paper.js";
 import { ARB_RULE_ID } from "../rules/schema.js";
 import { kindLabel } from "../engine/arb.js";
-import type { ArbOpportunity } from "../engine/arb-runtime.js";
+import type { ArbOpportunity, ArbTrace } from "../engine/arb-runtime.js";
+import type { ScanTrace } from "../engine/trace.js";
 import { loadSeries, seriesPathFor } from "../engine/series.js";
 import type { EngineEvent } from "../types.js";
 
@@ -34,6 +35,9 @@ export interface LoopState {
   /** Arbitrage opportunities found on the latest check. */
   arbOpportunities?: ArbOpportunity[];
   arbCheckedAt?: string;
+  /** The latest check's decision trace (funnel, decisions, replay sample). */
+  trace?: ScanTrace;
+  arbTrace?: ArbTrace;
   /** Unusual moves flagged on the latest check. */
   unusualMoves?: Array<{
     ruleId?: string;
@@ -80,6 +84,8 @@ function slimPosition(p: PaperPosition) {
     exitReason: p.exitReason,
     exitDetail: p.exitDetail,
     realizedPnlUsd: p.realizedPnlUsd,
+    peakMarkPrice: p.peakMarkPrice,
+    entryTrace: p.entryTrace,
   };
 }
 
@@ -106,6 +112,7 @@ function arbView(ledger: PaperLedger, g: ArbGroupRecord) {
     expectedProfitUsd: g.expectedProfitUsd,
     edge: g.edge,
     realizedPnlUsd: g.realizedPnlUsd,
+    entryTrace: g.entryTrace,
     /** Open arbs: P/L if every leg were sold right now (usually below the locked-in profit until it settles). */
     markPnlUsd: Math.round((unrealized + realizedSoFar) * 100) / 100,
     legs: legs.map((l) => ({
