@@ -44,6 +44,11 @@ export const EntryConditionsSchema = z.object({
    * Default "any" (original behaviour: absolute move in either direction).
    */
   move_direction: z.enum(["up", "down", "any"]).default("any"),
+  /**
+   * Ignore the prior observation if it is older than this, so "moved since the
+   * last check" doesn't silently become "moved since yesterday" when runs are sparse.
+   */
+  max_prior_age_minutes: z.number().positive().optional(),
   /** Preferred side when entering. Default yes. */
   side: z.enum(["yes", "no"]).default("yes"),
 });

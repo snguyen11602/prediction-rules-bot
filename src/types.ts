@@ -27,8 +27,13 @@ export interface NormalizedMarket {
    * "resolved" = outcome known (see resolvedOutcome).
    */
   status?: "open" | "closed" | "resolved";
-  /** Winning side once status === "resolved". */
+  /** Winning side once status === "resolved" (omitted for split / non-binary payouts). */
   resolvedOutcome?: SignalSide;
+  /**
+   * YES payout (0–1) once resolved, when it isn't simply 1 or 0
+   * (e.g. a 50/50 resolution or a scalar settlement). NO pays 1 − this.
+   */
+  settlementYesPrice?: number;
   /** Free-form tags / categories from the platform. */
   tags?: string[];
   url?: string;
@@ -66,7 +71,8 @@ export type PaperExitReason =
   | "stop_loss"
   | "time_to_resolve"
   | "max_hold"
-  | "resolved";
+  | "resolved"
+  | "manual";
 
 /**
  * Append-only journal row in the paper ledger. v1 ledgers only had opening

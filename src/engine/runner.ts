@@ -33,8 +33,15 @@ export interface RunnerOptions {
    * previous scan are suppressed until they stop matching and match again.
    */
   lastMatched?: Set<string>;
-  onSignal?: (args: SignalArgs) => Promise<boolean | void> | boolean | void;
+  /**
+   * Called for each entry signal. In paper mode, return the USD exposure actually
+   * added (or `true` for the signalled size) when a position was opened; anything
+   * else means nothing was filled and no risk capacity is consumed.
+   */
+  onSignal?: (args: SignalArgs) => Promise<SignalResult> | SignalResult;
 }
+
+export type SignalResult = number | boolean | void;
 
 export function marketKey(m: Pick<NormalizedMarket, "platform" | "id">): string {
   return `${m.platform}:${m.id}`;
@@ -122,7 +129,7 @@ export function papersRule(rule: Rule, paperAll = false): boolean {
 
 export async function evaluateRules(
   opts: EvaluateOptions,
-): Promise<{ signals: number; suppressed: number; skipped: number }> {
+): Promise<{ signals: number; suppressed: number; skipped: number; skipReasons: Record<string, number> }> {
   const { rules, markets, now, push, history, riskByRule } = opts;
   const dk = dayKeyLA(now);
   // Snapshot priors first so every rule compares against the previous scan,
@@ -134,6 +141,7 @@ export async function evaluateRules(
   let signals = 0;
   let suppressed = 0;
   let skipped = 0;
+  const skipReasons: Record<string, number> = {};
 
   for (const rule of rules) {
     if (!riskByRule.has(rule.id)) riskByRule.set(rule.id, defaultRiskState(dk));
@@ -161,6 +169,7 @@ export async function evaluateRules(
         const why = opts.skipMarket(rule, market, match.side);
         if (why) {
           skipped += 1;
+          skipReasons[why] = (skipReasons[why] ?? 0) + 1;
           continue;
         }
       }
@@ -208,21 +217,29 @@ export async function evaluateRules(
         ? await opts.onSignal({ rule, market, side: match.side, sizeUsd, reason: match.reason })
         : undefined;
 
-      // Only real (hypothetical) fills consume risk capacity. Alert-only runs
+      // Only confirmed (hypothetical) fills consume risk capacity. Alert-only runs
       // never open positions, so they must not count toward max_open_positions.
-      if (fills && filled !== false) {
+      if (fills && (filled === true || typeof filled === "number")) {
         riskState.openPositions += 1;
-        if (riskState.openExposureUsd != null) riskState.openExposureUsd += sizeUsd;
+        if (riskState.openExposureUsd != null) {
+          riskState.openExposureUsd += typeof filled === "number" ? filled : sizeUsd;
+        }
       }
     }
   }
 
   for (const m of markets) history.set(marketKey(m), { yesPrice: m.yesPrice, at: now.toISOString() });
   if (opts.lastMatched) {
-    opts.lastMatched.clear();
+    // Only forget matches for markets we actually saw this scan. A market missing
+    // because of an adapter error or listing churn keeps its state, so it doesn't
+    // re-alert the moment it reappears.
+    const seen = new Set(markets.map(marketKey));
+    for (const k of [...opts.lastMatched]) {
+      if (seen.has(k.slice(k.indexOf("|") + 1)) && !matchedNow.has(k)) opts.lastMatched.delete(k);
+    }
     for (const k of matchedNow) opts.lastMatched.add(k);
   }
-  return { signals, suppressed, skipped };
+  return { signals, suppressed, skipped, skipReasons };
 }
 
 export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {

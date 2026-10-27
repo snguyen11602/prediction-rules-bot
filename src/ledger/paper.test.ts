@@ -86,7 +86,7 @@ test("risk state is rebuilt from the ledger", () => {
   assert.equal(riskStateFromLedger(l, "other", NOW).openPositions, 0);
 });
 
-test("v1 ledgers migrate their fills to open positions", async () => {
+test("v1 ledgers keep their fills in the journal but open no positions", async () => {
   const file = await tmp("v1.json");
   await writeFile(
     file,
@@ -110,9 +110,10 @@ test("v1 ledgers migrate their fills to open positions", async () => {
   );
   const l = await loadLedger(file, { demo: false });
   assert.equal(l.version, 2);
-  assert.equal(l.positions.length, 1);
-  assert.equal(l.positions[0].contracts, 200);
-  assert.equal(l.positions[0].status, "open");
+  assert.equal(l.positions.length, 0, "v1 mixed demo/real and duplicate fills — never trust them as positions");
+  assert.equal(l.fills.length, 1);
+  assert.equal(l.migratedFromV1?.legacyFills, 1);
+  assert.equal(riskStateFromLedger(l, "r1", NOW).openPositions, 0);
 });
 
 test("missing ledger starts empty; corrupt ledger throws instead of being overwritten", async () => {
@@ -129,6 +130,19 @@ test("demo and real-data ledgers never mix", async () => {
   await saveLedger(file, emptyLedger(true, NOW));
   await assert.rejects(loadLedger(file, { demo: false }), /refusing to mix/);
   assert.equal((await loadLedger(file, { demo: true })).demo, true);
+});
+
+test("a lock left by a dead process is taken over; a live foreign lock is never deleted", async () => {
+  const file = await tmp("stale.json");
+  // pid 2^22+ is far above Linux's default pid_max, so it is not running.
+  await writeFile(`${file}.lock`, JSON.stringify({ pid: 4_194_999, token: "old", at: NOW.toISOString() }));
+  assert.equal(await withLedgerLock(file, async () => "ok"), "ok");
+
+  await withLedgerLock(file, async () => {
+    // Someone replaces our lock mid-run (shouldn't happen, but must not be clobbered).
+    await writeFile(`${file}.lock`, JSON.stringify({ pid: process.pid, token: "someone-else", at: NOW.toISOString() }));
+  });
+  assert.match(await readFile(`${file}.lock`, "utf8"), /someone-else/);
 });
 
 test("ledger lock blocks a concurrent run and is released afterwards", async () => {

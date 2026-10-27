@@ -32,15 +32,30 @@ async function main() {
     return;
   }
 
+  // Ctrl+C: finish the cycle in progress (so the ledger is saved and the lock
+  // released), then exit. A second Ctrl+C exits immediately.
+  let stopping = false;
+  let running = false;
+  const onSignal = () => {
+    if (stopping || !running) process.exit(130);
+    stopping = true;
+    console.error("Stopping after the current paper cycle… (Ctrl+C again to force)");
+  };
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+
   // eslint-disable-next-line no-console
   console.log(`Paper loop every ${args.intervalSec}s → ${ledgerPath} (Ctrl+C to stop)${args.demo ? " [DEMO]" : ""}`);
-  for (;;) {
+  while (!stopping) {
+    running = true;
     try {
       await cycle();
     } catch (err) {
       // Keep looping on transient failures (e.g. a lock held by a cron run).
       console.error(`Paper cycle failed: ${(err as Error).message}`);
     }
+    running = false;
+    if (stopping) break;
     await sleep(Math.max(5, args.intervalSec) * 1000);
   }
 }

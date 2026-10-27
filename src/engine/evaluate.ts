@@ -92,6 +92,10 @@ export function evaluateEntry(
 
   if (e.yes_price_move_abs != null || e.yes_price_move_pct != null) {
     if (!prior) return null; // need history (watch mode / previous paper run)
+    if (e.max_prior_age_minutes != null) {
+      const ageMin = (now.getTime() - new Date(prior.at).getTime()) / 60_000;
+      if (!(ageMin <= e.max_prior_age_minutes)) return null;
+    }
     const delta = market.yesPrice - prior.yesPrice;
     if (e.move_direction === "up" && delta <= 0) return null;
     if (e.move_direction === "down" && delta >= 0) return null;

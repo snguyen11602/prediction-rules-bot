@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { RiskState } from "../engine/risk.js";
@@ -13,6 +13,9 @@ import type { PaperExitReason, PaperFill, PlatformId, SignalSide } from "../type
  *  - fills:      append-only journal of open/close fills (v1 rows still parse)
  *  - ruleState:  consecutive-loss streak + pause per rule, persisted across runs
  *  - lastPrices: last observed YES price per market, so move rules work across runs
+ *
+ * Exposure (for the bankroll gate) is open cost basis; entry fees show up in
+ * unrealized PnL and, once closed, in realized PnL.
  *
  * PnL math (binary contracts, prices 0–1 for the held side):
  *   contracts  = costUsd / entryPrice
@@ -69,6 +72,8 @@ export interface PaperLedger {
   fills: PaperFill[];
   ruleState: Record<string, RulePaperState>;
   lastPrices: Record<string, { yesPrice: number; at: string }>;
+  /** Set when this ledger was upgraded from v1; legacy fills stay in `fills` only. */
+  migratedFromV1?: { at: string; legacyFills: number };
 }
 
 interface PaperLedgerV1 {
@@ -92,28 +97,16 @@ export function emptyLedger(demo: boolean, now = new Date()): PaperLedger {
   };
 }
 
-/** v1 ledgers only recorded opening fills; carry each forward as an open position. */
+/**
+ * v1 ledgers recorded opening fills only, mixed --demo and real-data runs in one
+ * file, and re-filled the same markets on every run. Those rows can't be trusted
+ * as positions, so they are kept in the journal for reference (no `kind`, no
+ * positionId) and the v2 book starts flat.
+ */
 function migrateV1(v1: PaperLedgerV1, demo: boolean): PaperLedger {
   const ledger = emptyLedger(demo);
-  for (const f of v1.fills ?? []) {
-    const positionId = f.positionId ?? f.id;
-    ledger.positions.push({
-      id: positionId,
-      ruleId: f.ruleId,
-      platform: f.platform,
-      marketId: f.marketId,
-      title: f.title,
-      side: f.side,
-      status: "open",
-      entryAt: f.at,
-      entryPrice: f.price,
-      contracts: f.price > 0 ? f.sizeUsd / f.price : 0,
-      costUsd: f.sizeUsd,
-      entryFeeUsd: 0,
-      hypothetical: true,
-    });
-    ledger.fills.push({ ...f, kind: "open", positionId, contracts: f.price > 0 ? f.sizeUsd / f.price : 0 });
-  }
+  ledger.fills.push(...(v1.fills ?? []));
+  ledger.migratedFromV1 = { at: new Date().toISOString(), legacyFills: v1.fills?.length ?? 0 };
   return ledger;
 }
 
@@ -155,44 +148,85 @@ export async function loadLedger(filePath: string, opts: { demo: boolean }): Pro
   return ledger;
 }
 
-/** Atomic write: temp file + rename, so a crash can't leave half a ledger. */
+/** Atomic, durable write: temp file + fsync + rename, so a crash can't leave half a ledger. */
 export async function saveLedger(filePath: string, ledger: PaperLedger): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
+  const fh = await open(tmp, "w");
+  try {
+    await fh.writeFile(`${JSON.stringify(ledger, null, 2)}\n`, "utf8");
+    await fh.sync();
+  } finally {
+    await fh.close();
+  }
   await rename(tmp, filePath);
 }
 
-/** Single-writer lock so overlapping paper runs (cron, --loop) can't clobber each other. */
+interface LockInfo {
+  pid: number;
+  token: string;
+  at: string;
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM"; // exists, owned by someone else
+  }
+}
+
+async function readLock(lockPath: string): Promise<LockInfo | null> {
+  try {
+    return JSON.parse(await readFile(lockPath, "utf8")) as LockInfo;
+  } catch {
+    return null; // missing, or a half-written / foreign file
+  }
+}
+
+/**
+ * Single-writer lock so overlapping paper runs (cron, --loop) can't clobber each other.
+ * A lock is stale when its process is gone (e.g. killed with Ctrl+C) or it is older than
+ * 15 minutes. Stale locks are taken over by an atomic rename, so two racing runs can't
+ * both claim it, and a run only ever deletes the lock carrying its own token.
+ */
 export async function withLedgerLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
   await mkdir(path.dirname(filePath), { recursive: true });
   const lockPath = `${filePath}.lock`;
+  const token = randomUUID();
   for (let attempt = 0; ; attempt++) {
     try {
       const fh = await open(lockPath, "wx");
-      await fh.writeFile(JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+      await fh.writeFile(JSON.stringify({ pid: process.pid, token, at: new Date().toISOString() } satisfies LockInfo));
       await fh.close();
       break;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST" || attempt > 0) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST" || attempt >= 2) {
         throw new Error(
           `Paper ledger is locked (${lockPath}). Another paper run may be in progress; ` +
             "if not, delete the lock file.",
         );
       }
-      const age = Date.now() - (await stat(lockPath)).mtimeMs;
-      if (age < LOCK_STALE_MS) {
+      const info = await readLock(lockPath);
+      const ageMs = await stat(lockPath).then((s) => Date.now() - s.mtimeMs, () => 0);
+      const stale = ageMs > LOCK_STALE_MS || (info != null && info.pid !== process.pid && !pidAlive(info.pid));
+      if (!stale) {
         throw new Error(
-          `Paper ledger is locked by another run (${lockPath}, ${Math.round(age / 1000)}s old).`,
+          `Paper ledger is locked by another run (pid ${info?.pid ?? "?"}, ${Math.round(ageMs / 1000)}s old): ${lockPath}`,
         );
       }
-      await unlink(lockPath).catch(() => undefined); // stale lock — take it over
+      // Atomic takeover: only one racer's rename succeeds; the loser retries and sees the new lock.
+      await rename(lockPath, `${lockPath}.stale-${token}`)
+        .then(() => unlink(`${lockPath}.stale-${token}`))
+        .catch(() => undefined);
     }
   }
   try {
     return await fn();
   } finally {
-    await unlink(lockPath).catch(() => undefined);
+    const info = await readLock(lockPath);
+    if (info?.token === token) await unlink(lockPath).catch(() => undefined);
   }
 }
 
@@ -357,7 +391,7 @@ export function riskStateFromLedger(ledger: PaperLedger, ruleId: string, now = n
     if (p.ruleId !== ruleId) continue;
     if (p.status === "open") {
       openCount += 1;
-      exposure += p.costUsd + p.entryFeeUsd;
+      exposure += p.costUsd;
     } else {
       realized += p.realizedPnlUsd ?? 0;
       if (p.exitAt && dayKeyLA(new Date(p.exitAt)) === dayKey) dayPnl += p.realizedPnlUsd ?? 0;
@@ -417,7 +451,7 @@ export function summarizeLedger(ledger: PaperLedger): { rules: RuleSummary[]; to
     s.feesUsd += p.entryFeeUsd + (p.exitFeeUsd ?? 0);
     if (p.status === "open") {
       s.open += 1;
-      s.exposureUsd += p.costUsd + p.entryFeeUsd;
+      s.exposureUsd += p.costUsd;
       s.unrealizedPnlUsd += p.unrealizedPnlUsd ?? 0;
     } else {
       s.closed += 1;

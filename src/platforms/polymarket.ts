@@ -61,37 +61,47 @@ function finite(n: unknown): number | undefined {
 function mapStatus(
   m: GammaMarket,
   yes: number,
-): Pick<NormalizedMarket, "status" | "resolvedOutcome"> {
+): Pick<NormalizedMarket, "status" | "resolvedOutcome" | "settlementYesPrice"> {
   if (!m.closed) return { status: "open" };
-  // Closed markets settle to outcome prices pinned at 1/0. Require either the
-  // UMA "resolved" flag or exact 0/1 prices so a halted market isn't settled early.
-  const pinned = yes >= 0.99 || yes <= 0.01;
-  const exact = yes === 1 || yes === 0;
   const umaResolved = m.umaResolutionStatus?.toLowerCase() === "resolved";
-  if (pinned && (exact || umaResolved)) {
-    return { status: "resolved", resolvedOutcome: yes >= 0.5 ? "yes" : "no" };
+  // After UMA resolution, outcomePrices are the payout — usually 1/0, but a
+  // split (e.g. 50/50) resolution pays fractionally.
+  if (umaResolved) {
+    if (yes === 1 || yes === 0) return { status: "resolved", resolvedOutcome: yes === 1 ? "yes" : "no" };
+    return { status: "resolved", settlementYesPrice: yes };
   }
+  // Without the UMA flag, only exact 0/1 prices count; a halted market
+  // trading near 0.99 must not be settled early.
+  if (yes === 1 || yes === 0) return { status: "resolved", resolvedOutcome: yes === 1 ? "yes" : "no" };
   return { status: "closed" };
 }
 
-function normalize(m: GammaMarket, fallbackId: string): NormalizedMarket | null {
+/** Polymarket reports an empty book side as bid 0 / ask 1 — not tradable prices. */
+function quote(n: unknown): number | undefined {
+  const v = finite(n);
+  return v != null && v > 0 && v < 1 ? v : undefined;
+}
+
+function normalize(m: GammaMarket): NormalizedMarket | null {
+  // getMarket() looks markets up by Gamma id, so a market without one can't be tracked.
+  if (m.id == null || m.id === "") return null;
   const prices = parseJsonArray(m.outcomePrices).map(Number);
   const yes = prices[0];
   if (!Number.isFinite(yes)) return null;
   const title = m.question ?? m.slug ?? m.id ?? "unknown";
   const liq = m.liquidityNum ?? (m.liquidity != null ? Number(m.liquidity) : undefined);
   const lifecycle = mapStatus(m, yes);
-  const bid = finite(m.bestBid);
-  const ask = finite(m.bestAsk);
+  const bid = quote(m.bestBid);
+  const ask = quote(m.bestAsk);
   return {
     platform: "polymarket",
-    id: m.id ?? m.slug ?? fallbackId,
+    id: String(m.id),
     title,
     yesPrice: clamp01(yes),
     noPrice: Number.isFinite(prices[1]) ? clamp01(prices[1]) : clamp01(1 - yes),
     lastPrice: finite(m.lastTradePrice),
-    yesBid: lifecycle.status === "open" && bid != null ? clamp01(bid) : undefined,
-    yesAsk: lifecycle.status === "open" && ask != null && ask > 0 ? clamp01(ask) : undefined,
+    yesBid: lifecycle.status === "open" ? bid : undefined,
+    yesAsk: lifecycle.status === "open" ? ask : undefined,
     liquidityUsd: Number.isFinite(liq) ? liq : undefined,
     volume24hUsd: m.volume24hr,
     closesAt: m.endDate ?? m.endDateIso,
@@ -136,7 +146,7 @@ export class PolymarketAdapter implements PlatformAdapter {
 
       for (const m of batch) {
         if (m.closed) continue;
-        const norm = normalize(m, String(offset + out.length));
+        const norm = normalize(m);
         if (!norm) continue;
         if (opts.query) {
           const q = opts.query.toLowerCase();
@@ -164,7 +174,7 @@ export class PolymarketAdapter implements PlatformAdapter {
       );
     }
     const m = (await res.json()) as GammaMarket;
-    return m && typeof m === "object" ? normalize(m, id) : null;
+    return m && typeof m === "object" ? normalize({ ...m, id: m.id ?? id }) : null;
   }
 
   // Most Polymarket markets charge no trading fee; markets that do are not modelled.

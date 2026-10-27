@@ -26,14 +26,18 @@ async function main() {
   const open = ledger.positions.filter((p) => p.status === "open");
   const closed = ledger.positions.filter((p) => p.status === "closed").slice(-20);
 
-  console.log(`OPEN (${open.length})`);
+  console.log(`OPEN (${open.length})  — close a stuck one with: npm run paper:close -- --id <id> --price <0-1>`);
   for (const p of open) {
     console.log(
-      `  ${pad(p.ruleId, 26)} ${pad(`${p.platform}:${p.marketId}`, 30)} ${p.side.toUpperCase().padEnd(3)} ` +
+      `  ${p.id.slice(0, 8)} ${pad(p.ruleId, 26)} ${pad(`${p.platform}:${p.marketId}`, 30)} ${p.side.toUpperCase().padEnd(3)} ` +
         `entry ${p.entryPrice.toFixed(3)} mark ${(p.lastMarkPrice ?? p.entryPrice).toFixed(3)} ` +
         `cost ${money(p.costUsd).padStart(9)} uPnL ${money(p.unrealizedPnlUsd ?? 0).padStart(9)}` +
         (p.marketStatus && p.marketStatus !== "open" ? ` [${p.marketStatus}]` : ""),
     );
+  }
+
+  if (ledger.migratedFromV1) {
+    console.log(`  (upgraded from a v1 ledger: ${ledger.migratedFromV1.legacyFills} legacy fill(s) kept in the journal, not opened as positions)`);
   }
 
   console.log(`\nCLOSED (last ${closed.length})`);

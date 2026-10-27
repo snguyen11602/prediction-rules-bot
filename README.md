@@ -12,6 +12,7 @@ npm run scan -- --demo   # if an API is down / blocked — uses fixtures/
 npm run watch         # poll on an interval; alerts when a market starts matching
 npm run paper         # marks/exits open paper positions, then paper-enters new signals
 npm run paper:report  # offline PnL report from the paper ledger
+npm run paper:close -- --id <id> --price <0-1>   # manually close a stuck paper position
 npm test              # unit + demo end-to-end tests (no network)
 npm run live          # exits with “not implemented / needs keys”
 ```
@@ -31,8 +32,11 @@ Node 20+ recommended. Uses `tsx` so you don’t need a build step for day-to-day
 Each `npm run paper` is one cycle against the ledger:
 
 1. **Mark & exit** every open position. Markets that dropped out of the listing are re-read by id
-   (public endpoint). Resolved markets settle at 1.00 / 0.00; otherwise the rule's `exit` block is
-   checked (stop loss → take profit → time to resolve → max hold) and the position is sold at the bid.
+   (public endpoint). Resolved markets settle at their payout (1.00 / 0.00, or a split / scalar
+   value when the platform reports one); otherwise the rule's `exit` block is checked (stop loss →
+   take profit → time to resolve → max hold) and the position is sold at the bid. If the held side
+   has **no bid** (empty book), the position is held and marked at the mid — it is never sold at 0.
+   Closed-but-unresolved and disputed markets are held until they settle.
 2. **Risk bookkeeping**: realized PnL feeds the consecutive-loss counter. After
    `fire_after_n_losses` straight losses the rule pauses for `pause_hours_after_losses`.
    Streaks and pauses persist in the ledger across runs.
@@ -41,15 +45,26 @@ Each `npm run paper` is one cycle against the ledger:
    would exceed `bankroll_usd` + realized PnL.
 
 Fill realism: buys pay the ask, sells hit the bid (NO quotes are the complement of YES quotes), plus
-optional `paper.slippage`. Kalshi fills include an *approximate* taker fee
-(`0.07 × contracts × P × (1 − P)`, rounded up); Polymarket is modelled fee-free. Settlement has no fee.
+optional `paper.slippage`. Empty book sides (bid 0 / ask 1) are treated as no quote. Kalshi fills are
+whole contracts and include an *approximate* taker fee (`0.07 × contracts × P × (1 − P)`, rounded up);
+Polymarket is modelled fee-free with fractional shares. Settlement has no fee. The bankroll gate
+counts open cost basis; entry fees show up in unrealized, then realized, PnL.
 
 Ledger: `data/paper-ledger.json` (`data/paper-ledger.demo.json` with `--demo`; the two never mix).
 It holds `positions` (entry, marks, exit, realized/unrealized PnL), an append-only `fills` journal,
-per-rule `ruleState`, and `lastPrices` so move-based rules work across runs. v1 ledgers are migrated
-on first load. Writes are atomic and a lock file stops overlapping runs.
+per-rule `ruleState`, and `lastPrices` so move-based rules work across runs. Writes are atomic
+(fsync + rename). A lock file stops overlapping runs; a lock left by a crashed or killed run is taken
+over automatically once its process is gone.
 
-Run it on a schedule (cron) or keep it running with `npm run paper -- --loop --interval 300`.
+v1 ledgers (written by the old `paper` command, which mixed `--demo` and real fills and re-bought the
+same markets every run) are upgraded with their fills kept in the journal for reference, but **no
+positions are opened from them** — the v2 book starts flat.
+
+Run it on a schedule (cron) or keep it running with `npm run paper -- --loop --interval 300`
+(Ctrl+C finishes the current cycle, then exits). Positions that can never settle on their own (voided
+markets, payouts the adapter can't read) can be closed with
+`npm run paper:close -- --id <id from paper:report> --price <held-side value>`; manual closes record
+PnL but don't change the loss streak.
 
 ### Try the full flow offline
 
@@ -58,6 +73,7 @@ npm run paper -- --demo                                        # opens 4 paper p
 npm run paper -- --demo                                        # same prices: no duplicate buys
 npm run paper -- --demo --fixture fixtures/markets.later.json  # TP, 2× stop loss, 1 resolution,
                                                                # loss pause trips, 1 dip entry
+                                                               # (realized −$29.06, fees $1.43)
 npm run paper:report -- --demo
 rm data/paper-ledger.demo.json                                 # reset the demo
 ```
@@ -79,6 +95,7 @@ reversion in liquid markets). The paper strategies are hypotheses, not proven ed
 | `filters` | `min_volume_24h_usd` | Skip markets without enough 24h volume |
 | `filters` | `max_spread` | Max YES bid/ask spread; markets without quotes fail |
 | `entry` | `move_direction` | `up` / `down` / `any` (default) for the move conditions |
+| `entry` | `max_prior_age_minutes` | Ignore the previous observation if it is older than this |
 | `exit` | `take_profit_pct`, `stop_loss_pct` | Return vs entry price |
 | `exit` | `max_hold_hours` | Time stop |
 | `risk` | `reentry_cooldown_hours` | Default 24 |
@@ -149,6 +166,7 @@ AGENTS.md              How to extend without breaking the schema
 --paper-all         Paper every enabled rule, not only action: paper
 --loop              Paper: repeat every --interval seconds
 --json              paper:report: machine-readable output
+--id <id> --price p paper:close: position id (prefix ok) and held-side exit price
 ```
 
 Unknown flags exit with an error instead of being ignored.

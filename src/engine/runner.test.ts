@@ -75,8 +75,13 @@ test("paper mode only fills action: paper rules unless paperAll", async () => {
   assert.equal(events.find((e) => e.type === "entry_signal")?.data?.action, "alert");
   assert.equal(riskByRule.get("alert-only")?.openPositions, 0);
 
-  const all = await run([alertRule], [m(0.5)], { mode: "paper", paperAll: true, riskByRule });
+  const all = await run([alertRule], [m(0.5)], { mode: "paper", paperAll: true, riskByRule, onSignal: () => true });
   assert.equal(all.events.find((e) => e.type === "entry_signal")?.data?.action, "paper");
+  assert.equal(riskByRule.get("alert-only")?.openPositions, 1);
+
+  // No confirmed fill (no onSignal, or onSignal returns false) → no capacity used.
+  await run([alertRule], [m(0.5)], { mode: "paper", paperAll: true, riskByRule });
+  await run([alertRule], [m(0.5)], { mode: "paper", paperAll: true, riskByRule, onSignal: () => false });
   assert.equal(riskByRule.get("alert-only")?.openPositions, 1);
 });
 
@@ -92,4 +97,21 @@ test("duplicate rule ids are rejected (they key the ledger)", async () => {
   const { RulesFileSchema } = await import("../rules/schema.js");
   const res = RulesFileSchema.safeParse({ rules: [{ id: "x", name: "a" }, { id: "x", name: "b" }] });
   assert.equal(res.success, false);
+});
+
+test("watch keeps alert state for markets missing from a poll (adapter error / listing churn)", async () => {
+  const r = rule({ filters: { min_price: 0.3 } });
+  const lastMatched = new Set<string>();
+  assert.equal((await run([r], [m(0.4)], { lastMatched })).signals, 1);
+  await run([r], [], { lastMatched }); // market not fetched this poll
+  assert.equal((await run([r], [m(0.4)], { lastMatched })).signals, 0, "must not re-alert when it reappears");
+});
+
+test("max_prior_age_minutes ignores stale priors", async () => {
+  const r = rule({ entry: { yes_price_move_abs: 0.05, max_prior_age_minutes: 60 } });
+  const at = (min: number) => new Date(NOW.getTime() - min * 60_000).toISOString();
+  const fresh = new Map<string, PriorPrice>([["polymarket:p1", { yesPrice: 0.5, at: at(30) }]]);
+  const stale = new Map<string, PriorPrice>([["polymarket:p1", { yesPrice: 0.5, at: at(90) }]]);
+  assert.equal((await run([r], [m(0.4)], { history: fresh })).signals, 1);
+  assert.equal((await run([r], [m(0.4)], { history: stale })).signals, 0);
 });

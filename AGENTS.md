@@ -49,7 +49,8 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 
 - `src/ledger/paper.ts` is the only writer of `data/paper-ledger*.json` (gitignored). Bump `version` and add a migration if you change its shape; v1 → v2 already exists.
 - `src/engine/paper-session.ts` runs one cycle: exits first, then entries. Paper risk state is rebuilt from the ledger each cycle — don't keep a second copy.
-- Exit and fill math stay platform-agnostic (`exits.ts`, `pricing.ts`). Platform fee models belong in adapters.
+- Exit and fill math stay platform-agnostic (`exits.ts`, `pricing.ts`). Platform fee models and contract rounding belong in adapters.
+- Adapters must map an empty book side to `undefined`, never to a 0 bid / 1.00 ask, and only report `status: "resolved"` once the result is final (not disputed). Never sell a paper position into an empty book.
 - Demo and real-data ledgers must never mix (enforced on load).
 
 ## Live trading (future)

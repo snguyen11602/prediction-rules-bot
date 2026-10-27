@@ -55,4 +55,8 @@ export class DemoAdapter implements PlatformAdapter {
   estimateTakerFeeUsd(contracts: number, price: number): number {
     return this.id === "kalshi" ? kalshiTakerFeeUsd(contracts, price) : 0;
   }
+
+  roundContracts(contracts: number): number {
+    return this.id === "kalshi" ? Math.floor(contracts + 1e-9) : contracts;
+  }
 }

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { evaluateExit } from "./exits.js";
-import { buyPrice, sellPrice, settlementPrice } from "./pricing.js";
+import { buyPrice, canTrade, sellPrice, settlementPrice } from "./pricing.js";
 import type { NormalizedMarket } from "../types.js";
 
 const NOW = new Date("2026-10-26T12:00:00Z");
@@ -65,4 +65,17 @@ test("pricing falls back to mid without quotes; settlement is 1/0", () => {
   const r = mkt({ status: "resolved", resolvedOutcome: "no" });
   assert.equal(settlementPrice(r, "no"), 1);
   assert.equal(settlementPrice(r, "yes"), 0);
+});
+
+test("canTrade needs the right side of the book; split payouts settle fractionally", () => {
+  const onlyAsk = mkt({ yesAsk: 0.5 });
+  assert.equal(canTrade(onlyAsk, "yes", "buy"), true);
+  assert.equal(canTrade(onlyAsk, "yes", "sell"), false); // no YES bid
+  assert.equal(canTrade(onlyAsk, "no", "sell"), true); // NO bid = 1 − YES ask
+  assert.equal(canTrade(onlyAsk, "no", "buy"), false); // NO ask needs a YES bid
+  assert.equal(canTrade(mkt(), "yes", "sell"), true); // adapter has no quotes → mid fallback
+  const split = mkt({ status: "resolved", settlementYesPrice: 0.5 });
+  assert.equal(settlementPrice(split, "yes"), 0.5);
+  assert.equal(settlementPrice(split, "no"), 0.5);
+  assert.equal(settlementPrice(mkt({ status: "resolved" }), "yes"), undefined);
 });

@@ -4,6 +4,10 @@
 #         paper  → hypothetical fills in the paper ledger (npm run paper)
 #         live   → treated as alert in scan/watch and as paper in paper; never sent to an exchange
 #
+# On alert rules the risk block only sets the size shown in the alert; open-position caps,
+# loss caps and the consecutive-loss pause take effect when a rule is papered
+# (action: paper, or npm run paper -- --paper-all).
+#
 # Prices are 0–1. Filters and entry conditions use the YES price.
 # Exit prices are for the contract you HOLD (YES price for side: yes, NO price for side: no)
 # and trigger on the price you could sell at (bid side), not the mid.
@@ -102,7 +106,7 @@ rules:
     action: paper
     filters:
       platforms: [kalshi, polymarket]
-      keywords_exclude: [parlay, same game, mention, say]
+      keywords_exclude: [parlay, same game, mention]
       min_price: 0.85
       max_price: 0.95
       min_liquidity_usd: 5000
@@ -134,7 +138,7 @@ rules:
     action: paper
     filters:
       platforms: [kalshi, polymarket]
-      keywords_exclude: [parlay, same game, mention, say]
+      keywords_exclude: [parlay, same game, mention]
       min_price: 0.05
       max_price: 0.15
       min_liquidity_usd: 5000
@@ -160,10 +164,12 @@ rules:
       slippage: 0.005
       include_fees: true
 
-  # Dip reversion: in deep, liquid markets, fade a sharp drop since the last
-  # observation and take a quick partial rebound. Tests whether moves overshoot.
+  # Dip reversion: in deep, liquid markets, fade a sharp drop since the previous
+  # paper cycle and take a quick partial rebound. Tests whether moves overshoot.
+  # Run paper every 5–15 minutes (cron or --loop); drops measured against a
+  # price older than 60 minutes are ignored.
   - id: dip-reversion-paper
-    name: Liquid mid-range markets that dropped ≥6¢ since last check
+    name: Liquid mid-range markets that dropped ≥6¢ within the last hour
     enabled: true
     action: paper
     filters:
@@ -180,6 +186,7 @@ rules:
       side: yes
       move_direction: down
       yes_price_move_abs: 0.06
+      max_prior_age_minutes: 60
     exit:
       take_profit_pct: 0.10      # +10% on the YES contract
       stop_loss_pct: 0.15        # −15%

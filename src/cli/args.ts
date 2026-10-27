@@ -17,6 +17,10 @@ export interface CliArgs {
   loop: boolean;
   /** Report: print JSON instead of a table. */
   json: boolean;
+  /** paper:close — position id (or unique prefix). */
+  id?: string;
+  /** paper:close — exit price for the held side (0–1). */
+  price?: number;
 }
 
 function intArg(name: string, raw: string | undefined, min: number): number {
@@ -54,6 +58,16 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (a === "--paper-all") out.paperAll = true;
     else if (a === "--loop") out.loop = true;
     else if (a === "--json") out.json = true;
+    else if (a === "--id" && args[i + 1]) out.id = args[++i];
+    else if (a === "--price") {
+      const n = Number(args[++i]);
+      if (!(n >= 0 && n <= 1)) {
+        // eslint-disable-next-line no-console
+        console.error(`Invalid --price: ${args[i]} (expected 0–1, the held contract's value)`);
+        process.exit(2);
+      }
+      out.price = n;
+    }
     else if (a === "--help" || a === "-h") {
       // eslint-disable-next-line no-console
       console.log(`Usage:
@@ -61,6 +75,7 @@ export function parseArgs(argv: string[]): CliArgs {
   npm run watch -- [--demo] [--interval sec] ...      # alerts only, repeats suppressed
   npm run paper -- [--demo [--fixture path]] [--ledger path] [--paper-all] [--loop [--interval sec]] ...
   npm run paper:report -- [--demo] [--ledger path] [--json]
+  npm run paper:close -- --id <position id> --price <0-1> [--demo] [--ledger path]
   npm run live   # stub only — refuses unless gates pass (still not implemented)
 
 Paper ledger defaults: data/paper-ledger.json (real data), data/paper-ledger.demo.json (--demo).

@@ -28,4 +28,9 @@ export interface PlatformAdapter {
    * (0–1). Used only for paper PnL; omit for fee-free platforms.
    */
   estimateTakerFeeUsd?(contracts: number, price: number): number;
+  /**
+   * Round a paper order size to what the platform can actually trade
+   * (e.g. whole contracts). Omit when fractional sizes are allowed.
+   */
+  roundContracts?(contracts: number): number;
 }

@@ -25,6 +25,9 @@ interface KalshiMarket {
   status?: string;
   /** "yes" | "no" | "scalar" | "" once determined. */
   result?: string;
+  /** YES payout for scalar settlements (field name varies by API version). */
+  settlement_value_dollars?: string;
+  settlement_value?: number;
   yes_bid_dollars?: string;
   yes_ask_dollars?: string;
   last_price_dollars?: string;
@@ -46,24 +49,48 @@ function parseDollars(v?: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function midYes(m: KalshiMarket): number | undefined {
+/**
+ * Kalshi reports an empty side of the book as a 0 bid / 1.00 ask.
+ * Those are not prices anyone can trade at, so map them to "no quote".
+ */
+function quotes(m: KalshiMarket): { bid?: number; ask?: number } {
   const bid = parseDollars(m.yes_bid_dollars);
   const ask = parseDollars(m.yes_ask_dollars);
+  return {
+    bid: bid != null && bid > 0 && bid < 1 ? bid : undefined,
+    ask: ask != null && ask > 0 && ask < 1 ? ask : undefined,
+  };
+}
+
+function midYes(m: KalshiMarket): number | undefined {
+  const { bid, ask } = quotes(m);
   const last = parseDollars(m.last_price_dollars);
-  if (bid != null && ask != null && ask > 0) return (bid + ask) / 2;
+  if (bid != null && ask != null) return (bid + ask) / 2;
   if (last != null && last > 0) return last;
   if (bid != null) return bid;
   if (ask != null) return ask;
   return undefined;
 }
 
-function mapStatus(m: KalshiMarket): Pick<NormalizedMarket, "status" | "resolvedOutcome"> {
+/** Only these states have a final result; disputed / amended results can still change. */
+const FINAL_STATES = new Set(["determined", "finalized", "settled"]);
+
+function mapStatus(
+  m: KalshiMarket,
+): Pick<NormalizedMarket, "status" | "resolvedOutcome" | "settlementYesPrice"> {
+  const status = m.status?.toLowerCase();
   const result = m.result?.toLowerCase();
-  if (result === "yes" || result === "no") {
-    return { status: "resolved", resolvedOutcome: result };
+  if (status && FINAL_STATES.has(status)) {
+    if (result === "yes" || result === "no") return { status: "resolved", resolvedOutcome: result };
+    if (result === "scalar") {
+      const v =
+        parseDollars(m.settlement_value_dollars) ??
+        (typeof m.settlement_value === "number" ? m.settlement_value / 100 : undefined);
+      if (v != null && v >= 0 && v <= 1) return { status: "resolved", settlementYesPrice: v };
+    }
   }
-  if (!m.status || m.status === "active") return { status: "open" };
-  // Scalar results and pre-settlement states stay "closed" (outcome unknown).
+  if (!status || status === "active") return { status: "open" };
+  // Paused, closed, disputed, amended, or final without a usable result.
   return { status: "closed" };
 }
 
@@ -71,11 +98,10 @@ function normalize(m: KalshiMarket): NormalizedMarket | null {
   const lifecycle = mapStatus(m);
   let yes = midYes(m);
   if (lifecycle.status === "resolved") {
-    yes = lifecycle.resolvedOutcome === "yes" ? 1 : 0;
+    yes = lifecycle.settlementYesPrice ?? (lifecycle.resolvedOutcome === "yes" ? 1 : 0);
   }
   if (yes == null) return null;
-  const bid = parseDollars(m.yes_bid_dollars);
-  const ask = parseDollars(m.yes_ask_dollars);
+  const { bid, ask } = lifecycle.status === "open" ? quotes(m) : {};
   const oi = parseDollars(m.open_interest_fp);
   const vol24 = parseDollars(m.volume_24h_fp);
   return {
@@ -85,8 +111,8 @@ function normalize(m: KalshiMarket): NormalizedMarket | null {
     yesPrice: clamp01(yes),
     noPrice: clamp01(1 - yes),
     lastPrice: parseDollars(m.last_price_dollars),
-    yesBid: bid != null ? clamp01(bid) : undefined,
-    yesAsk: ask != null && ask > 0 ? clamp01(ask) : undefined,
+    yesBid: bid,
+    yesAsk: ask,
     // OI / volume are in contracts (~$1 notional); treat as rough USD proxy
     liquidityUsd: oi,
     volume24hUsd: vol24,
@@ -175,6 +201,11 @@ export class KalshiAdapter implements PlatformAdapter {
 
   estimateTakerFeeUsd(contracts: number, price: number): number {
     return kalshiTakerFeeUsd(contracts, price);
+  }
+
+  /** Kalshi trades whole contracts. */
+  roundContracts(contracts: number): number {
+    return Math.floor(contracts + 1e-9);
   }
 }
 

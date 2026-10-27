@@ -22,7 +22,7 @@ import type { EventSink } from "./events.js";
 import { consoleSink } from "./events.js";
 import { evaluateExit } from "./exits.js";
 import type { PriorPrice } from "./evaluate.js";
-import { buyPrice, sellPrice, settlementPrice } from "./pricing.js";
+import { buyPrice, canTrade, sellPrice, settlementPrice } from "./pricing.js";
 import { applyOutcome, defaultRiskState, type RiskState } from "./risk.js";
 import {
   evaluateRules,
@@ -163,9 +163,34 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         exit = {
           price: settle,
           reason: "resolved",
-          detail: `market resolved ${market.resolvedOutcome?.toUpperCase()}`,
+          detail: market.resolvedOutcome
+            ? `market resolved ${market.resolvedOutcome.toUpperCase()}`
+            : `market settled at YES=${market.settlementYesPrice?.toFixed(3)}`,
           feeUsd: 0, // settlement is not a trade
         };
+      } else if (market.status === "resolved") {
+        pos.marketStatus = "closed";
+        await push({
+          at: now.toISOString(),
+          type: "info",
+          ruleId: pos.ruleId,
+          message: `${key} reports resolved without a usable payout; position held. Close it manually with npm run paper:close if needed.`,
+          market: marketRef(market),
+        });
+        continue;
+      } else if (!canTrade(market, pos.side, "sell")) {
+        // Empty bid for the held side: there is nothing to sell into, so hold.
+        // Mark at the mid for reporting only; never treat an empty book as a 0 price.
+        const mid = pos.side === "yes" ? market.yesPrice : market.noPrice ?? 1 - market.yesPrice;
+        markPosition(pos, mid, now, "open");
+        await push({
+          at: now.toISOString(),
+          type: "info",
+          ruleId: pos.ruleId,
+          message: `${key}: no bid for ${pos.side.toUpperCase()}; holding (marked at mid ${mid.toFixed(3)}, exits skipped)`,
+          market: marketRef(market),
+        });
+        continue;
       } else if (market.status === "closed") {
         pos.marketStatus = "closed";
         await push({
@@ -244,12 +269,14 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         const hrs = (now.getTime() - new Date(exitedAt).getTime()) / 3600_000;
         if (hrs < rule.risk.reentry_cooldown_hours) return "re-entry cooldown";
       }
+      if (!canTrade(market, side, "buy")) return "no ask";
       const price = buyPrice(market, side, rule.paper.slippage);
       if (!(price > 0 && price < 1)) return "no executable price";
       return null;
     };
 
     let entrySignals = 0;
+    let skipReasons: Record<string, number> = {};
     if (markets.length > 0) {
       const res = await evaluateRules({
         rules,
@@ -264,11 +291,23 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         onSignal: async ({ rule, market, side, sizeUsd }) => {
           if (!papersRule(rule, opts.paperAll)) return false;
           const price = buyPrice(market, side, rule.paper.slippage);
-          const contracts = sizeUsd / price;
+          const adapter = adapterFor(market.platform);
+          const contracts = adapter?.roundContracts ? adapter.roundContracts(sizeUsd / price) : sizeUsd / price;
+          if (!(contracts > 0)) {
+            await push({
+              at: now.toISOString(),
+              type: "info",
+              ruleId: rule.id,
+              message: `Size $${sizeUsd.toFixed(2)} buys less than one contract at ${price.toFixed(3)}; not filled`,
+              market: marketRef(market),
+            });
+            return false;
+          }
+          const costUsd = Math.round(contracts * price * 1e6) / 1e6;
           const fee =
             rule.paper.include_fees === false
               ? 0
-              : adapterFor(market.platform)?.estimateTakerFeeUsd?.(contracts, price) ?? 0;
+              : adapter?.estimateTakerFeeUsd?.(contracts, price) ?? 0;
           const pos = openPosition(ledger, {
             ruleId: rule.id,
             platform: market.platform,
@@ -277,7 +316,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
             url: market.url,
             side,
             price,
-            sizeUsd,
+            sizeUsd: costUsd,
             feeUsd: fee,
             at: now,
           });
@@ -288,16 +327,17 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
             at: now.toISOString(),
             type: "paper_fill",
             ruleId: rule.id,
-            message: `Paper fill ${side.toUpperCase()} ${pos.contracts.toFixed(2)} @ ${price.toFixed(3)} = $${sizeUsd.toFixed(2)} (fee $${fee.toFixed(2)})`,
+            message: `Paper fill ${side.toUpperCase()} ${pos.contracts.toFixed(2)} @ ${price.toFixed(3)} = $${costUsd.toFixed(2)} (fee $${fee.toFixed(2)})`,
             market: marketRef(market),
             side,
-            sizeUsd,
+            sizeUsd: costUsd,
             data: { positionId: pos.id, price, contracts: pos.contracts, feeUsd: fee },
           });
-          return true;
+          return costUsd;
         },
       });
       entrySignals = res.signals;
+      skipReasons = res.skipReasons;
       for (const [k, v] of history) ledger.lastPrices[k] = v;
       pruneLastPrices(ledger, now);
     }
@@ -321,8 +361,11 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       message:
         markets.length === 0
           ? "No markets available (all adapters failed or empty). Open positions were not re-marked. Try --demo."
-          : `Done. ${markets.length} markets scanned, ${entrySignals} entry signal(s), ${opened} opened, ${closed} closed (realized ${money(realized)}).`,
-      data: { markets: markets.length, signals: entrySignals, opened, closed, realizedPnlUsd: realized },
+          : `Done. ${markets.length} markets scanned, ${entrySignals} entry signal(s), ${opened} opened, ${closed} closed (realized ${money(realized)}).` +
+            (Object.keys(skipReasons).length
+              ? ` Skipped: ${Object.entries(skipReasons).map(([k, v]) => `${v} ${k}`).join(", ")}.`
+              : ""),
+      data: { markets: markets.length, signals: entrySignals, opened, closed, realizedPnlUsd: realized, skipped: skipReasons },
     });
 
     return { events, opened, closed, realizedPnlUsd: Math.round(realized * 100) / 100 };
