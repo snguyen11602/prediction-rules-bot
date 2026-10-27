@@ -22,7 +22,7 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 
 1. **`NormalizedMarket`** (`src/types.ts`) — adapters must map into this. Add optional fields only.
 2. **`RuleSchema`** (`src/rules/schema.ts`) — YAML/JSON rules parse through Zod. Bump `version` in `RulesFileSchema` if you make a breaking change; keep `version: 1` compatible when possible.
-3. **`PlatformAdapter.listMarkets`** — public reads only. New write methods belong on a separate interface (e.g. `LiveTradingAdapter`) that scan never imports.
+3. **`PlatformAdapter.listMarkets`** — public reads only. Optional `getMarket(id)` (public read, may return closed/resolved markets) and `estimateTakerFeeUsd` (paper PnL only) live here too. New write methods belong on a separate interface (e.g. `LiveTradingAdapter`) that scan / watch / paper never import.
 4. **Events** — emit `EngineEvent` objects; don’t `console.log` ad-hoc from adapters.
 
 ## Adding a rule
@@ -30,7 +30,8 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 1. Copy a block in `rules/example.yaml`.
 2. Set `action: alert` (or `paper`). Avoid `live` until a real gated path exists.
 3. Encode risk explicitly: `position_size_fraction`, `fire_after_n_losses`, caps.
-4. Run `npm run scan -- --demo` then `npm run scan`.
+4. For paper rules add an `exit` block; exit prices are for the held side (NO price for `side: no`).
+5. Run `npm run scan -- --demo` then `npm run scan`.
 
 ## Adding / fixing an adapter
 
@@ -42,7 +43,14 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 
 ## Risk engine
 
-`src/engine/risk.ts` owns consecutive-loss pause and sizing. If you change pause semantics, update the example rule comments and README table. Paper fills live in `data/paper-ledger.json` (gitignored).
+`src/engine/risk.ts` owns consecutive-loss pause, sizing and the bankroll/exposure gate. If you change pause semantics, update the example rule comments and README table.
+
+## Paper ledger
+
+- `src/ledger/paper.ts` is the only writer of `data/paper-ledger*.json` (gitignored). Bump `version` and add a migration if you change its shape; v1 → v2 already exists.
+- `src/engine/paper-session.ts` runs one cycle: exits first, then entries. Paper risk state is rebuilt from the ledger each cycle — don't keep a second copy.
+- Exit and fill math stay platform-agnostic (`exits.ts`, `pricing.ts`). Platform fee models belong in adapters.
+- Demo and real-data ledgers must never mix (enforced on load).
 
 ## Live trading (future)
 
@@ -57,6 +65,7 @@ If implementing live:
 
 ```bash
 npm run typecheck
+npm test
 npm run scan -- --demo
 npm run live    # should exit non-zero with a clear stub message
 ```

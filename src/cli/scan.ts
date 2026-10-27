@@ -8,6 +8,7 @@ async function main() {
   await runScan({
     rulesPath: args.rules,
     demo: args.demo,
+    fixturePath: args.fixture,
     limitPerPlatform: args.limit,
     mode: "alert",
     emit,

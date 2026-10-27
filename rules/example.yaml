@@ -1,23 +1,35 @@
 # Example shared rules for Kalshi + Polymarket.
-# action: alert (default safe) | paper | live (blocked unless env gates pass)
+#
+# action: alert  → console/webhook/JSONL only (scan, watch, paper)
+#         paper  → hypothetical fills in the paper ledger (npm run paper)
+#         live   → treated as alert in scan/watch and as paper in paper; never sent to an exchange
+#
+# Prices are 0–1. Filters and entry conditions use the YES price.
+# Exit prices are for the contract you HOLD (YES price for side: yes, NO price for side: no)
+# and trigger on the price you could sell at (bid side), not the mid.
+#
+# The paper strategies below are hypotheses to test in paper mode, not proven edges.
+# Check `npm run paper:report` after a few weeks before trusting any of them.
 version: 1
 rules:
+  # ── Alerts ────────────────────────────────────────────────────────────────
   - id: mid-prob-politics-alert
-    name: Mid-probability politics / election alert
+    name: Contested politics / election markets (watchlist)
     enabled: true
     action: alert
     filters:
       platforms: [kalshi, polymarket]
-      keywords_any: [election, president, senate, trump, harris, poll]
+      keywords_any: [election, senate, house, governor, midterm, primary, president, trump, poll, approval]
       keywords_exclude: [parlay, same game]
       min_price: 0.15
       max_price: 0.85
       min_liquidity_usd: 500
-      max_hours_to_resolve: 720   # 30 days
+      min_volume_24h_usd: 1000   # skip stale markets nobody is trading
+      max_spread: 0.04           # skip markets where the quoted price isn't tradable
+      max_hours_to_resolve: 720  # 30 days
       min_hours_to_resolve: 6
     entry:
       side: yes
-      # Match anything already in the filter price band
       yes_price_above: 0.15
       yes_price_below: 0.85
     risk:
@@ -37,17 +49,151 @@ rules:
     action: alert
     filters:
       platforms: [kalshi, polymarket]
+      keywords_exclude: [parlay, same game]
       min_price: 0.05
       max_price: 0.95
       max_hours_to_resolve: 72
-      min_liquidity_usd: 200
+      min_liquidity_usd: 1000
+      min_volume_24h_usd: 500
     entry:
       side: yes
-      # Requires a prior observation (watch/paper accumulates state)
+      # Needs a prior observation: `npm run watch`, `npm run paper -- --loop`,
+      # or repeated `npm run paper` runs (last prices persist in the ledger).
+      # Both must hold, so a 2¢ → 2.2¢ wiggle (10%) doesn't fire.
+      yes_price_move_abs: 0.03
       yes_price_move_pct: 0.08
+      move_direction: any
     risk:
       position_size_fraction: 0.1
       bankroll_usd: 1000
       max_open_positions: 5
       fire_after_n_losses: 3
       pause_hours_after_losses: 12
+
+  - id: macro-econ-alert
+    name: Fed / CPI / jobs markets resolving within two weeks
+    enabled: true
+    action: alert
+    filters:
+      platforms: [kalshi, polymarket]
+      keywords_any: [fomc, federal reserve, fed rate, rate cut, rate hike, interest rate, cpi, inflation, unemployment, jobs report, payrolls, gdp, recession]
+      min_price: 0.10
+      max_price: 0.90
+      min_liquidity_usd: 1000
+      max_spread: 0.04
+      max_hours_to_resolve: 336  # 14 days
+      min_hours_to_resolve: 2
+    entry:
+      side: yes
+    risk:
+      position_size_fraction: 0.1
+      bankroll_usd: 1000
+      max_open_positions: 5
+      fire_after_n_losses: 3
+      pause_hours_after_losses: 24
+
+  # ── Paper strategies ──────────────────────────────────────────────────────
+  # Favorite carry: buy the heavy favorite shortly before resolution and hold
+  # to settlement. Small wins, occasional large losses — so it is sized small,
+  # stops out if the favorite slips, and pauses after only 2 straight losses.
+  - id: favorite-carry-yes-paper
+    name: Short-dated YES favorites (85–95¢), hold to resolution
+    enabled: true
+    action: paper
+    filters:
+      platforms: [kalshi, polymarket]
+      keywords_exclude: [parlay, same game, mention, say]
+      min_price: 0.85
+      max_price: 0.95
+      min_liquidity_usd: 5000
+      min_volume_24h_usd: 1000
+      max_spread: 0.02
+      min_hours_to_resolve: 6
+      max_hours_to_resolve: 72
+    entry:
+      side: yes
+    exit:
+      stop_loss_price: 0.70      # favorite slipped; take the loss before it goes to 0
+      take_profit_price: 0.985   # free the capital once nearly all value is captured
+    risk:
+      position_size_fraction: 0.05
+      bankroll_usd: 1000
+      max_position_usd: 50
+      max_open_positions: 5
+      fire_after_n_losses: 2
+      pause_hours_after_losses: 48
+      daily_loss_cap_usd: 75
+      reentry_cooldown_hours: 48
+    paper:
+      slippage: 0.005
+      include_fees: true
+
+  - id: favorite-carry-no-paper
+    name: Short-dated longshots (YES 5–15¢) — buy NO, hold to resolution
+    enabled: true
+    action: paper
+    filters:
+      platforms: [kalshi, polymarket]
+      keywords_exclude: [parlay, same game, mention, say]
+      min_price: 0.05
+      max_price: 0.15
+      min_liquidity_usd: 5000
+      min_volume_24h_usd: 1000
+      max_spread: 0.02
+      min_hours_to_resolve: 6
+      max_hours_to_resolve: 72
+    entry:
+      side: no
+    exit:
+      stop_loss_price: 0.70      # NO price (i.e. YES has rallied to ~30¢)
+      take_profit_price: 0.985
+    risk:
+      position_size_fraction: 0.05
+      bankroll_usd: 1000
+      max_position_usd: 50
+      max_open_positions: 5
+      fire_after_n_losses: 2
+      pause_hours_after_losses: 48
+      daily_loss_cap_usd: 75
+      reentry_cooldown_hours: 48
+    paper:
+      slippage: 0.005
+      include_fees: true
+
+  # Dip reversion: in deep, liquid markets, fade a sharp drop since the last
+  # observation and take a quick partial rebound. Tests whether moves overshoot.
+  - id: dip-reversion-paper
+    name: Liquid mid-range markets that dropped ≥6¢ since last check
+    enabled: true
+    action: paper
+    filters:
+      platforms: [kalshi, polymarket]
+      keywords_exclude: [parlay, same game]
+      min_price: 0.20
+      max_price: 0.80
+      min_liquidity_usd: 20000
+      min_volume_24h_usd: 5000
+      max_spread: 0.02
+      min_hours_to_resolve: 24
+      max_hours_to_resolve: 720
+    entry:
+      side: yes
+      move_direction: down
+      yes_price_move_abs: 0.06
+    exit:
+      take_profit_pct: 0.10      # +10% on the YES contract
+      stop_loss_pct: 0.15        # −15%
+      max_hold_hours: 48         # thesis is a short-term overshoot; don't hold drift
+      max_hours_to_resolve: 12   # never carry into resolution
+    risk:
+      position_size_fraction: 0.05
+      bankroll_usd: 1000
+      max_position_usd: 50
+      max_open_positions: 4
+      fire_after_n_losses: 3
+      pause_hours_after_losses: 24
+      daily_loss_cap_usd: 100
+      reentry_cooldown_hours: 24
+    paper:
+      slippage: 0.005
+      include_fees: true

@@ -12,7 +12,7 @@ export interface EvalMatch {
   reason: string;
 }
 
-function hoursToResolve(market: NormalizedMarket, now: Date): number | undefined {
+export function hoursToResolve(market: NormalizedMarket, now: Date): number | undefined {
   if (!market.closesAt) return undefined;
   const t = new Date(market.closesAt).getTime();
   if (!Number.isFinite(t)) return undefined;
@@ -54,6 +54,15 @@ export function marketPassesFilters(
       return false;
     }
   }
+  if (f.min_volume_24h_usd != null) {
+    if (market.volume24hUsd == null || market.volume24hUsd < f.min_volume_24h_usd) {
+      return false;
+    }
+  }
+  if (f.max_spread != null) {
+    if (market.yesBid == null || market.yesAsk == null) return false;
+    if (market.yesAsk - market.yesBid > f.max_spread + 1e-9) return false;
+  }
   const hrs = hoursToResolve(market, now);
   if (f.max_hours_to_resolve != null) {
     if (hrs == null || hrs > f.max_hours_to_resolve || hrs < 0) return false;
@@ -82,11 +91,14 @@ export function evaluateEntry(
   if (e.yes_price_below != null) reasons.push(`yes<=${e.yes_price_below}`);
 
   if (e.yes_price_move_abs != null || e.yes_price_move_pct != null) {
-    if (!prior) return null; // need history (watch mode)
-    const abs = Math.abs(market.yesPrice - prior.yesPrice);
+    if (!prior) return null; // need history (watch mode / previous paper run)
+    const delta = market.yesPrice - prior.yesPrice;
+    if (e.move_direction === "up" && delta <= 0) return null;
+    if (e.move_direction === "down" && delta >= 0) return null;
+    const abs = Math.abs(delta);
     if (e.yes_price_move_abs != null) {
       if (abs < e.yes_price_move_abs) return null;
-      reasons.push(`abs_move=${abs.toFixed(4)}`);
+      reasons.push(`abs_move=${delta >= 0 ? "+" : "-"}${abs.toFixed(4)}`);
     }
     if (e.yes_price_move_pct != null) {
       const base = Math.max(prior.yesPrice, 1e-6);

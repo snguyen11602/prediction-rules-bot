@@ -1,15 +1,26 @@
 import { enabledRules, loadRulesFile } from "../rules/loader.js";
 import type { Rule } from "../rules/schema.js";
 import { createAdapters, type PlatformAdapter } from "../platforms/index.js";
-import type { EngineEvent, NormalizedMarket, PlatformId } from "../types.js";
+import type { EngineEvent, NormalizedMarket, PlatformId, SignalSide } from "../types.js";
+import { dayKeyLA } from "./clock.js";
 import { evaluateEntry, type PriorPrice } from "./evaluate.js";
 import { checkEntryRisk, defaultRiskState, type RiskState } from "./risk.js";
 import type { EventSink } from "./events.js";
 import { consoleSink } from "./events.js";
 
+export interface SignalArgs {
+  rule: Rule;
+  market: NormalizedMarket;
+  side: SignalSide;
+  sizeUsd: number;
+  reason: string;
+}
+
 export interface RunnerOptions {
   rulesPath: string;
   demo?: boolean;
+  /** Demo only: alternate fixture file. */
+  fixturePath?: string;
   limitPerPlatform?: number;
   mode?: "alert" | "paper";
   emit?: EventSink;
@@ -17,20 +28,29 @@ export interface RunnerOptions {
   priceHistory?: Map<string, PriorPrice>;
   /** Per-rule risk state (paper/watch). */
   riskByRule?: Map<string, RiskState>;
-  onSignal?: (args: {
-    rule: Rule;
-    market: NormalizedMarket;
-    side: "yes" | "no";
-    sizeUsd: number;
-    reason: string;
-  }) => Promise<void> | void;
+  /**
+   * Edge-triggered alerts (watch): matches that were already reported on the
+   * previous scan are suppressed until they stop matching and match again.
+   */
+  lastMatched?: Set<string>;
+  onSignal?: (args: SignalArgs) => Promise<boolean | void> | boolean | void;
 }
 
-function dayKeyLA(d = new Date()): string {
-  return d.toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+export function marketKey(m: Pick<NormalizedMarket, "platform" | "id">): string {
+  return `${m.platform}:${m.id}`;
 }
 
-function platformsFromRules(rules: Rule[]): PlatformId[] {
+export function marketRef(market: NormalizedMarket): NonNullable<EngineEvent["market"]> {
+  return {
+    platform: market.platform,
+    id: market.id,
+    title: market.title,
+    yesPrice: market.yesPrice,
+    url: market.url,
+  };
+}
+
+export function platformsFromRules(rules: Rule[]): PlatformId[] {
   const set = new Set<PlatformId>();
   for (const r of rules) {
     if (r.filters.platforms?.length) {
@@ -41,6 +61,168 @@ function platformsFromRules(rules: Rule[]): PlatformId[] {
     }
   }
   return [...set];
+}
+
+function describeError(err: unknown): string {
+  const e = err as Error & { cause?: { code?: string; message?: string } };
+  const cause = e.cause?.code ?? e.cause?.message;
+  return cause && !e.message.includes(cause) ? `${e.message} (${cause})` : e.message;
+}
+
+/** Fetch markets from every adapter; one failing adapter never stops the others. */
+export async function fetchMarkets(
+  adapters: PlatformAdapter[],
+  limit: number,
+  push: (e: EngineEvent) => Promise<void>,
+): Promise<{ markets: NormalizedMarket[]; failed: Set<PlatformId> }> {
+  const markets: NormalizedMarket[] = [];
+  const failed = new Set<PlatformId>();
+  for (const adapter of adapters) {
+    try {
+      const batch = await adapter.listMarkets({ limit });
+      markets.push(...batch);
+      await push({
+        at: new Date().toISOString(),
+        type: "info",
+        message: `${adapter.id}: fetched ${batch.length} markets`,
+      });
+    } catch (err) {
+      failed.add(adapter.id);
+      await push({
+        at: new Date().toISOString(),
+        type: "adapter_error",
+        message: `${adapter.id}: ${describeError(err)}. Tip: re-run with --demo for fixtures.`,
+        data: { platform: adapter.id },
+      });
+    }
+  }
+  return { markets, failed };
+}
+
+export interface EvaluateOptions {
+  rules: Rule[];
+  markets: NormalizedMarket[];
+  mode: "alert" | "paper";
+  now: Date;
+  push: (e: EngineEvent) => Promise<void>;
+  history: Map<string, PriorPrice>;
+  riskByRule: Map<string, RiskState>;
+  /** Paper mode: fill every rule, not only `action: paper` (and `live`) rules. */
+  paperAll?: boolean;
+  /** Paper rules only: return a reason to skip this market (already held, cooldown…). */
+  skipMarket?: (rule: Rule, market: NormalizedMarket, side: SignalSide) => string | null;
+  lastMatched?: Set<string>;
+  onSignal?: RunnerOptions["onSignal"];
+}
+
+/** Which rules get hypothetical fills in paper mode. Live is never executed. */
+export function papersRule(rule: Rule, paperAll = false): boolean {
+  return paperAll || rule.action === "paper" || rule.action === "live";
+}
+
+export async function evaluateRules(
+  opts: EvaluateOptions,
+): Promise<{ signals: number; suppressed: number; skipped: number }> {
+  const { rules, markets, now, push, history, riskByRule } = opts;
+  const dk = dayKeyLA(now);
+  // Snapshot priors first so every rule compares against the previous scan,
+  // not against a price another rule just wrote this scan.
+  const priors = new Map<string, PriorPrice | undefined>();
+  for (const m of markets) priors.set(marketKey(m), history.get(marketKey(m)));
+
+  const matchedNow = new Set<string>();
+  let signals = 0;
+  let suppressed = 0;
+  let skipped = 0;
+
+  for (const rule of rules) {
+    if (!riskByRule.has(rule.id)) riskByRule.set(rule.id, defaultRiskState(dk));
+    const riskState = riskByRule.get(rule.id)!;
+    if (riskState.dayKey !== dk) {
+      riskState.dayKey = dk;
+      riskState.dayPnlUsd = 0;
+    }
+    const fills = opts.mode === "paper" && papersRule(rule, opts.paperAll);
+    const action = fills ? "paper" : "alert";
+
+    for (const market of markets) {
+      const key = marketKey(market);
+      const match = evaluateEntry(rule, market, priors.get(key), now);
+      if (!match) continue;
+
+      const edgeKey = `${rule.id}|${key}`;
+      matchedNow.add(edgeKey);
+      if (opts.lastMatched?.has(edgeKey)) {
+        suppressed += 1;
+        continue;
+      }
+
+      if (fills && opts.skipMarket) {
+        const why = opts.skipMarket(rule, market, match.side);
+        if (why) {
+          skipped += 1;
+          continue;
+        }
+      }
+
+      await push({
+        at: now.toISOString(),
+        type: "market_match",
+        ruleId: rule.id,
+        message: match.reason,
+        market: marketRef(market),
+        side: match.side,
+      });
+
+      const gate = checkEntryRisk(rule, riskState, now);
+      if (!gate.ok) {
+        await push({
+          at: now.toISOString(),
+          type: "risk_block",
+          ruleId: rule.id,
+          message: gate.reason ?? "risk blocked",
+          market: marketRef(market),
+        });
+        continue;
+      }
+
+      const sizeUsd = gate.sizeUsd ?? 0;
+      await push({
+        at: now.toISOString(),
+        type: "entry_signal",
+        ruleId: rule.id,
+        message: `${action.toUpperCase()} ${match.side.toUpperCase()} ~$${sizeUsd.toFixed(2)} — ${market.title}`,
+        market: marketRef(market),
+        side: match.side,
+        sizeUsd,
+        data: {
+          action,
+          rule_action: rule.action,
+          position_size_fraction: rule.risk.position_size_fraction,
+          reason: match.reason,
+        },
+      });
+      signals += 1;
+
+      const filled = opts.onSignal
+        ? await opts.onSignal({ rule, market, side: match.side, sizeUsd, reason: match.reason })
+        : undefined;
+
+      // Only real (hypothetical) fills consume risk capacity. Alert-only runs
+      // never open positions, so they must not count toward max_open_positions.
+      if (fills && filled !== false) {
+        riskState.openPositions += 1;
+        if (riskState.openExposureUsd != null) riskState.openExposureUsd += sizeUsd;
+      }
+    }
+  }
+
+  for (const m of markets) history.set(marketKey(m), { yesPrice: m.yesPrice, at: now.toISOString() });
+  if (opts.lastMatched) {
+    opts.lastMatched.clear();
+    for (const k of matchedNow) opts.lastMatched.add(k);
+  }
+  return { signals, suppressed, skipped };
 }
 
 export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
@@ -54,7 +236,6 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
   const file = await loadRulesFile(opts.rulesPath);
   const rules = enabledRules(file);
   const now = new Date();
-  const dk = dayKeyLA(now);
 
   await push({
     at: now.toISOString(),
@@ -63,10 +244,13 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     data: { rulesPath: opts.rulesPath, demo: !!opts.demo },
   });
 
-  const platforms = platformsFromRules(rules);
   let adapters: PlatformAdapter[];
   try {
-    adapters = createAdapters({ demo: opts.demo, platforms });
+    adapters = createAdapters({
+      demo: opts.demo,
+      platforms: platformsFromRules(rules),
+      fixturePath: opts.fixturePath,
+    });
   } catch (err) {
     await push({
       at: new Date().toISOString(),
@@ -76,27 +260,7 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     return events;
   }
 
-  const markets: NormalizedMarket[] = [];
-  for (const adapter of adapters) {
-    try {
-      const batch = await adapter.listMarkets({
-        limit: opts.limitPerPlatform ?? 80,
-      });
-      markets.push(...batch);
-      await push({
-        at: new Date().toISOString(),
-        type: "info",
-        message: `${adapter.id}: fetched ${batch.length} markets`,
-      });
-    } catch (err) {
-      await push({
-        at: new Date().toISOString(),
-        type: "adapter_error",
-        message: `${adapter.id}: ${(err as Error).message}. Tip: re-run with --demo for fixtures.`,
-        data: { platform: adapter.id },
-      });
-    }
-  }
+  const { markets } = await fetchMarkets(adapters, opts.limitPerPlatform ?? 80, push);
 
   if (markets.length === 0) {
     await push({
@@ -107,106 +271,25 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     return events;
   }
 
-  const history = opts.priceHistory ?? new Map<string, PriorPrice>();
-  const riskMap = opts.riskByRule ?? new Map<string, RiskState>();
-
-  let signals = 0;
-  for (const rule of rules) {
-    if (!riskMap.has(rule.id)) riskMap.set(rule.id, defaultRiskState(dk));
-    const riskState = riskMap.get(rule.id)!;
-    if (riskState.dayKey !== dk) {
-      riskState.dayKey = dk;
-      riskState.dayPnlUsd = 0;
-    }
-
-    for (const market of markets) {
-      const key = `${market.platform}:${market.id}`;
-      const prior = history.get(key);
-      const match = evaluateEntry(rule, market, prior, now);
-      history.set(key, { yesPrice: market.yesPrice, at: now.toISOString() });
-      if (!match) continue;
-
-      await push({
-        at: now.toISOString(),
-        type: "market_match",
-        ruleId: rule.id,
-        message: match.reason,
-        market: {
-          platform: market.platform,
-          id: market.id,
-          title: market.title,
-          yesPrice: market.yesPrice,
-          url: market.url,
-        },
-        side: match.side,
-      });
-
-      const gate = checkEntryRisk(rule, riskState, now);
-      if (!gate.ok) {
-        await push({
-          at: now.toISOString(),
-          type: "risk_block",
-          ruleId: rule.id,
-          message: gate.reason ?? "risk blocked",
-          market: {
-            platform: market.platform,
-            id: market.id,
-            title: market.title,
-            yesPrice: market.yesPrice,
-            url: market.url,
-          },
-        });
-        continue;
-      }
-
-      const sizeUsd = gate.sizeUsd ?? 0;
-      const effectiveAction =
-        opts.mode === "paper" ? "paper" : rule.action === "live" ? "alert" : rule.action;
-
-      await push({
-        at: now.toISOString(),
-        type: "entry_signal",
-        ruleId: rule.id,
-        message: `${effectiveAction.toUpperCase()} ${match.side.toUpperCase()} ~$${sizeUsd.toFixed(2)} — ${market.title}`,
-        market: {
-          platform: market.platform,
-          id: market.id,
-          title: market.title,
-          yesPrice: market.yesPrice,
-          url: market.url,
-        },
-        side: match.side,
-        sizeUsd,
-        data: {
-          action: effectiveAction,
-          position_size_fraction: rule.risk.position_size_fraction,
-          reason: match.reason,
-        },
-      });
-      signals += 1;
-
-      if (opts.onSignal) {
-        await opts.onSignal({
-          rule,
-          market,
-          side: match.side,
-          sizeUsd,
-          reason: match.reason,
-        });
-      }
-
-      // Count as open for risk within this scan session when papering
-      if (opts.mode === "paper" || rule.action === "paper") {
-        riskState.openPositions += 1;
-      }
-    }
-  }
+  const { signals, suppressed } = await evaluateRules({
+    rules,
+    markets,
+    mode: opts.mode ?? "alert",
+    now,
+    push,
+    history: opts.priceHistory ?? new Map<string, PriorPrice>(),
+    riskByRule: opts.riskByRule ?? new Map<string, RiskState>(),
+    lastMatched: opts.lastMatched,
+    onSignal: opts.onSignal,
+  });
 
   await push({
     at: new Date().toISOString(),
     type: "scan_end",
-    message: `Done. ${markets.length} markets scanned, ${signals} entry signal(s).`,
-    data: { markets: markets.length, signals },
+    message:
+      `Done. ${markets.length} markets scanned, ${signals} entry signal(s).` +
+      (suppressed ? ` ${suppressed} repeat match(es) suppressed.` : ""),
+    data: { markets: markets.length, signals, suppressed },
   });
 
   return events;

@@ -1,58 +1,470 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { PaperFill, PlatformId, SignalSide } from "../types.js";
+import type { RiskState } from "../engine/risk.js";
+import { dayKeyLA } from "../engine/clock.js";
+import type { PaperExitReason, PaperFill, PlatformId, SignalSide } from "../types.js";
 
-const DEFAULT_LEDGER = path.resolve("data/paper-ledger.json");
+/**
+ * Paper ledger (hypothetical only — nothing here talks to an exchange).
+ *
+ * v2 layout:
+ *  - positions:  one row per paper position, open or closed, with marks and PnL
+ *  - fills:      append-only journal of open/close fills (v1 rows still parse)
+ *  - ruleState:  consecutive-loss streak + pause per rule, persisted across runs
+ *  - lastPrices: last observed YES price per market, so move rules work across runs
+ *
+ * PnL math (binary contracts, prices 0–1 for the held side):
+ *   contracts  = costUsd / entryPrice
+ *   proceeds   = contracts × exitPrice        (exitPrice = 1 or 0 at resolution)
+ *   realized   = proceeds − costUsd − entryFeeUsd − exitFeeUsd
+ *   unrealized = contracts × markPrice − costUsd − entryFeeUsd   (exit fee not included)
+ */
 
-export interface PaperLedger {
-  version: 1;
-  fills: PaperFill[];
-}
+export const DEFAULT_LEDGER = "data/paper-ledger.json";
+export const DEFAULT_DEMO_LEDGER = "data/paper-ledger.demo.json";
+const LOCK_STALE_MS = 15 * 60_000;
+const LAST_PRICE_MAX_AGE_HOURS = 48;
 
-async function readLedger(filePath = DEFAULT_LEDGER): Promise<PaperLedger> {
-  try {
-    const raw = await readFile(filePath, "utf8");
-    return JSON.parse(raw) as PaperLedger;
-  } catch {
-    return { version: 1, fills: [] };
-  }
-}
-
-async function writeLedger(ledger: PaperLedger, filePath = DEFAULT_LEDGER): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
-}
-
-export async function recordPaperFill(input: {
+export interface PaperPosition {
+  id: string;
   ruleId: string;
   platform: PlatformId;
   marketId: string;
   title: string;
+  url?: string;
   side: SignalSide;
-  price: number;
-  sizeUsd: number;
-  filePath?: string;
-}): Promise<PaperFill> {
-  const filePath = input.filePath ?? DEFAULT_LEDGER;
-  const ledger = await readLedger(filePath);
-  const fill: PaperFill = {
+  status: "open" | "closed";
+  entryAt: string;
+  /** Price paid for the held side (0–1), including slippage. */
+  entryPrice: number;
+  contracts: number;
+  /** contracts × entryPrice, before fees. */
+  costUsd: number;
+  entryFeeUsd: number;
+  lastMarkPrice?: number;
+  lastMarkAt?: string;
+  marketStatus?: "open" | "closed" | "resolved";
+  unrealizedPnlUsd?: number;
+  exitAt?: string;
+  exitPrice?: number;
+  exitFeeUsd?: number;
+  exitReason?: PaperExitReason;
+  exitDetail?: string;
+  realizedPnlUsd?: number;
+  hypothetical: true;
+}
+
+export interface RulePaperState {
+  consecutiveLosses: number;
+  pausedUntil?: string;
+}
+
+export interface PaperLedger {
+  version: 2;
+  createdAt: string;
+  /** Built from --demo fixtures. Demo and real-data runs never share a ledger. */
+  demo: boolean;
+  positions: PaperPosition[];
+  fills: PaperFill[];
+  ruleState: Record<string, RulePaperState>;
+  lastPrices: Record<string, { yesPrice: number; at: string }>;
+}
+
+interface PaperLedgerV1 {
+  version: 1;
+  fills: PaperFill[];
+}
+
+export function defaultLedgerPath(demo: boolean): string {
+  return path.resolve(demo ? DEFAULT_DEMO_LEDGER : DEFAULT_LEDGER);
+}
+
+export function emptyLedger(demo: boolean, now = new Date()): PaperLedger {
+  return {
+    version: 2,
+    createdAt: now.toISOString(),
+    demo,
+    positions: [],
+    fills: [],
+    ruleState: {},
+    lastPrices: {},
+  };
+}
+
+/** v1 ledgers only recorded opening fills; carry each forward as an open position. */
+function migrateV1(v1: PaperLedgerV1, demo: boolean): PaperLedger {
+  const ledger = emptyLedger(demo);
+  for (const f of v1.fills ?? []) {
+    const positionId = f.positionId ?? f.id;
+    ledger.positions.push({
+      id: positionId,
+      ruleId: f.ruleId,
+      platform: f.platform,
+      marketId: f.marketId,
+      title: f.title,
+      side: f.side,
+      status: "open",
+      entryAt: f.at,
+      entryPrice: f.price,
+      contracts: f.price > 0 ? f.sizeUsd / f.price : 0,
+      costUsd: f.sizeUsd,
+      entryFeeUsd: 0,
+      hypothetical: true,
+    });
+    ledger.fills.push({ ...f, kind: "open", positionId, contracts: f.price > 0 ? f.sizeUsd / f.price : 0 });
+  }
+  return ledger;
+}
+
+/**
+ * Load a ledger. A missing file starts empty; an unreadable or corrupt file
+ * throws rather than being silently replaced (which would erase paper history).
+ */
+export async function loadLedger(filePath: string, opts: { demo: boolean }): Promise<PaperLedger> {
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptyLedger(opts.demo);
+    throw err;
+  }
+  let data: PaperLedger | PaperLedgerV1;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `Paper ledger ${filePath} is not valid JSON (${(err as Error).message}). ` +
+        "Fix or move it aside; refusing to overwrite.",
+    );
+  }
+  const ledger = data.version === 1 ? migrateV1(data, opts.demo) : (data as PaperLedger);
+  if (ledger.version !== 2) {
+    throw new Error(`Unsupported paper ledger version ${String((data as { version?: unknown }).version)} in ${filePath}`);
+  }
+  if (!!ledger.demo !== opts.demo) {
+    throw new Error(
+      `Paper ledger ${filePath} holds ${ledger.demo ? "DEMO fixture" : "real market"} positions; ` +
+        `refusing to mix with a ${opts.demo ? "--demo" : "real-data"} run. Pass --ledger <path> to use a different file.`,
+    );
+  }
+  ledger.positions ??= [];
+  ledger.fills ??= [];
+  ledger.ruleState ??= {};
+  ledger.lastPrices ??= {};
+  return ledger;
+}
+
+/** Atomic write: temp file + rename, so a crash can't leave half a ledger. */
+export async function saveLedger(filePath: string, ledger: PaperLedger): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
+  await rename(tmp, filePath);
+}
+
+/** Single-writer lock so overlapping paper runs (cron, --loop) can't clobber each other. */
+export async function withLedgerLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const lockPath = `${filePath}.lock`;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const fh = await open(lockPath, "wx");
+      await fh.writeFile(JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+      await fh.close();
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST" || attempt > 0) {
+        throw new Error(
+          `Paper ledger is locked (${lockPath}). Another paper run may be in progress; ` +
+            "if not, delete the lock file.",
+        );
+      }
+      const age = Date.now() - (await stat(lockPath)).mtimeMs;
+      if (age < LOCK_STALE_MS) {
+        throw new Error(
+          `Paper ledger is locked by another run (${lockPath}, ${Math.round(age / 1000)}s old).`,
+        );
+      }
+      await unlink(lockPath).catch(() => undefined); // stale lock — take it over
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await unlink(lockPath).catch(() => undefined);
+  }
+}
+
+export function openPositions(ledger: PaperLedger, ruleId?: string): PaperPosition[] {
+  return ledger.positions.filter((p) => p.status === "open" && (ruleId == null || p.ruleId === ruleId));
+}
+
+export function findOpenPosition(
+  ledger: PaperLedger,
+  ruleId: string,
+  platform: PlatformId,
+  marketId: string,
+): PaperPosition | undefined {
+  return ledger.positions.find(
+    (p) => p.status === "open" && p.ruleId === ruleId && p.platform === platform && p.marketId === marketId,
+  );
+}
+
+/** Most recent exit time for this rule + market, if any. */
+export function lastExitAt(
+  ledger: PaperLedger,
+  ruleId: string,
+  platform: PlatformId,
+  marketId: string,
+): string | undefined {
+  let latest: string | undefined;
+  for (const p of ledger.positions) {
+    if (p.status !== "closed" || !p.exitAt) continue;
+    if (p.ruleId !== ruleId || p.platform !== platform || p.marketId !== marketId) continue;
+    if (!latest || p.exitAt > latest) latest = p.exitAt;
+  }
+  return latest;
+}
+
+export function openPosition(
+  ledger: PaperLedger,
+  input: {
+    ruleId: string;
+    platform: PlatformId;
+    marketId: string;
+    title: string;
+    url?: string;
+    side: SignalSide;
+    price: number;
+    sizeUsd: number;
+    feeUsd?: number;
+    at?: Date;
+  },
+): PaperPosition {
+  if (!(input.price > 0 && input.price < 1)) {
+    throw new Error(`Paper entry price must be between 0 and 1 (got ${input.price})`);
+  }
+  if (!(input.sizeUsd > 0)) throw new Error(`Paper entry size must be > 0 (got ${input.sizeUsd})`);
+  const at = (input.at ?? new Date()).toISOString();
+  const contracts = input.sizeUsd / input.price;
+  const pos: PaperPosition = {
     id: randomUUID(),
-    at: new Date().toISOString(),
     ruleId: input.ruleId,
     platform: input.platform,
     marketId: input.marketId,
     title: input.title,
+    url: input.url,
     side: input.side,
-    price: input.price,
-    sizeUsd: input.sizeUsd,
+    status: "open",
+    entryAt: at,
+    entryPrice: input.price,
+    contracts,
+    costUsd: input.sizeUsd,
+    entryFeeUsd: input.feeUsd ?? 0,
+    lastMarkPrice: input.price,
+    lastMarkAt: at,
+    marketStatus: "open",
+    unrealizedPnlUsd: -(input.feeUsd ?? 0),
     hypothetical: true,
   };
-  ledger.fills.push(fill);
-  await writeLedger(ledger, filePath);
-  return fill;
+  ledger.positions.push(pos);
+  ledger.fills.push({
+    id: randomUUID(),
+    at,
+    ruleId: pos.ruleId,
+    platform: pos.platform,
+    marketId: pos.marketId,
+    title: pos.title,
+    side: pos.side,
+    price: pos.entryPrice,
+    sizeUsd: pos.costUsd,
+    hypothetical: true,
+    kind: "open",
+    positionId: pos.id,
+    contracts,
+    feeUsd: pos.entryFeeUsd,
+  });
+  return pos;
 }
 
-export async function listPaperFills(filePath = DEFAULT_LEDGER): Promise<PaperFill[]> {
-  return (await readLedger(filePath)).fills;
+export function markPosition(
+  pos: PaperPosition,
+  markPrice: number,
+  at: Date,
+  marketStatus: PaperPosition["marketStatus"] = "open",
+): void {
+  pos.lastMarkPrice = markPrice;
+  pos.lastMarkAt = at.toISOString();
+  pos.marketStatus = marketStatus;
+  pos.unrealizedPnlUsd = round2(pos.contracts * markPrice - pos.costUsd - pos.entryFeeUsd);
+}
+
+/** Close a position and journal the exit. Returns realized PnL in USD. */
+export function closePosition(
+  ledger: PaperLedger,
+  pos: PaperPosition,
+  exit: { price: number; at: Date; reason: PaperExitReason; detail?: string; feeUsd?: number },
+): number {
+  if (pos.status !== "open") throw new Error(`Paper position ${pos.id} is already closed`);
+  const price = Math.min(1, Math.max(0, exit.price));
+  const proceeds = pos.contracts * price;
+  const exitFee = exit.feeUsd ?? 0;
+  const pnl = round2(proceeds - pos.costUsd - pos.entryFeeUsd - exitFee);
+  const at = exit.at.toISOString();
+  Object.assign(pos, {
+    status: "closed" as const,
+    exitAt: at,
+    exitPrice: price,
+    exitFeeUsd: exitFee,
+    exitReason: exit.reason,
+    exitDetail: exit.detail,
+    realizedPnlUsd: pnl,
+    lastMarkPrice: price,
+    lastMarkAt: at,
+    unrealizedPnlUsd: 0,
+  });
+  if (exit.reason === "resolved") pos.marketStatus = "resolved";
+  ledger.fills.push({
+    id: randomUUID(),
+    at,
+    ruleId: pos.ruleId,
+    platform: pos.platform,
+    marketId: pos.marketId,
+    title: pos.title,
+    side: pos.side,
+    price,
+    sizeUsd: round2(proceeds),
+    hypothetical: true,
+    kind: "close",
+    positionId: pos.id,
+    contracts: pos.contracts,
+    feeUsd: exitFee,
+    pnlUsd: pnl,
+    reason: exit.reason,
+  });
+  return pnl;
+}
+
+/** Rebuild a rule's risk state from the ledger (single source of truth across runs). */
+export function riskStateFromLedger(ledger: PaperLedger, ruleId: string, now = new Date()): RiskState {
+  const dayKey = dayKeyLA(now);
+  let openCount = 0;
+  let exposure = 0;
+  let realized = 0;
+  let dayPnl = 0;
+  for (const p of ledger.positions) {
+    if (p.ruleId !== ruleId) continue;
+    if (p.status === "open") {
+      openCount += 1;
+      exposure += p.costUsd + p.entryFeeUsd;
+    } else {
+      realized += p.realizedPnlUsd ?? 0;
+      if (p.exitAt && dayKeyLA(new Date(p.exitAt)) === dayKey) dayPnl += p.realizedPnlUsd ?? 0;
+    }
+  }
+  const rs = ledger.ruleState[ruleId];
+  return {
+    consecutiveLosses: rs?.consecutiveLosses ?? 0,
+    pausedUntil: rs?.pausedUntil,
+    openPositions: openCount,
+    dayKey,
+    dayPnlUsd: round2(dayPnl),
+    openExposureUsd: round2(exposure),
+    realizedPnlUsd: round2(realized),
+  };
+}
+
+export function pruneLastPrices(ledger: PaperLedger, now = new Date()): void {
+  const cutoff = now.getTime() - LAST_PRICE_MAX_AGE_HOURS * 3600_000;
+  for (const [k, v] of Object.entries(ledger.lastPrices)) {
+    if (new Date(v.at).getTime() < cutoff) delete ledger.lastPrices[k];
+  }
+}
+
+export interface RuleSummary {
+  ruleId: string;
+  open: number;
+  exposureUsd: number;
+  unrealizedPnlUsd: number;
+  closed: number;
+  wins: number;
+  losses: number;
+  realizedPnlUsd: number;
+  feesUsd: number;
+  consecutiveLosses: number;
+  pausedUntil?: string;
+}
+
+export function summarizeLedger(ledger: PaperLedger): { rules: RuleSummary[]; total: RuleSummary } {
+  const by = new Map<string, RuleSummary>();
+  const blank = (ruleId: string): RuleSummary => ({
+    ruleId,
+    open: 0,
+    exposureUsd: 0,
+    unrealizedPnlUsd: 0,
+    closed: 0,
+    wins: 0,
+    losses: 0,
+    realizedPnlUsd: 0,
+    feesUsd: 0,
+    consecutiveLosses: ledger.ruleState[ruleId]?.consecutiveLosses ?? 0,
+    pausedUntil: ledger.ruleState[ruleId]?.pausedUntil,
+  });
+  for (const p of ledger.positions) {
+    const s = by.get(p.ruleId) ?? blank(p.ruleId);
+    by.set(p.ruleId, s);
+    s.feesUsd += p.entryFeeUsd + (p.exitFeeUsd ?? 0);
+    if (p.status === "open") {
+      s.open += 1;
+      s.exposureUsd += p.costUsd + p.entryFeeUsd;
+      s.unrealizedPnlUsd += p.unrealizedPnlUsd ?? 0;
+    } else {
+      s.closed += 1;
+      const pnl = p.realizedPnlUsd ?? 0;
+      s.realizedPnlUsd += pnl;
+      if (pnl > 0) s.wins += 1;
+      else if (pnl < 0) s.losses += 1;
+    }
+  }
+  const rules = [...by.values()].map(roundSummary).sort((a, b) => a.ruleId.localeCompare(b.ruleId));
+  const total = rules.reduce<RuleSummary>(
+    (t, s) => ({
+      ...t,
+      open: t.open + s.open,
+      exposureUsd: t.exposureUsd + s.exposureUsd,
+      unrealizedPnlUsd: t.unrealizedPnlUsd + s.unrealizedPnlUsd,
+      closed: t.closed + s.closed,
+      wins: t.wins + s.wins,
+      losses: t.losses + s.losses,
+      realizedPnlUsd: t.realizedPnlUsd + s.realizedPnlUsd,
+      feesUsd: t.feesUsd + s.feesUsd,
+    }),
+    { ...blank("TOTAL"), consecutiveLosses: 0, pausedUntil: undefined },
+  );
+  return { rules, total: roundSummary(total) };
+}
+
+function roundSummary(s: RuleSummary): RuleSummary {
+  return {
+    ...s,
+    exposureUsd: round2(s.exposureUsd),
+    unrealizedPnlUsd: round2(s.unrealizedPnlUsd),
+    realizedPnlUsd: round2(s.realizedPnlUsd),
+    feesUsd: round2(s.feesUsd),
+  };
+}
+
+export async function listPaperFills(filePath = path.resolve(DEFAULT_LEDGER)): Promise<PaperFill[]> {
+  try {
+    const data = JSON.parse(await readFile(filePath, "utf8")) as { fills?: PaperFill[] };
+    return data.fills ?? [];
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }

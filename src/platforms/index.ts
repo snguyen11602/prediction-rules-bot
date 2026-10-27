@@ -12,10 +12,12 @@ export { DemoAdapter } from "./demo.js";
 export function createAdapters(opts: {
   demo?: boolean;
   platforms?: PlatformId[];
+  /** Demo only: alternate fixture file (e.g. a later price snapshot). */
+  fixturePath?: string;
 }): PlatformAdapter[] {
   const wanted = opts.platforms ?? (["kalshi", "polymarket"] as PlatformId[]);
   if (opts.demo) {
-    return wanted.map((id) => new DemoAdapter(id));
+    return wanted.map((id) => new DemoAdapter(id, { fixturePath: opts.fixturePath }));
   }
   return wanted.map((id) => {
     if (id === "kalshi") return new KalshiAdapter();

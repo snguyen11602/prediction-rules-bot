@@ -9,8 +9,10 @@ cd prediction-rules-bot
 npm install
 npm run scan          # one-shot alerts from public APIs (no keys)
 npm run scan -- --demo   # if an API is down / blocked — uses fixtures/
-npm run watch         # poll on an interval
-npm run paper         # same scan + hypothetical fills → data/paper-ledger.json
+npm run watch         # poll on an interval; alerts when a market starts matching
+npm run paper         # marks/exits open paper positions, then paper-enters new signals
+npm run paper:report  # offline PnL report from the paper ledger
+npm test              # unit + demo end-to-end tests (no network)
 npm run live          # exits with “not implemented / needs keys”
 ```
 
@@ -22,19 +24,75 @@ Node 20+ recommended. Uses `tsx` so you don’t need a build step for day-to-day
 2. Fetches open markets via **public** adapters (no API keys for alert/paper).
 3. Evaluates filters + entry conditions + risk gates.
 4. Emits events to the console (optional webhook / JSONL file).
+5. In paper mode, also manages hypothetical positions in a local ledger (below).
+
+## Paper trading
+
+Each `npm run paper` is one cycle against the ledger:
+
+1. **Mark & exit** every open position. Markets that dropped out of the listing are re-read by id
+   (public endpoint). Resolved markets settle at 1.00 / 0.00; otherwise the rule's `exit` block is
+   checked (stop loss → take profit → time to resolve → max hold) and the position is sold at the bid.
+2. **Risk bookkeeping**: realized PnL feeds the consecutive-loss counter. After
+   `fire_after_n_losses` straight losses the rule pauses for `pause_hours_after_losses`.
+   Streaks and pauses persist in the ledger across runs.
+3. **Entries** for rules with `action: paper` (use `--paper-all` to paper every rule). Markets the rule
+   already holds, or exited within `reentry_cooldown_hours`, are skipped. Entries are blocked when they
+   would exceed `bankroll_usd` + realized PnL.
+
+Fill realism: buys pay the ask, sells hit the bid (NO quotes are the complement of YES quotes), plus
+optional `paper.slippage`. Kalshi fills include an *approximate* taker fee
+(`0.07 × contracts × P × (1 − P)`, rounded up); Polymarket is modelled fee-free. Settlement has no fee.
+
+Ledger: `data/paper-ledger.json` (`data/paper-ledger.demo.json` with `--demo`; the two never mix).
+It holds `positions` (entry, marks, exit, realized/unrealized PnL), an append-only `fills` journal,
+per-rule `ruleState`, and `lastPrices` so move-based rules work across runs. v1 ledgers are migrated
+on first load. Writes are atomic and a lock file stops overlapping runs.
+
+Run it on a schedule (cron) or keep it running with `npm run paper -- --loop --interval 300`.
+
+### Try the full flow offline
+
+```bash
+npm run paper -- --demo                                        # opens 4 paper positions
+npm run paper -- --demo                                        # same prices: no duplicate buys
+npm run paper -- --demo --fixture fixtures/markets.later.json  # TP, 2× stop loss, 1 resolution,
+                                                               # loss pause trips, 1 dip entry
+npm run paper:report -- --demo
+rm data/paper-ledger.demo.json                                 # reset the demo
+```
 
 Example risk knobs in `rules/example.yaml`:
 
 - `position_size_fraction: 0.25` — size new ideas at 25% of assumed bankroll
 - `fire_after_n_losses: 3` — pause new entries after 3 consecutive losses
-- `daily_loss_cap_usd`, `max_open_positions`, `max_position_usd`
+- `daily_loss_cap_usd`, `max_open_positions`, `max_position_usd`, `reentry_cooldown_hours`
+
+Example rules: three alert watchlists (contested politics, short-dated price moves, macro/econ) and
+three paper strategies to evaluate (YES favorites and NO-on-longshots held to resolution, and dip
+reversion in liquid markets). The paper strategies are hypotheses, not proven edges.
+
+### Rule fields added in this version (all optional)
+
+| Section | Field | Meaning |
+|---------|-------|---------|
+| `filters` | `min_volume_24h_usd` | Skip markets without enough 24h volume |
+| `filters` | `max_spread` | Max YES bid/ask spread; markets without quotes fail |
+| `entry` | `move_direction` | `up` / `down` / `any` (default) for the move conditions |
+| `exit` | `take_profit_pct`, `stop_loss_pct` | Return vs entry price |
+| `exit` | `max_hold_hours` | Time stop |
+| `risk` | `reentry_cooldown_hours` | Default 24 |
+| `paper` | `slippage`, `include_fees` | Fill realism (defaults 0 / true) |
+
+Exit prices (`take_profit_price`, `stop_loss_price`) are for the contract you **hold**: the YES price
+for `side: yes`, the NO price for `side: no`.
 
 ## Safety
 
 | Mode | Places real orders? | Needs keys? |
 |------|---------------------|-------------|
 | `scan` / `watch` | No | No |
-| `paper` | No (local JSON ledger) | No |
+| `paper` / `paper:report` | No (local JSON ledger) | No |
 | `live` | **Not implemented** | Would need keys + env gates |
 
 Live would require **all** of: `ENABLE_LIVE_TRADING=true`, `ALLOW_LIVE=true`, and CLI `--i-understand-live`. Even then, this repo’s `npm run live` only prints a refusal — there is **no** order-placement code path that can fire from scan/watch/paper.
@@ -53,12 +111,12 @@ Optional:
 
 ```
 rules/                 YAML rule configs
-fixtures/              Offline markets for --demo
+fixtures/              Offline markets for --demo (markets.json, markets.later.json)
 src/rules/             Shared Zod schema + loader
 src/platforms/         Kalshi + Polymarket adapters (+ demo)
-src/engine/            Evaluate, risk, runner, events
-src/ledger/            Paper fills (JSON)
-src/cli/               scan | watch | paper | live
+src/engine/            Evaluate, exits, pricing, risk, runner, paper session, events
+src/ledger/            Paper ledger: positions, fills journal, PnL (JSON)
+src/cli/               scan | watch | paper | paper-report | live
 AGENTS.md              How to extend without breaking the schema
 ```
 
@@ -81,12 +139,19 @@ AGENTS.md              How to extend without breaking the schema
 
 ```
 --demo              Use fixtures instead of live HTTP
+--fixture <path>    With --demo: alternate fixture snapshot (e.g. fixtures/markets.later.json)
 --rules <path>      Rules file (default rules/example.yaml)
 --limit <n>         Max markets per platform (default 80)
---interval <sec>    Watch poll interval
+--interval <sec>    Watch / paper --loop poll interval
 --log-file <path>   Append JSONL events
 --webhook <url>     POST each event as JSON
+--ledger <path>     Paper ledger file
+--paper-all         Paper every enabled rule, not only action: paper
+--loop              Paper: repeat every --interval seconds
+--json              paper:report: machine-readable output
 ```
+
+Unknown flags exit with an error instead of being ignored.
 
 ## Extending
 

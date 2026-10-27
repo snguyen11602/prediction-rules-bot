@@ -11,12 +11,24 @@ export interface NormalizedMarket {
   noPrice?: number;
   /** Mid or last trade if bid/ask unavailable. */
   lastPrice?: number;
+  /** Best bid for the YES contract (0–1) when the adapter knows it. */
+  yesBid?: number;
+  /** Best ask for the YES contract (0–1) when the adapter knows it. */
+  yesAsk?: number;
   /** Approximate liquidity in USD (platform-dependent). */
   liquidityUsd?: number;
   /** 24h volume in USD when available. */
   volume24hUsd?: number;
   /** ISO close / resolve time when known. */
   closesAt?: string;
+  /**
+   * Lifecycle as seen by the adapter. Omitted = treat as open.
+   * "closed" = trading stopped, outcome not known yet.
+   * "resolved" = outcome known (see resolvedOutcome).
+   */
+  status?: "open" | "closed" | "resolved";
+  /** Winning side once status === "resolved". */
+  resolvedOutcome?: SignalSide;
   /** Free-form tags / categories from the platform. */
   tags?: string[];
   url?: string;
@@ -38,6 +50,8 @@ export interface EngineEvent {
     | "risk_block"
     | "adapter_error"
     | "paper_fill"
+    | "paper_exit"
+    | "paper_summary"
     | "info";
   message: string;
   ruleId?: string;
@@ -47,6 +61,17 @@ export interface EngineEvent {
   data?: Record<string, unknown>;
 }
 
+export type PaperExitReason =
+  | "take_profit"
+  | "stop_loss"
+  | "time_to_resolve"
+  | "max_hold"
+  | "resolved";
+
+/**
+ * Append-only journal row in the paper ledger. v1 ledgers only had opening
+ * fills; `kind` and the PnL fields are optional so those rows still parse.
+ */
 export interface PaperFill {
   id: string;
   at: string;
@@ -55,7 +80,16 @@ export interface PaperFill {
   marketId: string;
   title: string;
   side: SignalSide;
+  /** Price paid / received for the held side (0–1). */
   price: number;
+  /** Cost basis (open) or proceeds (close) in USD, before fees. */
   sizeUsd: number;
   hypothetical: true;
+  kind?: "open" | "close";
+  positionId?: string;
+  contracts?: number;
+  feeUsd?: number;
+  /** Realized PnL for this position, on close rows only. */
+  pnlUsd?: number;
+  reason?: PaperExitReason;
 }
