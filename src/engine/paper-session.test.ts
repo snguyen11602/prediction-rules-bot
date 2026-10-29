@@ -47,6 +47,28 @@ test("default arbitrage settings: auto-matched pairs alert but don't trade", asy
   assert.ok(!r.events.some((e) => e.type === "arb_signal" && /YES on all/.test(e.message)), "YES baskets are off by default");
 });
 
+test("every paper trade stores the checks that led to it", async () => {
+  rulesPath = RULES;
+  const ledgerPath = path.join(await mkdtemp(path.join(tmpdir(), "prb-")), "ledger.json");
+  const r = await cycle(ledgerPath, SNAP1, T0);
+  assert.ok(r.trace && r.trace.markets > 0);
+  const traded = r.trace.decisions.filter((d) => d.outcome === "traded");
+  assert.equal(traded.length, r.opened, "one traded decision per paper fill");
+  assert.equal(r.trace.rules.filter((x) => x.action === "paper").reduce((n, x) => n + x.done, 0), r.opened);
+  assert.equal(r.arbTrace?.funnel.opened, r.arb?.opened);
+
+  const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as PaperLedger;
+  for (const p of ledger.positions.filter((x) => !x.groupId)) {
+    const stages = new Set(p.entryTrace?.map((c) => c.stage));
+    assert.deepEqual([...stages], ["filters", "signal", "position", "risk", "fill"], p.marketId);
+    assert.ok(p.entryTrace!.every((c) => c.ok));
+    assert.match(p.entryTrace!.at(-1)!.detail, /bought (YES|NO) .* fee/);
+  }
+  const group = Object.values(ledger.arbGroups ?? {})[0];
+  assert.ok(group?.entryTrace?.some((c) => c.name === "Locked-in profit" && c.ok));
+  assert.match(group!.entryTrace!.at(-1)!.detail, /locks in/);
+});
+
 test("demo paper flow: entries, no duplicates, exits, PnL and loss pause", async () => {
   rulesPath = await rulesWithAllArbPaths();
   const ledgerPath = path.join(await mkdtemp(path.join(tmpdir(), "prb-")), "ledger.json");

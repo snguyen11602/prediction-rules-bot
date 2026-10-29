@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { RiskState } from "../engine/risk.js";
 import { dayKeyLA } from "../engine/clock.js";
 import type { PaperExitReason, PaperFill, PlatformId, SignalSide } from "../types.js";
+import type { Check } from "../engine/trace.js";
 
 /**
  * Paper ledger (hypothetical only — nothing here talks to an exchange).
@@ -59,6 +60,8 @@ export interface PaperPosition {
   realizedPnlUsd?: number;
   /** Leg of an arbitrage group (see PaperLedger.arbGroups). Grouped legs are never exited on their own rules. */
   groupId?: string;
+  /** Every check that led to this trade (filters → signal → position → risk → fill). */
+  entryTrace?: Check[];
   hypothetical: true;
 }
 
@@ -82,6 +85,8 @@ export interface ArbGroupRecord {
   expectedProfitUsd: number;
   edge: number;
   legIds: string[];
+  /** Every check that led to this arbitrage (match → prices → edge → risk → fill). */
+  entryTrace?: Check[];
   closedAt?: string;
   closeReason?: "resolved" | "arb_unwind" | "manual" | "mixed";
   realizedPnlUsd?: number;

@@ -136,6 +136,8 @@ async function main() {
         markets: typeof end?.data?.markets === "number" ? end.data.markets : undefined,
       };
       loop.arbOpportunities = res.arb?.opportunities;
+      loop.trace = res.trace;
+      loop.arbTrace = res.arbTrace;
       loop.unusualMoves = res.events
         .filter((e) => e.type === "entry_signal" && e.data?.unusual && e.market)
         .map((e) => ({

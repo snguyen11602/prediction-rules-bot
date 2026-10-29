@@ -115,3 +115,38 @@ test("max_prior_age_minutes ignores stale priors", async () => {
   assert.equal((await run([r], [m(0.4)], { history: fresh })).signals, 1);
   assert.equal((await run([r], [m(0.4)], { history: stale })).signals, 0);
 });
+
+test("the scan trace counts each stage and explains the first failed check", async () => {
+  const markets: NormalizedMarket[] = [
+    { platform: "polymarket", id: "p1", title: "Test one", yesPrice: 0.4 },
+    { platform: "polymarket", id: "p2", title: "Test two", yesPrice: 0.2 },
+  ];
+  const band = rule({ id: "band", filters: { min_price: 0.3 } });
+  const move = rule({ id: "move", entry: { yes_price_move_abs: 0.05 } });
+  const { trace } = await run([band, move], markets);
+  const [a, b] = trace.rules;
+  assert.deepEqual([a.scanned, a.passedFilters, a.signals, a.passedRisk, a.done], [2, 1, 1, 1, 1]);
+  assert.deepEqual(a.topReasons, [{ stage: "filters", name: "Price band", count: 1 }]);
+  assert.deepEqual([b.scanned, b.passedFilters, b.signals, b.done], [2, 2, 0, 0]);
+  assert.equal(b.topReasons[0].name, "Price move", "no earlier price yet → the move check is what stopped it");
+
+  const alerted = trace.decisions.find((d) => d.outcome === "alerted")!;
+  assert.equal(alerted.market.id, "p1");
+  assert.ok(alerted.checks.every((c) => c.ok));
+  assert.match(alerted.checks.find((c) => c.name === "Price band")!.detail, /40¢/);
+  assert.ok(trace.decisions.some((d) => d.outcome === "near_miss" && d.ruleId === "move"));
+  assert.equal(trace.sample.length, 4, "small scans replay every market × rule");
+  assert.ok(trace.sample.some((s) => s.passed && s.ruleId === "band"));
+});
+
+test("a risk block shows which limit stopped the trade", async () => {
+  const r = rule({ id: "r", action: "paper", filters: { min_price: 0.3 } });
+  const riskByRule = new Map<string, RiskState>([["r", { ...defaultRiskState("2026-10-26"), pausedUntil: new Date(NOW.getTime() + 3_600_000).toISOString() }]]);
+  const { trace } = await run([r], [m(0.4)], { mode: "paper", riskByRule, onSignal: () => true });
+  const d = trace.decisions[0];
+  assert.equal(d.outcome, "risk_blocked");
+  const fail = d.checks.find((c) => !c.ok)!;
+  assert.equal(fail.stage, "risk");
+  assert.equal(fail.name, "Losing-streak pause");
+  assert.equal(trace.rules[0].done, 0);
+});

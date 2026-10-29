@@ -24,6 +24,7 @@ import {
 } from "./arb.js";
 import { sellPrice } from "./pricing.js";
 import { hoursToResolve } from "./evaluate.js";
+import { cents, hours, type Check } from "./trace.js";
 import { mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { applyOutcome, checkEntryRisk, defaultRiskState, positionSizeUsd, type RiskState } from "./risk.js";
@@ -131,6 +132,23 @@ export async function saveUniverse(file: string, u: ArbUniverse): Promise<void> 
   await rename(tmp, file);
 }
 
+/** What the arbitrage scan looked at this cycle, for the dashboard. */
+export interface ArbTrace {
+  at: string;
+  funnel: {
+    eventsCached: number;
+    freshEvents: number;
+    exclusiveEvents: number;
+    autoPairs: number;
+    confirmedPairs: number;
+    setsChecked: number;
+    profitableBeforeLimits: number;
+    opportunities: number;
+    opened: number;
+  };
+  nearMisses: Array<{ title: string; kindLabel: string; edge: number; reason: string }>;
+}
+
 export interface ArbOpportunity {
   key: string;
   /** False for auto-matched pairs while auto_trade is off (alert only until confirmed). */
@@ -230,7 +248,7 @@ export async function findOpportunities(args: {
   push: Push;
   now: Date;
   universe?: ArbUniverse;
-}): Promise<{ quotes: ArbQuote[]; discovery: Discovery; checked: number; complete: boolean }> {
+}): Promise<{ quotes: ArbQuote[]; discovery: Discovery; checked: number; complete: boolean; trace: ArbTrace }> {
   const { adapters, push, now } = args;
   const universe = args.universe ?? new ArbUniverse();
   let cfg = args.cfg;
@@ -335,12 +353,33 @@ export async function findOpportunities(args: {
 
   const env = quoteEnv(cfg, adapters, now);
   const size = positionSizeUsd(arbitrageAsRule(cfg).risk);
-  const quotes = bestQuotes(baskets, size, env).filter((q) => {
-    if (q.edge < cfg.min_edge) return false;
-    if (q.hoursToResolve != null && q.hoursToResolve > cfg.max_hours_to_resolve) return false;
-    return q.legs.every((l) => (hoursToResolve(l.market, now) ?? Infinity) >= cfg.min_hours_to_resolve);
-  });
+  const why = (q: ArbQuote): string | null => {
+    if (q.edge < cfg.min_edge) return `only ${(q.edge * 100).toFixed(1)}¢ per $1 after fees (needs ${(cfg.min_edge * 100).toFixed(1)}¢)`;
+    if (q.hoursToResolve != null && q.hoursToResolve > cfg.max_hours_to_resolve) return `ties money up ${hours(q.hoursToResolve)} (max ${hours(cfg.max_hours_to_resolve)})`;
+    if (!q.legs.every((l) => (hoursToResolve(l.market, now) ?? Infinity) >= cfg.min_hours_to_resolve)) return "a leg resolves too soon (stale quotes)";
+    return null;
+  };
+  const allQuotes = bestQuotes(baskets, size, env);
+  const quotes = allQuotes.filter((q) => why(q) == null);
   const checked = new Set(baskets.map((b) => b.key)).size;
+  const trace: ArbTrace = {
+    at: now.toISOString(),
+    funnel: {
+      eventsCached: universe.size,
+      freshEvents: freshGroups.length,
+      exclusiveEvents: freshGroups.filter((g) => g.mutuallyExclusive).length,
+      autoPairs: discovery.candidates.length,
+      confirmedPairs: pairs.confirmed.length,
+      setsChecked: checked,
+      profitableBeforeLimits: allQuotes.length,
+      opportunities: quotes.length,
+      opened: 0,
+    },
+    nearMisses: allQuotes
+      .filter((q) => why(q) != null)
+      .slice(0, 5)
+      .map((q) => ({ title: q.basket.title, kindLabel: kindLabel(q.basket.kind), edge: Math.round(q.edge * 10000) / 10000, reason: why(q)! })),
+  };
   await push({
     at: now.toISOString(),
     type: "info",
@@ -350,7 +389,7 @@ export async function findOpportunities(args: {
       `${pairs.confirmed.length} confirmed pair(s), ${freshGroups.filter((g) => g.mutuallyExclusive).length} exclusive event(s), ` +
       `${universe.size} events cached for matching; ${quotes.length} opportunit${quotes.length === 1 ? "y" : "ies"} ≥ ${(cfg.min_edge * 100).toFixed(1)}¢ per $1`,
   });
-  return { quotes, discovery: { ...discovery, baskets }, checked, complete };
+  return { quotes, discovery: { ...discovery, baskets }, checked, complete, trace };
 }
 
 export async function emitArbSignals(
@@ -518,6 +557,9 @@ export async function openArbGroups(ctx: PaperCtx, quotes: ArbQuote[]): Promise<
     if (lastClose && (ctx.now.getTime() - new Date(lastClose).getTime()) / 3600_000 < ctx.rule.risk.reentry_cooldown_hours) continue;
 
     const gate = checkEntryRisk(ctx.rule, risk, ctx.now);
+    const story = arbChecks(ctx.cfg, q, ctx.now);
+    story.push({ stage: "position", name: "Position", ok: true, detail: "not already holding this arb, no re-entry cool-down" });
+    story.push(...gate.checks);
     if (!gate.ok) {
       await ctx.push({ at: ctx.now.toISOString(), type: "risk_block", ruleId: ctx.rule.id, message: `${gate.reason} — ${q.basket.title}` });
       break; // the same gate blocks every remaining opportunity this cycle
@@ -558,6 +600,15 @@ export async function openArbGroups(ctx: PaperCtx, quotes: ArbQuote[]): Promise<
       expectedProfitUsd: q.profitUsd,
       edge: q.edge,
       legIds,
+      entryTrace: [
+        ...story,
+        {
+          stage: "fill",
+          name: "Paper arb",
+          ok: true,
+          detail: `${q.sets} set(s): cost $${q.costUsd.toFixed(2)} + $${q.feesUsd.toFixed(2)} fees → pays $${q.payoutUsd.toFixed(2)}, locks in $${q.profitUsd.toFixed(2)}`,
+        },
+      ],
     };
     risk.openPositions += 1;
     risk.openExposureUsd = (risk.openExposureUsd ?? 0) + q.costUsd;
@@ -574,6 +625,35 @@ export async function openArbGroups(ctx: PaperCtx, quotes: ArbQuote[]): Promise<
     });
   }
   return { opened };
+}
+
+/** The checks that make an arbitrage worth taking, with the numbers. */
+function arbChecks(cfg: ArbitrageConfig, q: ArbQuote, now: Date): Check[] {
+  const b = q.basket;
+  const out: Check[] = [];
+  const same =
+    b.matchedBy === "confirmed"
+      ? "you confirmed this is the same question on both sites"
+      : b.matchedBy === "auto"
+        ? `auto-matched (similarity ${b.score?.toFixed(2) ?? "?"}): numbers, directions and names agree`
+        : b.kind === "no_basket"
+          ? "the platform says only one of these outcomes can win"
+          : "the platform says exactly one of these outcomes must win";
+  out.push({ stage: "filters", name: b.kind === "cross_platform" ? "Same question" : "Outcomes", ok: true, detail: same });
+  out.push({ stage: "filters", name: "Live quotes", ok: true, detail: `all ${q.legs.length} legs have a bid and an ask right now` });
+  const perSet = q.legs.reduce((a, l) => a + l.price, 0);
+  const legs = q.legs.map((l) => `${l.side.toUpperCase()} ${l.market.platform === "kalshi" ? "Kalshi" : "Polymarket"} ${cents(l.price)}`).join(" + ");
+  out.push({ stage: "signal", name: "Cost vs payout", ok: true, detail: `${legs} = ${cents(perSet)} per set, which pays $${b.payoutPerSet.toFixed(2)}` });
+  out.push({ stage: "signal", name: "Fees", ok: true, detail: q.feesUsd > 0 ? `$${q.feesUsd.toFixed(2)} taker fees on ${q.sets} sets (counted in the size)` : "no fees on these markets" });
+  out.push({ stage: "signal", name: "Locked-in profit", ok: true, detail: `${(q.edge * 100).toFixed(1)}¢ per $1 after fees and slippage ≥ ${(cfg.min_edge * 100).toFixed(1)}¢ minimum` });
+  const first = Math.min(...q.legs.map((l) => hoursToResolve(l.market, now) ?? Infinity));
+  out.push({
+    stage: "signal",
+    name: "Time to resolve",
+    ok: true,
+    detail: `last leg closes in ${hours(q.hoursToResolve)} (max ${hours(cfg.max_hours_to_resolve)}), first in ${Number.isFinite(first) ? hours(first) : "—"} (min ${hours(cfg.min_hours_to_resolve)})`,
+  });
+  return out;
 }
 
 export { summarize as summarizeQuote };

@@ -64,6 +64,8 @@ test("dashboard serves the page and a ledger snapshot", async () => {
     assert.equal(state.arbs.open[0].legs.length, 4);
     assert.deepEqual(state.arbs.closed.map((a: { realizedPnlUsd: number }) => a.realizedPnlUsd).sort(), [2.3, 5.36]);
     assert.equal(state.rules[0].ruleId, "arbitrage", "arbitrage is listed first as the main strategy");
+    assert.ok(state.open[0].entryTrace?.length, "open trades carry their decision checklist for the Why? view");
+    assert.ok(state.arbs.open[0].entryTrace?.length);
     assert.equal(state.ruleNames["macro-econ-alert"], "Fed / CPI / jobs markets resolving within two weeks");
     assert.ok(state.rules.some((r: { ruleId: string; pausedUntil?: string }) => r.ruleId === "favorite-carry-no-paper" && r.pausedUntil));
   } finally {

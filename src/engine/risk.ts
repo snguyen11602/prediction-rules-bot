@@ -1,5 +1,6 @@
 import type { Rule, RiskConfig } from "../rules/schema.js";
 import type { EngineEvent } from "../types.js";
+import { usd, type Check } from "./trace.js";
 
 export interface RiskState {
   consecutiveLosses: number;
@@ -36,6 +37,8 @@ export interface RiskCheckResult {
   ok: boolean;
   reason?: string;
   sizeUsd?: number;
+  /** Every risk check in order, with numbers (for the decision trace). */
+  checks: Check[];
 }
 
 /**
@@ -48,38 +51,41 @@ export function checkEntryRisk(
   now = new Date(),
 ): RiskCheckResult {
   const risk = rule.risk;
-  if (state.pausedUntil && new Date(state.pausedUntil).getTime() > now.getTime()) {
-    return {
-      ok: false,
-      reason: `paused until ${state.pausedUntil} after ${risk.fire_after_n_losses} consecutive losses`,
-    };
+  const checks: Check[] = [];
+  const add = (name: string, ok: boolean, detail: string) => checks.push({ stage: "risk", name, ok, detail });
+  const block = (reason: string): RiskCheckResult => ({ ok: false, reason, checks });
+
+  const paused = !!state.pausedUntil && new Date(state.pausedUntil).getTime() > now.getTime();
+  add(
+    "Losing-streak pause",
+    !paused,
+    paused
+      ? `paused until ${new Date(state.pausedUntil!).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} after ${risk.fire_after_n_losses} losses in a row`
+      : `not paused (${state.consecutiveLosses} of ${risk.fire_after_n_losses} losses in a row)`,
+  );
+  if (paused) return block(`paused until ${state.pausedUntil} after ${risk.fire_after_n_losses} consecutive losses`);
+
+  const full = state.openPositions >= risk.max_open_positions;
+  add("Open positions", !full, `${state.openPositions} of ${risk.max_open_positions} open`);
+  if (full) return block(`max open positions (${risk.max_open_positions}) reached`);
+
+  if (risk.daily_loss_cap_usd != null) {
+    const hit = state.dayPnlUsd <= -Math.abs(risk.daily_loss_cap_usd);
+    add("Daily loss cap", !hit, `today ${usd(state.dayPnlUsd)} vs cap −${usd(risk.daily_loss_cap_usd)}`);
+    if (hit) return block(`daily loss cap $${risk.daily_loss_cap_usd} hit (pnl=${state.dayPnlUsd.toFixed(2)})`);
   }
-  if (state.openPositions >= risk.max_open_positions) {
-    return {
-      ok: false,
-      reason: `max open positions (${risk.max_open_positions}) reached`,
-    };
-  }
-  if (
-    risk.daily_loss_cap_usd != null &&
-    state.dayPnlUsd <= -Math.abs(risk.daily_loss_cap_usd)
-  ) {
-    return {
-      ok: false,
-      reason: `daily loss cap $${risk.daily_loss_cap_usd} hit (pnl=${state.dayPnlUsd.toFixed(2)})`,
-    };
-  }
+
   const sizeUsd = positionSizeUsd(risk);
   if (state.openExposureUsd != null) {
     const equity = risk.bankroll_usd + (state.realizedPnlUsd ?? 0);
-    if (state.openExposureUsd + sizeUsd > equity + 1e-9) {
-      return {
-        ok: false,
-        reason: `insufficient bankroll: $${state.openExposureUsd.toFixed(2)} open + $${sizeUsd.toFixed(2)} new > $${equity.toFixed(2)} equity`,
-      };
+    const over = state.openExposureUsd + sizeUsd > equity + 1e-9;
+    add("Bankroll", !over, `${usd(state.openExposureUsd)} in play + ${usd(sizeUsd)} new ${over ? ">" : "≤"} ${usd(equity)} paper bankroll`);
+    if (over) {
+      return block(`insufficient bankroll: $${state.openExposureUsd.toFixed(2)} open + $${sizeUsd.toFixed(2)} new > $${equity.toFixed(2)} equity`);
     }
   }
-  return { ok: true, sizeUsd };
+  add("Position size", true, `${(risk.position_size_fraction * 100).toFixed(0)}% of ${usd(risk.bankroll_usd)}${risk.max_position_usd != null ? `, capped at ${usd(risk.max_position_usd)}` : ""} = ${usd(sizeUsd)}`);
+  return { ok: true, sizeUsd, checks };
 }
 
 /** Record a closed paper/live outcome and maybe trip the consecutive-loss pause. */
