@@ -11,6 +11,7 @@ import { lastAtOrBefore, ReplayAdapter } from "./replay.js";
 import { forBacktest, runBacktest } from "./run.js";
 import { runRound } from "../league/evolve.js";
 import { activeMembers, leaguePathFor, leagueRules, loadLeague } from "../league/league.js";
+import { mkdir } from "node:fs/promises";
 import { runPaperCycle } from "../engine/paper-session.js";
 
 const H = 3600;
@@ -80,7 +81,7 @@ function favorites(days: number): HistorySet {
   const markets: HistMarket[] = [];
   for (let i = 0; i < 10; i++) {
     // Listed one after another and closing over the window, so some are bought in the last part.
-    const start = days * 24 - i * 8;
+    const start = days * 24 - i * 9;
     const close = Math.round((days * 24 * (9 - i)) / 10) + 2;
     markets.push(market(`F${i}`, start, close, (ago) => Math.min(0.95, 0.84 + (start - ago) * 0.0002), "yes"));
   }
@@ -170,4 +171,84 @@ test("a league round: roster, backtest, clones of the best, diagnosis for the wo
   const ids = new Set(res.trace?.rules.map((r) => r.ruleId));
   for (const m of activeMembers(saved)) assert.ok(ids.has(m.id), `${m.name} is checked by the paper session`);
   assert.ok(ids.has("fav"));
+});
+
+test("rules see the close time a market showed while open; it settles when the result really came in", async () => {
+  const h = market("G", 30, 10, () => 0.6, "no");
+  h.market.closesAt = new Date((nowS + 40 * H) * 1000).toISOString(); // shown: 40h from now
+  let t = new Date((nowS - 15 * H) * 1000);
+  const ad = new ReplayAdapter("kalshi", [h], () => t);
+  const m = await ad.getMarket("G");
+  assert.equal(m?.status, "open");
+  assert.equal(m?.closesAt, h.market.closesAt, "no peeking at the real end");
+  t = new Date((nowS - 9 * H) * 1000);
+  assert.equal((await ad.getMarket("G"))?.status, "resolved", "settles at the real result time");
+  // No result yet but past the shown close: closed, waiting.
+  const w = market("W", 30, 10, () => 0.6);
+  t = new Date((nowS - 5 * H) * 1000);
+  const c = await new ReplayAdapter("kalshi", [w], () => t).getMarket("W");
+  assert.equal(c?.status, "closed");
+  assert.equal(c?.yesBid, undefined);
+});
+
+test("a backtest counts trades still open at the end, at the last bid minus the fee to sell", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "prb-bt-open-"));
+  // Bought at ~85¢, then it sinks to 50¢ and never resolves inside the window.
+  const sinking = market("S", 48, -100, (ago) => (ago > 30 ? 0.85 : 0.5));
+  const holder = RuleSchema.parse({ ...FAVORITE, id: "holder", exit: {} });
+  const res = await runBacktest({
+    rules: [holder],
+    workDir: path.join(dir, "run"),
+    cacheDir: path.join(dir, "cache"),
+    days: 2,
+    stepMinutes: 60,
+    testShare: 0.3,
+    perPlatform: 5,
+    minTrades: 1,
+    now: NOW,
+    history: { from: "", to: "", markets: [sinking] },
+    platforms: ["kalshi"],
+  });
+  const r = res.results.get("holder")!;
+  assert.equal(r.all.trades, 0);
+  assert.equal(r.all.open, 1);
+  assert.ok(r.all.pnlUsd < -15, `a losing open trade counts: ${r.all.pnlUsd}`);
+  assert.ok(r.all.maxDrawdownUsd > 15);
+  assert.ok(r.all.steadyScore < 0);
+  assert.match(r.diagnosis.headline, /Still holding 1 trade/);
+});
+
+test("a broken league file or member never stops paper trading", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "prb-league-bad-"));
+  const rulesPath = path.join(dir, "rules.yaml");
+  const ledgerPath = path.join(dir, "data", "paper-ledger.json");
+  await mkdir(path.dirname(ledgerPath), { recursive: true });
+  await writeFile(rulesPath, stringify({ version: 1, rules: [FAVORITE] }));
+  const t = new Date(NOW.getTime() - 30 * 3600_000);
+  const run = async () => {
+    const events: string[] = [];
+    const res = await runPaperCycle({
+      rulesPath,
+      ledgerPath,
+      now: t,
+      adapters: [new ReplayAdapter("kalshi", favorites(4).markets, () => t)],
+      emit: async (e) => {
+        if (e.type === "adapter_error") events.push(e.message);
+      },
+    });
+    return { res, events };
+  };
+  await writeFile(leaguePathFor(ledgerPath), "{ not json");
+  let { res, events } = await run();
+  assert.ok(res.trace?.rules.some((r) => r.ruleId === "fav"), "your rules still trade");
+  assert.match(events.join(" "), /League strategies skipped: League file .* is not valid JSON/);
+  await assert.rejects(loadLeague(leaguePathFor(ledgerPath)), /Move it aside/);
+
+  await writeFile(
+    leaguePathFor(ledgerPath),
+    JSON.stringify({ version: 1, round: 1, events: [], members: [{ id: "lg-bad-1", name: "Bad Member", style: "x", family: "momentum", status: "active", rule: { entry: { side: "sideways" } } }] }),
+  );
+  ({ res, events } = await run());
+  assert.ok(res.trace?.rules.some((r) => r.ruleId === "fav"));
+  assert.match(events.join(" "), /League strategy Bad Member skipped/);
 });

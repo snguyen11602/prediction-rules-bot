@@ -76,7 +76,16 @@ function leagueScheduler(args: ReturnType<typeof parseArgs>, ledgerPath: string,
         log(`League round failed: ${why}. Will retry in an hour.`);
       }
     };
-    proc.on("exit", (code) => done(code === 0, code === 0 ? undefined : tail || `exit code ${code}`));
+    proc.on("exit", (code) => {
+      if (code === 3) {
+        // Another round (e.g. a manual npm run league) holds the lock: check back later.
+        if (child === proc) child = undefined;
+        retryAt = Date.now() + 15 * 60_000;
+        loop.league = { ...loop.league!, running: false, lastLine: "Another league round is running; will check again in 15 min." };
+        return;
+      }
+      done(code === 0, code === 0 ? undefined : tail || `exit code ${code}`);
+    });
     proc.on("error", (err) => done(false, err.message));
   }
   return { maybeStart, stop: () => child?.kill() };

@@ -34,6 +34,9 @@ interface KalshiMarket {
   volume_fp?: string;
   open_interest_fp?: string;
   close_time?: string;
+  /** While open, close_time is this latest possible expiry; once settled it's the real close. */
+  expiration_time?: string;
+  latest_expiration_time?: string;
   event_ticker?: string;
 }
 

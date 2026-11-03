@@ -157,7 +157,16 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
   if (copyRule) allRules.set(copyRule.id, copyRule);
   // League strategies (bot-made, named like traders) paper-trade next to your own rules.
   // Retired members stay in allRules (disabled) so their open trades are still managed.
-  const leagueList = leagueRules(await loadLeague(leaguePathFor(opts.ledgerPath)), file.league);
+  // A broken league file or member is reported and skipped; your own rules keep trading.
+  const leagueProblems: string[] = [];
+  let leagueList: Rule[] = [];
+  try {
+    leagueList = leagueRules(await loadLeague(leaguePathFor(opts.ledgerPath)), file.league, (m, err) =>
+      leagueProblems.push(`League strategy ${m.name ?? m.id} skipped: ${err.message.slice(0, 160)}`),
+    );
+  } catch (err) {
+    leagueProblems.push(`League strategies skipped: ${(err as Error).message}`);
+  }
   for (const r of leagueList) if (!allRules.has(r.id)) allRules.set(r.id, r);
   const rules = [...enabledRules(file), ...leagueList.filter((r) => r.enabled && !file.rules.some((x) => x.id === r.id))];
   // arbCfg gates finding / opening new arbs; open arbs are always managed (see arbCtx).
@@ -172,6 +181,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     let realized = 0;
     const arb = { opportunities: [] as ArbOpportunity[], opened: 0, closed: 0, realizedPnlUsd: 0 };
 
+    for (const message of leagueProblems) await push({ at: now.toISOString(), type: "adapter_error", message });
     await push({
       at: now.toISOString(),
       type: "scan_start",

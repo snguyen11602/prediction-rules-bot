@@ -18,6 +18,7 @@ const KALSHI_GAME = {
   result: "yes",
   open_time: hoursAgo(200).toISOString(),
   close_time: hoursAgo(20).toISOString(),
+  latest_expiration_time: hoursAgo(-30).toISOString(),
   volume_fp: "100000",
   last_price_dollars: "0.99",
 };
@@ -35,6 +36,7 @@ const US_GAME = {
   status: "MARKET_STATUS_RESOLVED",
   closed: true,
   endDate: hoursAgo(10).toISOString(),
+  gameStartTime: hoursAgo(14).toISOString(),
   marketSides: [{ long: true, description: "A" }, { long: false, description: "B" }],
 };
 const US_FLAT = { ...US_GAME, id: 8, slug: "aec-nfl-c-d-2026-10-19" };
@@ -83,11 +85,18 @@ test("price history: real bid/ask, no empty-book prices, no peeking, results, an
     assert.equal(us[0].points[0][2], 0.5);
     assert.ok(Math.abs(us[0].points[0][1]! - 0.51) < 1e-9, "YES bid = 1 − short price");
 
-    // Finished markets come from the cache the second time.
+    // Finished markets come from the cache next time, even for tomorrow's (shifted) window.
     const before = calls.filter((c) => c.includes("candlesticks") || c.includes("price-history")).length;
-    await loadHistory({ from: FROM, to: NOW, perPlatform: 2, platforms: ["kalshi", "polymarket_us"], cacheDir, pauseMs: 0 });
+    const later = new Date(NOW.getTime() + 3600_000);
+    await loadHistory({ from: new Date(FROM.getTime() + 3600_000), to: later, perPlatform: 2, platforms: ["kalshi", "polymarket_us"], cacheDir, pauseMs: 0 });
     const after = calls.filter((c) => c.includes("candlesticks") || c.includes("price-history")).length;
     assert.equal(after, before);
+
+    // Rules see the close time the market showed while open, not its real end.
+    assert.equal(k.market.closesAt, KALSHI_GAME.latest_expiration_time);
+    assert.equal(k.result?.at, KALSHI_GAME.close_time);
+    assert.equal(us[0].market.closesAt, new Date(Date.parse(US_GAME.gameStartTime) + 340 * 3600_000).toISOString());
+    assert.equal(us[0].result?.at, US_GAME.endDate);
   } finally {
     globalThis.fetch = realFetch;
   }

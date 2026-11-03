@@ -1,4 +1,4 @@
-import { runBacktest, type BacktestResult } from "../backtest/run.js";
+import { runBacktest, testTradesNeeded, type BacktestResult } from "../backtest/run.js";
 import type { HistorySet } from "../backtest/history.js";
 import { loadLedger } from "../ledger/paper.js";
 import { loadRulesFile } from "../rules/loader.js";
@@ -20,7 +20,7 @@ import {
   type LeagueFile,
   type Member,
 } from "./league.js";
-import { openByRule, statsFromTrades, tradesByRule, type StrategyStats } from "./metrics.js";
+import { openTradesByRule, statsFromTrades, tradesByRule, type StrategyStats } from "./metrics.js";
 import { hashSeed, housePersona, inheritTraits, personName, randomTraits, rng, surnameOf, type Traits } from "./personas.js";
 
 /**
@@ -37,7 +37,7 @@ export interface Contestant {
   member?: Member;
   traits: Traits;
   rule: RuleBody;
-  backtest?: { all: StrategyStats; test: StrategyStats };
+  backtest?: { all: StrategyStats; train: StrategyStats; test: StrategyStats };
   paper: StrategyStats;
   /** The score it's ranked by this round (steady score). */
   score: number;
@@ -70,6 +70,8 @@ export interface RoundOptions {
   days?: number;
   /** Override markets per platform. */
   markets?: number;
+  /** The paper ledger holds demo data (--demo). */
+  demo?: boolean;
   log?: (m: string) => void;
 }
 
@@ -82,13 +84,23 @@ function nextFamily(cfg: LeagueConfig, members: Member[]): Exclude<FamilyId, "cu
   return [...cfg.families].sort((a, b) => count(a) - count(b))[0];
 }
 
+/** Names in use now or used before (so a newcomer never looks like an old strategy). */
+function takenNames(l: LeagueFile): Set<string> {
+  return new Set([...l.members.map((m) => m.name), ...(l.pastNames ?? [])]);
+}
+
+/** Ids come from a counter that only goes up, so a new strategy never inherits an old one's trades. */
+function nextId(l: LeagueFile, name: string): string {
+  l.seq = Math.max(l.seq ?? 0, l.members.length) + 1;
+  return memberId(name, l.seq);
+}
+
 export function makeRookie(l: LeagueFile, cfg: LeagueConfig, r: () => number, now: Date): Member {
-  const taken = new Set(l.members.map((m) => m.name));
   const family = nextFamily(cfg, activeMembers(l));
   const traits = randomTraits(r);
-  const name = personName(r, undefined, taken);
+  const name = personName(r, undefined, takenNames(l));
   return {
-    id: memberId(name, l.members.length + 1),
+    id: nextId(l, name),
     name,
     style: FAMILIES[family].style,
     family,
@@ -101,12 +113,11 @@ export function makeRookie(l: LeagueFile, cfg: LeagueConfig, r: () => number, no
 }
 
 export function makeClone(l: LeagueFile, parent: Contestant, r: () => number, now: Date): Member {
-  const taken = new Set(l.members.map((m) => m.name));
   const traits = inheritTraits(parent.traits, r);
-  const name = personName(r, surnameOf(parent.name), taken);
+  const name = personName(r, surnameOf(parent.name), takenNames(l));
   const family: FamilyId = parent.member?.family ?? "custom";
   return {
-    id: memberId(name, l.members.length + 1),
+    id: nextId(l, name),
     name,
     style: FAMILIES[family].style,
     family,
@@ -168,26 +179,24 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
   // 3. Paper results so far (the real ledger, read only).
   let ledger: Awaited<ReturnType<typeof loadLedger>> | undefined;
   try {
-    ledger = await loadLedger(o.ledgerPath, { demo: false });
-  } catch {
+    ledger = await loadLedger(o.ledgerPath, { demo: !!o.demo });
+  } catch (err) {
+    o.log?.(`Couldn't read the paper ledger (${(err as Error).message}); ranking on backtests only.`);
     ledger = undefined;
   }
   const paperTrades = ledger ? tradesByRule(ledger) : new Map();
-  const paperOpen = ledger ? openByRule(ledger) : new Map();
+  const paperOpen = ledger ? openTradesByRule(ledger, now) : new Map();
   const paperStats = (id: string, bankroll: number) =>
-    statsFromTrades(paperTrades.get(id) ?? [], {
-      bankrollUsd: bankroll,
-      minTrades: cfg.min_trades,
-      open: paperOpen.get(id)?.open,
-      openPnlUsd: paperOpen.get(id)?.pnl,
-    });
+    statsFromTrades(paperTrades.get(id) ?? [], { bankrollUsd: bankroll, minTrades: cfg.min_trades, openTrades: paperOpen.get(id) });
 
   const contestants: Contestant[] = [];
   const add = (c: Omit<Contestant, "score" | "ranked" | "eligible" | "diagnosis">) => {
     const res = bt?.results.get(c.id);
-    const backtest = res ? { all: res.all, test: res.test } : undefined;
+    const backtest = res ? { all: res.all, train: res.train, test: res.test } : undefined;
     const { score, ranked } = scoreOf(backtest, c.paper);
-    const eligible = ranked && score > 0 && (!backtest || backtest.test.pnlUsd >= 0);
+    // A winner must also hold up on the held-out last part: enough trades there, and no loss.
+    const heldUp = !backtest || (backtest.test.trades + backtest.test.open >= testTradesNeeded(cfg.min_trades) && backtest.test.pnlUsd >= 0);
+    const eligible = ranked && score > 0 && heldUp;
     const basis = backtest && c.paper.trades < PAPER_TRADES_TO_COUNT ? backtest.all : c.paper;
     const diagnosis = diagnose(basis, { minTrades: cfg.min_trades, blocks: res?.blocks, test: backtest?.test, now });
     contestants.push({ ...c, backtest, score, ranked, eligible, diagnosis });
@@ -206,6 +215,7 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
     if (!c.member) continue;
     c.member.diagnosis = c.diagnosis;
     if (c.backtest) c.member.backtest = { ...c.backtest, at: now.toISOString() };
+    else if (bt) c.member.backtest = undefined;
     if (c.member.status === "rookie" && c.ranked) c.member.status = "active";
   }
   const winners = standings.filter((c) => c.eligible && (!c.house || cfg.clone_house_rules)).slice(0, cfg.winners);
@@ -281,16 +291,20 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
       steps: bt.steps,
       seconds: bt.seconds,
       house: Object.fromEntries(
-        contestants.filter((c) => c.house && c.backtest).map((c) => [c.id, { all: c.backtest!.all, test: c.backtest!.test, diagnosis: c.diagnosis }]),
+        contestants.filter((c) => c.house && c.backtest).map((c) => [c.id, { all: c.backtest!.all, train: c.backtest!.train, test: c.backtest!.test, diagnosis: c.diagnosis }]),
       ),
       note: bt.notes.join(" ") || undefined,
     };
   }
   l.events = l.events.slice(-300);
-  // Keep the newest retirees for the history page.
-  const retiredOld = l.members.filter((m) => m.status === "retired").sort((a, b) => (b.retiredAt ?? "").localeCompare(a.retiredAt ?? "")).slice(60);
-  const drop = new Set(retiredOld.filter((m) => !ledger?.positions.some((p) => p.ruleId === m.id && p.status === "open")).map((m) => m.id));
-  l.members = l.members.filter((m) => !drop.has(m.id));
+  // Keep the newest retirees for the history page. Only drop ones we know have nothing open
+  // (their rule must stay in the file while a position is open, so its exits keep running).
+  if (ledger) {
+    const retiredOld = l.members.filter((m) => m.status === "retired").sort((a, b) => (b.retiredAt ?? "").localeCompare(a.retiredAt ?? "")).slice(60);
+    const drop = new Set(retiredOld.filter((m) => !ledger!.positions.some((p) => p.ruleId === m.id && p.status === "open")).map((m) => m.id));
+    l.pastNames = [...(l.pastNames ?? []), ...l.members.filter((m) => drop.has(m.id)).map((m) => m.name)].slice(-500);
+    l.members = l.members.filter((m) => !drop.has(m.id));
+  }
   await saveLeague(leaguePath, l);
   return { league: l, summary: { round, born, cloned, retired, champion: champ, standings, backtest: bt } };
 }

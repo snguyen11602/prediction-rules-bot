@@ -23,8 +23,8 @@ export interface Member {
   status: "rookie" | "active" | "champion" | "retired";
   retiredAt?: string;
   diagnosis?: Diagnosis;
-  /** Latest backtest: the whole window and the held-out last part. */
-  backtest?: { all: StrategyStats; test: StrategyStats; at: string };
+  /** Latest backtest: the whole window, the part it's ranked on, and the held-out last part. */
+  backtest?: { all: StrategyStats; train?: StrategyStats; test: StrategyStats; at: string };
 }
 
 export interface LeagueEvent {
@@ -44,7 +44,7 @@ export interface BacktestRun {
   steps: number;
   seconds: number;
   /** Your own paper rules' backtest results (they aren't league members). */
-  house: Record<string, { all: StrategyStats; test: StrategyStats; diagnosis?: Diagnosis }>;
+  house: Record<string, { all: StrategyStats; train?: StrategyStats; test: StrategyStats; diagnosis?: Diagnosis }>;
   note?: string;
 }
 
@@ -55,6 +55,10 @@ export interface LeagueFile {
   events: LeagueEvent[];
   lastRun?: BacktestRun;
   nextRoundAt?: string;
+  /** Member id counter (only goes up). */
+  seq?: number;
+  /** Names of members dropped from the file, so they aren't reused. */
+  pastNames?: string[];
 }
 
 /** data/paper-ledger.json → data/paper-ledger.league.json */
@@ -63,14 +67,26 @@ export function leaguePathFor(ledgerPath: string): string {
   return ext ? `${ledgerPath.slice(0, -ext.length)}.league${ext}` : `${ledgerPath}.league.json`;
 }
 
+/**
+ * The league file, or an empty league when there is none yet. A file that exists but can't be read
+ * throws, so a round never overwrites it (move it aside to start over).
+ */
 export async function loadLeague(file: string): Promise<LeagueFile> {
+  let raw: string;
   try {
-    const d = JSON.parse(await readFile(file, "utf8")) as LeagueFile;
-    if (d?.version === 1 && Array.isArray(d.members)) return { ...d, events: d.events ?? [] };
-  } catch {
-    // none yet
+    raw = await readFile(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, round: 0, members: [], events: [] };
+    throw err;
   }
-  return { version: 1, round: 0, members: [], events: [] };
+  let d: LeagueFile;
+  try {
+    d = JSON.parse(raw) as LeagueFile;
+  } catch (err) {
+    throw new Error(`League file ${file} is not valid JSON (${(err as Error).message}). Move it aside to start a new league.`);
+  }
+  if (d?.version !== 1 || !Array.isArray(d.members)) throw new Error(`League file ${file} has an unknown format. Move it aside to start a new league.`);
+  return { ...d, events: Array.isArray(d.events) ? d.events : [] };
 }
 
 export async function saveLeague(file: string, l: LeagueFile): Promise<void> {
@@ -93,9 +109,18 @@ export function leagueConfig(file: { league?: LeagueConfig }): LeagueConfig {
 }
 
 /** Rules the paper session should run for the league: active members (and retired ones, disabled, for exits). */
-export function leagueRules(l: LeagueFile, cfg: LeagueConfig | undefined): Rule[] {
-  if (cfg && !cfg.enabled) return l.members.map((m) => ({ ...memberRule(m), enabled: false }));
-  return l.members.map(memberRule);
+export function leagueRules(l: LeagueFile, cfg: LeagueConfig | undefined, onBad?: (m: Member, err: Error) => void): Rule[] {
+  const out: Rule[] = [];
+  for (const m of l.members) {
+    try {
+      const r = memberRule(m);
+      out.push(cfg && !cfg.enabled ? { ...r, enabled: false } : r);
+    } catch (err) {
+      // One broken member mustn't stop paper trading for everything else.
+      onBad?.(m, err as Error);
+    }
+  }
+  return out;
 }
 
 export function activeMembers(l: LeagueFile): Member[] {
@@ -110,11 +135,17 @@ export function memberId(name: string, n: number): string {
 export const PAPER_TRADES_TO_COUNT = 10;
 
 /** Pick the score: the backtest, blended 50/50 with paper once there are enough paper trades. */
-export function scoreOf(bt: { all: StrategyStats } | undefined, paper: StrategyStats): { score: number; ranked: boolean } {
+/**
+ * Pick the score: the backtest's steady score on the part before the held-out test (so the test
+ * stays a real check), blended 50/50 with paper once there are enough paper trades.
+ * Ranked once the whole backtest (or paper) has `min_trades` finished trades.
+ */
+export function scoreOf(bt: { all: StrategyStats; train?: StrategyStats } | undefined, paper: StrategyStats): { score: number; ranked: boolean } {
   const paperCounts = paper.trades >= PAPER_TRADES_TO_COUNT;
-  if (bt?.all.ranked && paperCounts) return { score: Math.round(((bt.all.steadyScore + paper.steadyScore) / 2) * 100) / 100, ranked: true };
+  const btScore = bt ? (bt.train ?? bt.all).steadyScore : 0;
+  if (bt?.all.ranked && paperCounts) return { score: Math.round(((btScore + paper.steadyScore) / 2) * 100) / 100, ranked: true };
   if (paperCounts) return { score: paper.steadyScore, ranked: true };
-  if (bt) return { score: bt.all.steadyScore, ranked: bt.all.ranked };
+  if (bt) return { score: btScore, ranked: bt.all.ranked };
   return { score: paper.steadyScore, ranked: paper.ranked };
 }
 

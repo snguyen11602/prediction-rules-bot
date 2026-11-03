@@ -503,10 +503,10 @@
     <section class="card section">
       <h2>Every strategy on past prices</h2>
       <div class="tablewrap"><table class="board">
-        <thead><tr><th>Strategy</th><th class="num">Profit (whole window)</th><th class="num opt">Trades</th><th class="num opt">Win rate</th><th class="num opt">Steady score</th><th class="num">Profit (recent part)</th><th class="opt">Verdict</th></tr></thead>
+        <thead><tr><th>Strategy</th><th class="num">Profit (whole window)</th><th class="num opt">Trades</th><th class="num opt">Win rate</th><th class="num opt">Steady score</th><th class="num">Profit (held-out part)</th><th class="opt">Verdict</th></tr></thead>
         <tbody id="btBody"></tbody>
       </table></div>
-      <p class="meta">"Recent part" is the last stretch of the window. A strategy only counts as a winner if it also made money there — otherwise its early gains may have been luck.</p>
+      <p class="meta">The steady score uses the first 70% of the window. The last 30% is held out: a strategy only counts as a winner if it also made money there, on enough trades — otherwise its early gains may have been luck. Profit counts trades still open at the end at what they'd sell for.</p>
     </section>
     <section class="card section">
       <h2>Evolution log</h2>
@@ -1273,6 +1273,11 @@
   function players() { return (state.league && state.league.players) || []; }
   function playerById(id) { return players().find((p) => p.id === id); }
   function statsFor(p, src) { return src === "paper" ? p.paper : p.backtest && p.backtest.all; }
+  /** Backtest rank uses the part before the held-out test (so the test stays a real check). */
+  function scoreFor(p, src) {
+    if (src === "paper") return p.paper.steadyScore;
+    return p.backtest ? (p.backtest.train || p.backtest.all).steadyScore : 0;
+  }
   function pct(n) { return `${Math.round((n || 0) * 100)}%`; }
   function score(n) { return (n > 0 ? "+" : n < 0 ? MINUS : "") + Math.abs(n).toFixed(1); }
   function setSeg(id, value, onPick) {
@@ -1300,7 +1305,7 @@
       if (sort === "profit") return s.pnlUsd;
       if (sort === "win") return s.wins + s.losses ? s.winRate : -1;
       if (sort === "trades") return s.trades;
-      return s.steadyScore;
+      return scoreFor(p, src);
     };
     const ranked = (p) => { const s = statsFor(p, src); return !!s && (sort === "trades" || s.trades >= minT); };
     return list.sort((a, b) => Number(ranked(b)) - Number(ranked(a)) || key(b) - key(a) || a.name.localeCompare(b.name)).map((p) => ({ p, ranked: ranked(p) }));
@@ -1315,7 +1320,9 @@
     const lr = lg.lastRun;
     const next = lg.nextRoundAt ? new Date(lg.nextRoundAt).getTime() - nowMs() : null;
     const loopL = state.loop && state.loop.league;
-    $("lgNote").textContent = !lg.enabled
+    $("lgNote").textContent = lg.error
+      ? `⚠ ${lg.error}`
+      : !lg.enabled
       ? "The league is turned off in your rules file (league: enabled: false)."
       : loopL && loopL.running
         ? `Round ${lg.round + 1} is running now (backtest + evolution)… ${loopL.lastLine || ""}`
@@ -1331,8 +1338,8 @@
       const tr = el("tr", { class: rank === "1" ? "first" : null, tabindex: "0" },
         el("td", { class: "num rank", text: rank }),
         whoCell(p),
-        el("td", { class: "num" }, st && ranked ? el("span", { class: cls(st.steadyScore), text: score(st.steadyScore) }) : el("span", { class: "meta", text: st ? `${st.trades}/${lg.minTrades}` : "—", title: st ? `${st.trades} of the ${lg.minTrades} finished trades needed to rank` : "not tested yet" })),
-        el("td", { class: "num" }, st ? pnlNode(st.pnlUsd) : "—", st && st.open ? el("div", { class: "meta opt", text: `${st.open} open ${usd(st.openPnlUsd, true)}` }) : null),
+        el("td", { class: "num" }, st && ranked ? el("span", { class: cls(scoreFor(p, ui.src)), text: score(scoreFor(p, ui.src)) }) : el("span", { class: "meta", text: st ? `${st.trades}/${lg.minTrades}` : "—", title: st ? `${st.trades} of the ${lg.minTrades} finished trades needed to rank` : "not tested yet" })),
+        el("td", { class: "num" }, st ? pnlNode(st.pnlUsd) : "—", st && st.open ? el("div", { class: "meta opt", text: `incl. ${st.open} open ${usd(st.openPnlUsd, true)}` }) : null),
         el("td", { class: "num opt", text: st && st.wins + st.losses ? pct(st.winRate) : "—" }),
         el("td", { class: "num opt", text: st ? String(st.trades) : "—" }),
         el("td", { class: "num opt", text: st && st.maxDrawdownUsd ? usd(-st.maxDrawdownUsd) : "—" }),
@@ -1343,7 +1350,7 @@
       tr.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
       body.append(tr);
     }
-    $("lgFoot").textContent = `Steady score = profit as a % of its $1,000 bankroll, minus its worst drop in %. Strategies need ${lg.minTrades} finished trades to be ranked. ${ui.src === "paper" ? "Paper = trades made since it joined, on live prices." : "Backtest = the last two weeks of real prices, replayed."}`;
+    $("lgFoot").textContent = `Steady score = profit as a % of its $1,000 bankroll, minus its worst drop in %. Profit counts open trades at what they'd sell for now. Strategies need ${lg.minTrades} finished trades to be ranked. ${ui.src === "paper" ? "Paper = trades made since it joined, on live prices." : "Backtest = the last two weeks of real prices, replayed; the score uses the first 70%, and the last 30% is the check that it wasn't luck."}`;
     const ev = $("lgEvents");
     ev.replaceChildren();
     if (!lg.events.length) ev.append(el("li", { class: "empty", text: "Nothing yet." }));
@@ -1393,9 +1400,9 @@
     const bt = p.backtest && p.backtest.all, test = p.backtest && p.backtest.test, pa = p.paper;
     $("sKpis").replaceChildren(
       kpi("Steady score", el("span", { class: p.ranked ? cls(p.score) : "", text: p.ranked ? score(p.score) : "—" }), p.ranked ? "used for its rank" : `needs ${state.league.minTrades} finished trades`),
-      kpi("Backtest profit", bt ? pnlNode(bt.pnlUsd) : el("span", { text: "—" }), bt ? `${bt.trades} trades · ${bt.wins + bt.losses ? pct(bt.winRate) : "—"} won` : "not tested yet"),
-      kpi("Recent part of backtest", test ? pnlNode(test.pnlUsd) : el("span", { text: "—" }), test ? `${test.trades} trades (held-out test)` : ""),
-      kpi("Paper profit", pnlNode(pa.pnlUsd + pa.openPnlUsd), `${pa.trades} closed · ${pa.open} open`),
+      kpi("Backtest profit", bt ? pnlNode(bt.pnlUsd) : el("span", { text: "—" }), bt ? `${bt.trades} trades · ${bt.wins + bt.losses ? pct(bt.winRate) : "—"} won${bt.open ? ` · ${bt.open} still open` : ""}` : "not tested yet"),
+      kpi("Held-out last part", test ? pnlNode(test.pnlUsd) : el("span", { text: "—" }), test ? `${test.trades + test.open} trades bought then` : ""),
+      kpi("Paper profit", pnlNode(pa.pnlUsd), `${pa.trades} closed · ${pa.open} open`),
       kpi("Fees paid", el("span", { text: usd((bt ? bt.feesUsd : 0) + pa.feesUsd) }), "backtest + paper"),
     );
 
@@ -1436,7 +1443,8 @@
     if (chartData) {
       const end = ui.chartSrc === "paper" ? nowMs() : new Date(sd.backtest.to || Date.now()).getTime();
       drawPnl($("sChart"), $("sTip"), chartData.series, ui.chartSrc === "paper" ? (p.bornAt || chartData.createdAt) : sd.backtest.from, end, ui.chartSrc === "paper" ? "No closed paper trades yet." : "No closed trades in the backtest.");
-      $("sChartNote").textContent = ui.chartSrc === "paper" ? "Paper trades on live prices." : sd.backtest.testFrom ? `Backtest window; the recent part starts ${new Date(sd.backtest.testFrom).toLocaleDateString([], { month: "short", day: "numeric" })}.` : "";
+      const openNote = " The line shows closed trades; open ones count in the profit above at what they'd sell for.";
+      $("sChartNote").textContent = (ui.chartSrc === "paper" ? "Paper trades on live prices." : sd.backtest.testFrom ? `Backtest window; the held-out part starts ${new Date(sd.backtest.testFrom).toLocaleDateString([], { month: "short", day: "numeric" })}.` : "") + openNote;
     } else {
       $("sChart").replaceChildren(el("div", { class: "empty", text: sd ? "No backtest yet." : "Loading…" }));
       $("sChartNote").textContent = "";
@@ -1483,17 +1491,18 @@
     // Strategies that traded first (best steady score on top), then the ones that never found a trade.
     const rows = players()
       .filter((p) => p.backtest && p.status !== "retired")
-      .sort((a, b) => Number(b.backtest.all.trades > 0) - Number(a.backtest.all.trades > 0) || b.backtest.all.steadyScore - a.backtest.all.steadyScore);
+      .sort((a, b) => Number(b.backtest.all.trades > 0) - Number(a.backtest.all.trades > 0) || scoreFor(b, "backtest") - scoreFor(a, "backtest"));
     if (!rows.length) body.append(emptyRow(7, "Nothing backtested yet."));
     for (const p of rows) {
       const a = p.backtest.all, t = p.backtest.test;
-      const verdict = a.trades < lg.minTrades ? "Too few trades" : a.pnlUsd > 0 && t.pnlUsd >= 0 ? "✓ Winner material" : a.pnlUsd > 0 ? "Lucky start?" : "Losing";
+      const sc = scoreFor(p, "backtest");
+      const verdict = a.trades < lg.minTrades ? "Too few trades" : sc <= 0 ? "Losing" : t.trades + t.open < (lg.testTrades || 2) ? "Not enough recent trades" : t.pnlUsd >= 0 ? "✓ Winner material" : "Lucky start?";
       const tr = el("tr", { tabindex: "0" },
         whoCell(p),
         el("td", { class: "num" }, pnlNode(a.pnlUsd)),
         el("td", { class: "num opt", text: String(a.trades) }),
         el("td", { class: "num opt", text: a.wins + a.losses ? pct(a.winRate) : "—" }),
-        el("td", { class: "num opt" }, el("span", { class: cls(a.steadyScore), text: score(a.steadyScore) })),
+        el("td", { class: "num opt" }, el("span", { class: cls(sc), text: score(sc) })),
         el("td", { class: "num" }, pnlNode(t.pnlUsd), el("div", { class: "meta", text: `${t.trades} trades` })),
         el("td", { class: "opt", text: verdict }),
       );
@@ -1509,7 +1518,11 @@
   // ---------- pages ----------
   function route() {
     const h = location.hash.replace(/^#\/?/, "");
-    if (h.startsWith("s/")) return { view: "strategy", id: decodeURIComponent(h.slice(2)) };
+    if (h.startsWith("s/")) {
+      let id = h.slice(2);
+      try { id = decodeURIComponent(id); } catch { /* keep it as typed */ }
+      return { view: "strategy", id };
+    }
     if (h === "leaderboard") return { view: "league" };
     if (h === "backtest") return { view: "backtest" };
     if (h === "live") return { view: "live" };

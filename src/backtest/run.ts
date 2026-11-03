@@ -4,7 +4,7 @@ import { runPaperCycle } from "../engine/paper-session.js";
 import { loadLedger } from "../ledger/paper.js";
 import type { Rule } from "../rules/schema.js";
 import { diagnose, type BlockCounts, type Diagnosis } from "../league/diagnose.js";
-import { openByRule, statsFromTrades, tradesByRule, type StrategyStats } from "../league/metrics.js";
+import { openTradesByRule, statsFromTrades, tradesByRule, type StrategyStats } from "../league/metrics.js";
 import type { PlatformId } from "../types.js";
 import { loadHistory, type HistorySet } from "./history.js";
 import { ReplayAdapter } from "./replay.js";
@@ -33,7 +33,11 @@ export interface BacktestOptions {
 }
 
 export interface StrategyResult {
+  /** The whole window. */
   all: StrategyStats;
+  /** Trades bought before the held-out part: what it's ranked on. */
+  train: StrategyStats;
+  /** Trades bought in the held-out last part: a winner must make money here too. */
   test: StrategyStats;
   blocks: BlockCounts;
   diagnosis: Diagnosis;
@@ -50,6 +54,11 @@ export interface BacktestResult {
   ledgerPath: string;
   results: Map<string, StrategyResult>;
   notes: string[];
+}
+
+/** Trades a strategy must make in the held-out part before it can count as a winner. */
+export function testTradesNeeded(minTrades: number): number {
+  return Math.max(2, Math.ceil(minTrades / 3));
 }
 
 /**
@@ -125,20 +134,25 @@ export async function runBacktest(o: BacktestOptions): Promise<BacktestResult> {
 
   const ledger = await loadLedger(ledgerPath, { demo: false });
   const trades = tradesByRule(ledger);
-  const open = openByRule(ledger);
+  // Still open at the end: counted as sold at the last bid, minus the fee for selling.
+  const byPlatform = new Map(adapters.map((a) => [a.id, a]));
+  const open = openTradesByRule(ledger, to, (p) => {
+    const rule = rules.find((r) => r.id === p.ruleId);
+    if (rule?.paper.include_fees === false || p.lastMarkPrice == null) return 0;
+    return byPlatform.get(p.platform)?.estimateTakerFeeUsd(p.contracts, p.lastMarkPrice) ?? 0;
+  });
   const results = new Map<string, StrategyResult>();
   const testIso = testFrom.toISOString();
+  const inTest = (t: { enteredAt: string }) => t.enteredAt >= testIso;
   for (const r of rules) {
     const mine = trades.get(r.id) ?? [];
-    const o2 = open.get(r.id);
+    const held = open.get(r.id) ?? [];
     const opts = { bankrollUsd: r.risk.bankroll_usd, minTrades: o.minTrades };
-    const all = statsFromTrades(mine, { ...opts, open: o2?.open, openPnlUsd: o2?.pnl });
-    const test = statsFromTrades(
-      mine.filter((t) => t.enteredAt >= testIso),
-      { ...opts, minTrades: Math.max(1, Math.ceil(o.minTrades / 2)) },
-    );
+    const all = statsFromTrades(mine, { ...opts, openTrades: held });
+    const train = statsFromTrades(mine.filter((t) => !inTest(t)), { ...opts, openTrades: held.filter((t) => !inTest(t)) });
+    const test = statsFromTrades(mine.filter(inTest), { ...opts, minTrades: testTradesNeeded(o.minTrades), openTrades: held.filter(inTest) });
     const b = blocks.get(r.id)!;
-    results.set(r.id, { all, test, blocks: b, diagnosis: diagnose(all, { minTrades: o.minTrades, blocks: b, test, now }) });
+    results.set(r.id, { all, train, test, blocks: b, diagnosis: diagnose(all, { minTrades: o.minTrades, blocks: b, test, now }) });
   }
 
   return {

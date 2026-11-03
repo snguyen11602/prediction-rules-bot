@@ -13,9 +13,10 @@ import type { EngineEvent } from "../types.js";
 import type { RulesFile } from "../rules/schema.js";
 import { FAMILIES, describeRule, toBody } from "../league/genome.js";
 import { backtestDirs, leagueConfig, leaguePathFor, loadLeague, scoreOf, type LeagueFile } from "../league/league.js";
-import { openByRule, statsFromTrades, tradesByRule } from "../league/metrics.js";
+import { openTradesByRule, statsFromTrades, tradesByRule } from "../league/metrics.js";
 import { housePersona } from "../league/personas.js";
 import { houseContestantRules } from "../league/evolve.js";
+import { testTradesNeeded } from "../backtest/run.js";
 
 /**
  * Local, read-only paper-trading dashboard. Serves one page plus a JSON
@@ -159,7 +160,11 @@ export async function buildState(opts: DashboardOptions) {
   let rulesError: string | undefined;
   let arbEnabled = false;
   let file: RulesFile | undefined;
-  const league = await loadLeague(leaguePathFor(opts.ledgerPath));
+  let leagueError: string | undefined;
+  const league = await loadLeague(leaguePathFor(opts.ledgerPath)).catch((err: Error): LeagueFile => {
+    leagueError = err.message;
+    return { version: 1, round: 0, members: [], events: [] };
+  });
   try {
     file = await loadRulesFile(opts.rulesPath);
     ruleMeta = new Map(file.rules.map((r) => [r.id, { name: r.name, action: r.action, enabled: r.enabled }]));
@@ -291,10 +296,18 @@ export async function buildState(opts: DashboardOptions) {
     pnlSeries,
     journal,
     arbs,
-    league: leagueView(league, ledger, file),
+    league: { ...leagueView(league, ledger, file), error: leagueError },
     loop: opts.getLoop?.() ?? { enabled: false, running: false },
     events: (opts.getEvents?.() ?? []).slice(-80).reverse(),
   };
+}
+
+function safeDescribe(rule: Parameters<typeof toBody>[0]): string[] {
+  try {
+    return describeRule(toBody(rule));
+  } catch {
+    return [];
+  }
 }
 
 /** The leaderboard: every league strategy plus your own rules, with backtest and paper results. */
@@ -302,15 +315,17 @@ function leagueView(l: LeagueFile, ledger: PaperLedger, file: RulesFile | undefi
   const cfg = file ? leagueConfig(file) : undefined;
   const minTrades = cfg?.min_trades ?? 5;
   const trades = tradesByRule(ledger);
-  const open = openByRule(ledger);
+  const open = openTradesByRule(ledger, new Date());
   const paper = (id: string, bankrollUsd: number) =>
-    statsFromTrades(trades.get(id) ?? [], { bankrollUsd, minTrades, open: open.get(id)?.open, openPnlUsd: open.get(id)?.pnl });
+    statsFromTrades(trades.get(id) ?? [], { bankrollUsd, minTrades, openTrades: open.get(id) });
   const houseRules = file ? houseContestantRules(file) : [];
   const names = new Map<string, string>([
     ...l.members.map((m) => [m.id, m.name] as [string, string]),
     ...houseRules.map((r) => [r.id, `${housePersona(r.id).name} (your rule)`] as [string, string]),
   ]);
-  const members = l.members.map((m) => {
+  // A member with a broken rule is left off the board rather than breaking the whole page.
+  const valid = l.members.filter((m) => m && typeof m.id === "string" && m.rule?.risk && m.rule?.filters && m.rule?.entry && m.traits);
+  const members = valid.map((m) => {
     const p = paper(m.id, m.rule.risk.bankroll_usd);
     const { score, ranked } = scoreOf(m.backtest, p);
     return {
@@ -328,7 +343,7 @@ function leagueView(l: LeagueFile, ledger: PaperLedger, file: RulesFile | undefi
       status: m.status,
       retiredAt: m.retiredAt,
       house: false,
-      describe: describeRule(m.rule),
+      describe: safeDescribe(m.rule),
       diagnosis: m.diagnosis,
       backtest: m.backtest,
       paper: p,
@@ -341,12 +356,7 @@ function leagueView(l: LeagueFile, ledger: PaperLedger, file: RulesFile | undefi
     const bt = l.lastRun?.house[r.id];
     const p = paper(r.id, r.risk.bankroll_usd);
     const { score, ranked } = scoreOf(bt, p);
-    let describe: string[] = [];
-    try {
-      describe = describeRule(toBody({ ...r }));
-    } catch {
-      // a rule the league can't describe still shows up
-    }
+    const describe = safeDescribe({ ...r });
     return {
       id: r.id,
       name: persona.name,
@@ -377,6 +387,7 @@ function leagueView(l: LeagueFile, ledger: PaperLedger, file: RulesFile | undefi
     nextRoundAt: l.nextRoundAt,
     lastRun: l.lastRun ? { ...l.lastRun, house: undefined } : undefined,
     minTrades,
+    testTrades: testTradesNeeded(minTrades),
     rosterSize: cfg?.roster_size ?? 12,
     players: [...members, ...house],
     events: l.events.slice(-120).reverse(),
@@ -405,12 +416,12 @@ export async function buildStrategy(opts: DashboardOptions, id: string) {
   const bt = await stat(btPath)
     .then(() => loadLedger(btPath, { demo: false }))
     .catch(() => undefined);
-  const league = await loadLeague(leaguePathFor(opts.ledgerPath));
+  const league = await loadLeague(leaguePathFor(opts.ledgerPath)).catch(() => undefined);
   return {
     ok: true as const,
     id,
     paper: pick(ledger),
-    backtest: bt ? { ...pick(bt), from: league.lastRun?.from, to: league.lastRun?.to, testFrom: league.lastRun?.testFrom } : undefined,
+    backtest: bt ? { ...pick(bt), from: league?.lastRun?.from, to: league?.lastRun?.to, testFrom: league?.lastRun?.testFrom } : undefined,
   };
 }
 

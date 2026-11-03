@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getJson } from "../platforms/http.js";
 import { normalizeKalshi, type KalshiMarket } from "../platforms/kalshi.js";
@@ -53,6 +53,30 @@ function lean(m: NormalizedMarket, raw?: unknown): NormalizedMarket {
 function sortPoints(pts: HistPoint[]): HistPoint[] {
   const seen = new Set<number>();
   return pts.sort((a, b) => a[0] - b[0]).filter((p) => !seen.has(p[0]) && !!seen.add(p[0]));
+}
+
+/** Finished markets are cached for good (pruned after CACHE_DAYS); open ones only for this run. */
+const CACHE_DAYS = 45;
+/** How far back a finished market's history is fetched (enough for any backtest window). */
+const HISTORY_DAYS = 60;
+
+async function prepareCache(cacheDir: string): Promise<void> {
+  await rm(path.join(cacheDir, "open"), { recursive: true, force: true });
+  const cutoff = Date.now() - CACHE_DAYS * 86_400_000;
+  for (const sub of ["kalshi", "polymarket_us"]) {
+    const dir = path.join(cacheDir, sub);
+    const names = await readdir(dir).catch(() => [] as string[]);
+    for (const n of names) {
+      const f = path.join(dir, n);
+      const st = await stat(f).catch(() => null);
+      if (st && st.mtimeMs < cutoff) await rm(f, { force: true });
+    }
+  }
+}
+
+/** Keep the points inside the backtest window. */
+function inside(pts: HistPoint[], fromS: number, toS: number): HistPoint[] {
+  return pts.filter((p) => p[0] >= fromS && p[0] <= toS);
 }
 
 async function cached<T>(dir: string, key: string, fresh: boolean, load: () => Promise<T>): Promise<T> {
@@ -170,12 +194,15 @@ async function kalshiHistory(o: HistoryOptions): Promise<HistMarket[]> {
     const series = m.event_ticker?.split("-")[0];
     if (!series) continue;
     const closeS = m.close_time ? Math.floor(Date.parse(m.close_time) / 1000) : toS;
-    const start = Math.max(fromS, m.open_time ? Math.floor(Date.parse(m.open_time) / 1000) : fromS);
-    const end = Math.min(toS, closeS);
+    const openS = m.open_time ? Math.floor(Date.parse(m.open_time) / 1000) : fromS;
+    const finished = m.result === "yes" || m.result === "no" || m.result === "scalar";
+    // Finished: its whole recent life, cached once. Open: just the window, for this run only.
+    const start = finished ? Math.max(openS, closeS - HISTORY_DAYS * 86_400) : Math.max(fromS, openS);
+    const end = finished ? closeS : toS;
     if (end <= start) continue;
-    const finished = m.status === "settled" || m.status === "finalized" || closeS <= toS;
     try {
-      const candles = await cached(path.join(o.cacheDir, "kalshi"), `${m.ticker}-${start}-${finished ? "final" : end}`, false, async () => {
+      const dir = finished ? path.join(o.cacheDir, "kalshi") : path.join(o.cacheDir, "open", "kalshi");
+      const candles = await cached(dir, finished ? `${m.ticker}-final` : `${m.ticker}-${end}`, false, async () => {
         const url = new URL(`${KALSHI}/series/${encodeURIComponent(series)}/markets/${encodeURIComponent(m.ticker)}/candlesticks`);
         url.searchParams.set("start_ts", String(start));
         url.searchParams.set("end_ts", String(end));
@@ -185,15 +212,19 @@ async function kalshiHistory(o: HistoryOptions): Promise<HistMarket[]> {
         return d?.candlesticks ?? [];
       });
       // 24h volume from the hourly candles (contracts, like the live adapter's proxy).
-      const pts: HistPoint[] = [];
+      const all: HistPoint[] = [];
       const hourly = candles.map((c) => num(c.volume_fp) ?? 0);
       candles.forEach((c, i) => {
         const v24 = hourly.slice(Math.max(0, i - 23), i + 1).reduce((a, b) => a + b, 0);
-        pts.push([c.end_period_ts, px(c.yes_bid?.close_dollars), px(c.yes_ask?.close_dollars), v24, num(c.open_interest_fp)]);
+        all.push([c.end_period_ts, px(c.yes_bid?.close_dollars), px(c.yes_ask?.close_dollars), v24, num(c.open_interest_fp)]);
       });
+      const pts = inside(sortPoints(all), fromS, toS);
       if (!moved(pts)) continue;
-      const live = normalizeKalshi({ ...m, status: "active", result: "", last_price_dollars: m.last_price_dollars || "0.5" });
-      if (!live || !pts.length) continue;
+      // While a market is open, Kalshi shows its latest possible expiry as the close time; the
+      // real close (when the result came in) is only known afterwards. Rules see the former.
+      const shownClose = finished ? m.latest_expiration_time ?? m.expiration_time ?? m.close_time : m.close_time;
+      const live = normalizeKalshi({ ...m, close_time: shownClose, status: "active", result: "", last_price_dollars: m.last_price_dollars || "0.5" });
+      if (!live) continue;
       const at = m.close_time ?? new Date(closeS * 1000).toISOString();
       const scalar = num(m.settlement_value_dollars) ?? (typeof m.settlement_value === "number" ? m.settlement_value / 100 : null);
       const result: HistMarket["result"] =
@@ -202,7 +233,7 @@ async function kalshiHistory(o: HistoryOptions): Promise<HistMarket[]> {
           : m.result === "scalar" && scalar != null && scalar >= 0 && scalar <= 1
             ? { yesPayout: scalar, at }
             : undefined;
-      out.push({ market: lean(live), points: sortPoints(pts), result });
+      out.push({ market: lean(live), points: pts, result });
       if (++n % 20 === 0) o.log?.(`  Kalshi: ${n} markets loaded`);
     } catch (err) {
       o.log?.(`  Kalshi ${m.ticker}: ${(err as Error).message.slice(0, 80)}`);
@@ -267,14 +298,22 @@ async function usHistory(o: HistoryOptions): Promise<HistMarket[]> {
   return out.slice(0, o.perPlatform);
 }
 
+/** Open Polymarket US games show an end date about 14 days (340 h) after the start. */
+const US_OPEN_END_AFTER_START_MS = 340 * 3600_000;
+
 async function usOne(m: UsMarket, o: HistoryOptions, fromMs: number, toMs: number): Promise<HistMarket | null> {
   const finished = m.status === "MARKET_STATUS_RESOLVED";
+  const endMs = m.endDate ? Date.parse(m.endDate) : toMs;
+  // Finished: its whole recent life, cached once. Open: just the window, for this run only.
+  const startMs = finished ? endMs - HISTORY_DAYS * 86_400_000 : fromMs;
+  const stopMs = finished ? endMs + 3600_000 : toMs;
   try {
-    const hist = await cached(path.join(o.cacheDir, "polymarket_us"), `${m.slug}-${Math.floor(fromMs / 86_400_000)}-${finished ? "final" : Math.floor(toMs / 3600_000)}`, false, async () => {
+    const dir = finished ? path.join(o.cacheDir, "polymarket_us") : path.join(o.cacheDir, "open", "polymarket_us");
+    const hist = await cached(dir, finished ? `${m.slug}-final` : `${m.slug}-${Math.floor(toMs / 3600_000)}`, false, async () => {
       const url = new URL(`${PMUS}/v1/price-history`);
       url.searchParams.set("symbol", m.slug!);
-      url.searchParams.set("timestamp.startTimestamp", String(Math.floor(fromMs / 1000)));
-      url.searchParams.set("timestamp.endTimestamp", String(Math.floor(toMs / 1000)));
+      url.searchParams.set("timestamp.startTimestamp", String(Math.floor(startMs / 1000)));
+      url.searchParams.set("timestamp.endTimestamp", String(Math.floor(stopMs / 1000)));
       url.searchParams.set("fidelity", "60");
       const d = (await getJson<{ history?: Array<{ timestamp: number; longPrice?: number; shortPrice?: number }> }>(url, "Polymarket US")).data;
       let settlement: number | undefined;
@@ -284,14 +323,12 @@ async function usOne(m: UsMarket, o: HistoryOptions, fromMs: number, toMs: numbe
       }
       return { history: d?.history ?? [], settlement };
     });
-    const pts: HistPoint[] = hist.history
+    const all: HistPoint[] = hist.history
       .filter((h) => Number.isFinite(h.timestamp))
       // A point is stamped with the start of its hour; it's only known once that hour is over.
       .map((h) => [h.timestamp + 3600, h.shortPrice != null ? px(1 - h.shortPrice) : null, px(h.longPrice), null, null]);
+    const pts = inside(sortPoints(all), Math.floor(fromMs / 1000), Math.floor(toMs / 1000));
     if (!moved(pts)) return null;
-    // The replay sets the price at each step; this only fills in title, outcomes, fees and close time.
-    const live = normalizePolymarketUs({ ...m, status: "MARKET_STATUS_OPEN", active: true, closed: false, outcomePrices: m.outcomePrices ?? '["0.5","0.5"]' });
-    if (!live) return null;
     let result: HistMarket["result"];
     const s = hist.settlement;
     if (finished) {
@@ -299,7 +336,14 @@ async function usOne(m: UsMarket, o: HistoryOptions, fromMs: number, toMs: numbe
       if (s !== 0 && s !== 1 && s !== 0.5) return null;
       result = s === 0.5 ? { yesPayout: 0.5, at: m.endDate! } : { outcome: s === 1 ? "yes" : "no", at: m.endDate! };
     }
-    return { market: lean(live, { minimumTradeQty: m.minimumTradeQty }), points: sortPoints(pts), result };
+    // While a game is open its end date is a placeholder ~14 days after the start; the real end
+    // only shows once it's over. Rules see the placeholder, the market settles at the real end.
+    const start = m.gameStartTime ? Date.parse(m.gameStartTime) : NaN;
+    const shownEnd = finished && Number.isFinite(start) ? new Date(Math.max(endMs, start + US_OPEN_END_AFTER_START_MS)).toISOString() : m.endDate;
+    // The replay sets the price at each step; this only fills in title, outcomes, fees and close time.
+    const live = normalizePolymarketUs({ ...m, endDate: shownEnd, status: "MARKET_STATUS_OPEN", active: true, closed: false, outcomePrices: m.outcomePrices ?? '["0.5","0.5"]' });
+    if (!live) return null;
+    return { market: lean(live, { minimumTradeQty: m.minimumTradeQty }), points: pts, result };
   } catch (err) {
     o.log?.(`  Polymarket US ${m.slug}: ${(err as Error).message.slice(0, 80)}`);
     return null;
@@ -314,6 +358,7 @@ function moved(pts: HistPoint[]): boolean {
 }
 
 export async function loadHistory(o: HistoryOptions): Promise<HistorySet> {
+  await prepareCache(o.cacheDir);
   const markets: HistMarket[] = [];
   if (o.platforms.includes("kalshi")) markets.push(...(await kalshiHistory(o)));
   if (o.platforms.includes("polymarket_us")) markets.push(...(await usHistory(o)));

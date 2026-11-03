@@ -26,26 +26,34 @@ export class ReplayAdapter implements PlatformAdapter {
     return Math.floor(this.clock().getTime() / 1000);
   }
 
-  /** The market as it looked at the replay time, or null before it had any price. */
+  /**
+   * The market as it looked at the replay time, or null before it had any price. Rules see the
+   * close time the market showed while it was open (`market.closesAt`); it settles at the moment
+   * its result really came in (`result.at`).
+   */
   snapshot(h: HistMarket, t = this.at()): NormalizedMarket | null {
-    const p = lastAtOrBefore(h.points, t);
-    if (!p) return null;
-    let closeS = h.market.closesAt ? Math.floor(Date.parse(h.market.closesAt) / 1000) : Infinity;
-    // A settled market stops trading when the result is known, which can be well before its
-    // scheduled close: settle it once its prices run out instead of holding it to that date.
-    if (h.result) closeS = Math.min(closeS, h.points[h.points.length - 1][0] + this.staleSec);
+    const i = lastIndexAtOrBefore(h.points, t);
+    if (i < 0) return null;
+    const closeS = h.market.closesAt ? Math.floor(Date.parse(h.market.closesAt) / 1000) : Infinity;
+    const settleS = h.result ? Math.floor(Date.parse(h.result.at) / 1000) : Infinity;
     const base: NormalizedMarket = { ...h.market, yesBid: undefined, yesAsk: undefined, quotedAt: undefined };
-    if (t >= closeS) {
-      if (h.result?.outcome) return { ...base, status: "resolved", resolvedOutcome: h.result.outcome, yesPrice: h.result.outcome === "yes" ? 1 : 0, noPrice: h.result.outcome === "yes" ? 0 : 1 };
-      if (h.result?.yesPayout != null) return { ...base, status: "resolved", settlementYesPrice: h.result.yesPayout, yesPrice: h.result.yesPayout, noPrice: 1 - h.result.yesPayout };
-      return { ...base, status: "closed" };
+    if (t >= settleS && h.result) {
+      if (h.result.outcome) return { ...base, status: "resolved", resolvedOutcome: h.result.outcome, yesPrice: h.result.outcome === "yes" ? 1 : 0, noPrice: h.result.outcome === "yes" ? 0 : 1 };
+      if (h.result.yesPayout != null) return { ...base, status: "resolved", settlementYesPrice: h.result.yesPayout, yesPrice: h.result.yesPayout, noPrice: 1 - h.result.yesPayout };
     }
-    const [ts, bid, ask, vol24, oi] = p;
+    // Last known price, for the mid only (an empty book has no bid / ask to trade at).
+    let yes: number | undefined;
+    for (let k = i; k >= 0 && yes == null; k--) {
+      const [, bb, aa] = h.points[k];
+      yes = bb != null && aa != null ? (bb + aa) / 2 : (aa ?? bb ?? undefined);
+    }
+    if (yes == null) return null;
+    if (t >= closeS) return { ...base, status: "closed", yesPrice: yes, noPrice: 1 - yes };
+    const [ts, bid, ask, vol24, oi] = h.points[i];
     const fresh = t - ts <= this.staleSec;
     const b = fresh && bid != null ? bid : undefined;
     const a = fresh && ask != null && (b == null || ask >= b) ? ask : undefined;
-    const yes = b != null && a != null ? (b + a) / 2 : (a ?? b ?? (bid != null && ask != null ? (bid + ask) / 2 : (ask ?? bid)));
-    if (yes == null) return null;
+    if (b != null && a != null) yes = (b + a) / 2;
     const out: NormalizedMarket = { ...base, status: "open", yesBid: b, yesAsk: a, yesPrice: yes, noPrice: 1 - yes };
     if (this.id === "kalshi") {
       // The live Kalshi adapter uses open interest as liquidity and 24h volume in contracts.
@@ -85,17 +93,22 @@ export class ReplayAdapter implements PlatformAdapter {
   }
 }
 
-/** Binary search for the last point at or before t (points are sorted by time). */
-export function lastAtOrBefore(points: HistPoint[], t: number): HistPoint | undefined {
+/** Binary search for the last point at or before t (points are sorted by time); -1 if none. */
+export function lastIndexAtOrBefore(points: HistPoint[], t: number): number {
   let lo = 0;
   let hi = points.length - 1;
-  let hit: HistPoint | undefined;
+  let hit = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
     if (points[mid][0] <= t) {
-      hit = points[mid];
+      hit = mid;
       lo = mid + 1;
     } else hi = mid - 1;
   }
   return hit;
+}
+
+export function lastAtOrBefore(points: HistPoint[], t: number): HistPoint | undefined {
+  const i = lastIndexAtOrBefore(points, t);
+  return i < 0 ? undefined : points[i];
 }

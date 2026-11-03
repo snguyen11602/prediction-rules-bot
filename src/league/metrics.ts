@@ -19,7 +19,9 @@ export interface StrategyStats {
   losses: number;
   /** wins / (wins + losses); 0 when nothing finished. */
   winRate: number;
+  /** Finished trades plus open ones at what they'd sell for now. */
   pnlUsd: number;
+  realizedPnlUsd: number;
   feesUsd: number;
   avgWinUsd: number;
   avgLossUsd: number;
@@ -30,6 +32,7 @@ export interface StrategyStats {
   returnPct: number;
   avgHoldHours: number;
   exits: Record<string, number>;
+  /** Trades still open, and their P/L if sold now (already inside pnlUsd). */
   open: number;
   openPnlUsd: number;
   /** Enough finished trades to rank. */
@@ -38,16 +41,23 @@ export interface StrategyStats {
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-export function statsFromTrades(trades: TradeResult[], opts: { bankrollUsd: number; minTrades: number; open?: number; openPnlUsd?: number }): StrategyStats {
+/**
+ * Stats for one strategy. Open trades (`openTrades`, marked at what they'd sell for) count in profit,
+ * the worst drop and the steady score — so a strategy can't look good by never selling its losers —
+ * but not in the trade count or win rate.
+ */
+export function statsFromTrades(trades: TradeResult[], opts: { bankrollUsd: number; minTrades: number; openTrades?: TradeResult[] }): StrategyStats {
   const sorted = [...trades].sort((a, b) => a.exitedAt.localeCompare(b.exitedAt));
+  const open = opts.openTrades ?? [];
   let cum = 0;
   let peak = 0;
   let dd = 0;
-  for (const t of sorted) {
+  for (const t of [...sorted, ...open]) {
     cum += t.pnlUsd;
     peak = Math.max(peak, cum);
     dd = Math.max(dd, peak - cum);
   }
+  const realized = sorted.reduce((a, t) => a + t.pnlUsd, 0);
   const wins = sorted.filter((t) => t.pnlUsd > 0.005);
   const losses = sorted.filter((t) => t.pnlUsd < -0.005);
   const exits: Record<string, number> = {};
@@ -61,7 +71,8 @@ export function statsFromTrades(trades: TradeResult[], opts: { bankrollUsd: numb
     losses: losses.length,
     winRate: wins.length + losses.length ? wins.length / (wins.length + losses.length) : 0,
     pnlUsd: r2(cum),
-    feesUsd: r2(sorted.reduce((a, t) => a + t.feesUsd, 0)),
+    realizedPnlUsd: r2(realized),
+    feesUsd: r2([...sorted, ...open].reduce((a, t) => a + t.feesUsd, 0)),
     avgWinUsd: wins.length ? r2(wins.reduce((a, t) => a + t.pnlUsd, 0) / wins.length) : 0,
     avgLossUsd: losses.length ? r2(losses.reduce((a, t) => a + t.pnlUsd, 0) / losses.length) : 0,
     maxDrawdownUsd: r2(dd),
@@ -69,8 +80,8 @@ export function statsFromTrades(trades: TradeResult[], opts: { bankrollUsd: numb
     returnPct: Math.round(returnPct * 100) / 100,
     avgHoldHours: holds.length ? Math.round((holds.reduce((a, b) => a + b, 0) / holds.length) * 10) / 10 : 0,
     exits,
-    open: opts.open ?? 0,
-    openPnlUsd: r2(opts.openPnlUsd ?? 0),
+    open: open.length,
+    openPnlUsd: r2(open.reduce((a, t) => a + t.pnlUsd, 0)),
     ranked: sorted.length >= opts.minTrades,
   };
 }
@@ -112,14 +123,30 @@ export function tradesByRule(ledger: PaperLedger): Map<string, TradeResult[]> {
   return out;
 }
 
-export function openByRule(ledger: PaperLedger): Map<string, { open: number; pnl: number }> {
-  const out = new Map<string, { open: number; pnl: number }>();
+/**
+ * Open positions per strategy as if sold at their last mark (the bid) at `at`. `exitFee` estimates
+ * the fee for that sale (paper marks don't include it).
+ */
+export function openTradesByRule(
+  ledger: PaperLedger,
+  at: Date,
+  exitFee: (p: PaperPosition) => number = () => 0,
+): Map<string, TradeResult[]> {
+  const out = new Map<string, TradeResult[]>();
   for (const p of ledger.positions) {
     if (p.status !== "open" || p.groupId) continue;
-    const cur = out.get(p.ruleId) ?? { open: 0, pnl: 0 };
-    cur.open += 1;
-    cur.pnl += p.unrealizedPnlUsd ?? 0;
-    out.set(p.ruleId, cur);
+    const fee = exitFee(p);
+    const t: TradeResult = {
+      enteredAt: p.entryAt,
+      exitedAt: at.toISOString(),
+      pnlUsd: (p.unrealizedPnlUsd ?? 0) - fee,
+      feesUsd: p.entryFeeUsd + fee,
+      reason: "still_open",
+      entryPrice: p.entryPrice,
+      exitPrice: p.lastMarkPrice,
+      contracts: p.contracts,
+    };
+    out.set(p.ruleId, [...(out.get(p.ruleId) ?? []), t]);
   }
   return out;
 }

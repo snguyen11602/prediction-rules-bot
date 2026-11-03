@@ -126,7 +126,7 @@ test("diagnosis explains why a strategy didn't work", () => {
 
   const lucky = statsFromTrades([trade("2026-10-01T00:00:00Z", "2026-10-01T01:00:00Z", 50)], { bankrollUsd: 1000, minTrades: 1 });
   const test2 = statsFromTrades([trade("2026-10-09T00:00:00Z", "2026-10-09T01:00:00Z", -20)], { bankrollUsd: 1000, minTrades: 1 });
-  assert.match(diagnose(lucky, { minTrades: 1, test: test2 }).headline, /lost .* in the most recent stretch/);
+  assert.match(diagnose(lucky, { minTrades: 1, test: test2 }).headline, /lost .* in the held-out last part/);
 
   const stops = Array.from({ length: 6 }, (_, i) => trade(`2026-10-0${i + 1}T00:00:00Z`, `2026-10-0${i + 1}T01:00:00Z`, i % 3 ? -10 : 5, "stop_loss", 0));
   assert.ok(diagnose(statsFromTrades(stops, { bankrollUsd: 1000, minTrades: 5 }), { minTrades: 5 }).findings.some((f) => /Stopped out/.test(f)));
@@ -140,6 +140,8 @@ test("score: backtest first, blended with paper once there are 10 paper trades",
   const blended = scoreOf(bt, mk(10, -1)); // paper: −1% and a 1% drop
   assert.equal(blended.score, (6 + -2) / 2);
   assert.equal(scoreOf(undefined, mk(2, 1)).ranked, false);
+  // Ranked on the part before the held-out test.
+  assert.equal(scoreOf({ all: mk(6, 10), train: mk(3, -10) }, mk(0, 0)).score, -6);
 });
 
 function member(over: Partial<Member> = {}): Member {
@@ -194,4 +196,37 @@ test("rookies cycle through families; clones keep the surname and a similar pers
   assert.equal(kid.generation, 2);
   assert.equal(kid.family, parent.family);
   for (const k of ["hustle", "creativity", "knowledge"] as const) assert.ok(Math.abs(kid.traits[k] - parent.traits[k]) <= 0.1 + 1e-9);
+});
+
+test("member ids never repeat, even after old members leave the file", () => {
+  const cfg = LeagueSchema.parse({});
+  const l: LeagueFile = { version: 1, round: 0, members: [], events: [] };
+  const r = rng(2);
+  const now = new Date("2026-10-01T00:00:00Z");
+  for (let i = 0; i < 5; i++) l.members.push(makeRookie(l, cfg, r, now));
+  const seen = new Set(l.members.map((m) => m.id));
+  l.pastNames = l.members.slice(0, 3).map((m) => m.name);
+  l.members = l.members.slice(3); // three dropped
+  for (let i = 0; i < 5; i++) {
+    const m = makeRookie(l, cfg, r, now);
+    assert.ok(!seen.has(m.id), `id ${m.id} reused`);
+    assert.ok(!l.pastNames.includes(m.name), `name ${m.name} reused`);
+    seen.add(m.id);
+    l.members.push(m);
+  }
+});
+
+test("open trades count in profit and the worst drop, not in the trade count", () => {
+  const s = statsFromTrades([trade("2026-10-01T00:00:00Z", "2026-10-01T02:00:00Z", 40)], {
+    bankrollUsd: 1000,
+    minTrades: 1,
+    openTrades: [trade("2026-10-02T00:00:00Z", "2026-10-05T00:00:00Z", -100, "still_open")],
+  });
+  assert.equal(s.trades, 1);
+  assert.equal(s.winRate, 1);
+  assert.equal(s.pnlUsd, -60);
+  assert.equal(s.realizedPnlUsd, 40);
+  assert.equal(s.openPnlUsd, -100);
+  assert.equal(s.maxDrawdownUsd, 100);
+  assert.equal(s.steadyScore, -16);
 });

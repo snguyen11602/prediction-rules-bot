@@ -160,11 +160,14 @@ or now with `npm run league`:
 1. **Backtest.** Everyone, including your paper rules, is replayed hour by hour over the last 14 days of real
    prices (Kalshi candlesticks and Polymarket US price history, public data, cached in `data/backtest/`). It
    uses the same engine, checks and fees as paper trading, and settles finished markets with their real result.
-2. **Rank** by *steady score*: profit as a % of the $1,000 bankroll minus the worst drop in %. Once a strategy
-   has 10 paper trades, its paper score counts half.
+   Rules only see what was known at the time: prices once their hour is over, and the close time a market
+   showed while it was open (not when the game really ended).
+2. **Rank** by *steady score* on the first 70% of the window: profit as a % of the $1,000 bankroll minus the
+   worst drop in %. Trades still open count at what they'd sell for, so holding losers doesn't help. Once a
+   strategy has 10 paper trades, its paper score counts half.
 3. **Clone the best.** The top 3 each get a clone with the same idea, nudged numbers and a similar
-   personality. Clones keep the family surname. To count, a winner must also have made money in the last 30%
-   of the window (held out), so early luck doesn't get cloned.
+   personality. Clones keep the family surname. To count, a winner must also make money on at least 2 trades
+   in the last 30% of the window (held out), so early luck doesn't get cloned.
 4. **Diagnose and retire the worst** (up to 3): losing once ranked, or never trading. The diagnosis says why in
    plain words, for example *"Fees ate the edge: $60 in fees on top of $37 lost before fees"* or
    *"Never found a trade: 'Price band' ruled out 96% of the market checks"*. Rookies take their place.
@@ -183,7 +186,9 @@ npm run league -- --days 7 --markets 40   # a quicker, smaller backtest
 Settings are in the `league:` block of the rules file (no block = these defaults); `enabled: false` stops new
 league trades (open ones are still managed). Honest limits: prices are hourly, so quick flips are only roughly
 tested; Polymarket US history has no order-book depth, so liquidity filters only pass on Kalshi in a backtest;
-and two weeks of games is a small sample — a winner is a hypothesis, not a proven edge.
+markets are picked from finished games by how much they traded; each day's window overlaps the last, so the
+held-out part is reused over time (paper results are the truly new data); and two weeks of games is a small
+sample — a winner is a hypothesis, not a proven edge.
 
 ## Paper trading
 

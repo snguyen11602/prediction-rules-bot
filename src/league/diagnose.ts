@@ -56,6 +56,14 @@ export function diagnose(
     findings.push({ weight: 4, text: `Only ${s.trades} finished trade(s) — too few to judge.`, fix: "loosen its filters so it trades more" });
   }
 
+  if (s.open > 0 && s.openPnlUsd < 0 && Math.abs(s.openPnlUsd) >= Math.max(5, Math.abs(s.realizedPnlUsd) * 0.5)) {
+    findings.push({
+      weight: 7,
+      text: `Still holding ${s.open} trade(s) worth ${usd(s.openPnlUsd)} at the end — it lets losers ride instead of selling them.`,
+      fix: "add a stop loss or a time limit",
+    });
+  }
+
   const gross = s.pnlUsd + s.feesUsd;
   if (s.trades > 0 && s.pnlUsd < 0 && s.feesUsd > 0 && s.feesUsd >= Math.abs(s.pnlUsd) * 0.5) {
     findings.push({
@@ -87,10 +95,10 @@ export function diagnose(
   if (s.maxDrawdownUsd > 0 && s.maxDrawdownUsd > 2 * Math.abs(s.pnlUsd) && s.trades >= opts.minTrades) {
     findings.push({ weight: 3, text: `Big swings: it fell ${usd(s.maxDrawdownUsd)} from its best point.`, fix: "trade smaller or cap losses sooner" });
   }
-  if (opts.test && s.pnlUsd > 0 && opts.test.trades > 0 && opts.test.pnlUsd < 0) {
+  if (opts.test && s.pnlUsd > 0 && opts.test.trades + opts.test.open > 0 && opts.test.pnlUsd < 0) {
     findings.push({
       weight: 9,
-      text: `Made ${usd(s.pnlUsd)} overall but lost ${usd(opts.test.pnlUsd)} in the most recent stretch — the early gains look like luck or a market that changed.`,
+      text: `Made ${usd(s.pnlUsd)} overall but lost ${usd(opts.test.pnlUsd)} in the held-out last part — the early gains look like luck or a market that changed.`,
       fix: "don't trust it until it wins on new data",
     });
   }

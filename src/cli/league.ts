@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { mkdir, open, rm, stat } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { runRound, type Contestant } from "../league/evolve.js";
 import { activeMembers, leaguePathFor, loadLeague } from "../league/league.js";
@@ -69,29 +70,60 @@ function table(rows: Contestant[]) {
   });
 }
 
-/** One round at a time (paper:watch also starts rounds). */
-async function withRoundLock<T>(ledger: string, fn: () => Promise<T>): Promise<T | undefined> {
+/** Exit code when another round is already running (paper:watch backs off on it). */
+const BUSY_EXIT = 3;
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** One round at a time (paper:watch also starts rounds). The lock holds our PID. */
+async function withRoundLock<T>(ledger: string, fn: () => Promise<T>): Promise<T | typeof BUSY> {
   const lock = path.join(path.dirname(ledger), "backtest", "round.lock");
   await mkdir(path.dirname(lock), { recursive: true });
   try {
+    const pid = Number((await readFile(lock, "utf8")).trim());
     const age = Date.now() - (await stat(lock)).mtimeMs;
-    if (age < 3 * 3600_000) {
-      console.log("A league round is already running (started", Math.round(age / 60_000), "min ago). Try again later.");
-      return undefined;
+    // A lock from a process that's gone (or very old) is stale.
+    if (Number.isInteger(pid) && pid > 0 && alive(pid) && age < 6 * 3600_000) {
+      console.log(`A league round is already running (started ${Math.round(age / 60_000)} min ago). Try again later.`);
+      return BUSY;
     }
     await rm(lock, { force: true });
   } catch {
     // no lock
   }
-  const fh = await open(lock, "wx");
+  let fh;
+  try {
+    fh = await open(lock, "wx");
+  } catch {
+    console.log("A league round just started elsewhere. Try again later.");
+    return BUSY;
+  }
   await fh.writeFile(String(process.pid));
   await fh.close();
+  const release = () => rmSync(lock, { force: true });
+  // Ctrl+C, or paper:watch stopping us: don't leave the lock behind.
+  const onSignal = (sig: NodeJS.Signals) => {
+    release();
+    process.exit(sig === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
   try {
     return await fn();
   } finally {
-    await rm(lock, { force: true });
+    release();
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
   }
 }
+const BUSY = Symbol("busy");
 
 async function main() {
   const o = parse(process.argv.slice(2));
@@ -113,13 +145,14 @@ async function main() {
       rulesPath: o.rules,
       ledgerPath: o.ledger,
       noBacktest: o.noBacktest,
+      demo: o.demo,
       days: o.days,
       markets: o.markets,
       seed: o.seed,
       log: (m) => console.log(m),
     }),
   );
-  if (!res) return;
+  if (res === BUSY) process.exit(BUSY_EXIT);
   const { summary } = res;
   if (summary.backtest) {
     const b = summary.backtest;
