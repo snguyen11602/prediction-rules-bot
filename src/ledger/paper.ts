@@ -83,7 +83,7 @@ export interface ArbGroupRecord {
   key: string;
   kind: "cross_platform" | "no_basket" | "yes_basket";
   title: string;
-  matchedBy: "confirmed" | "auto" | "platform";
+  matchedBy: "confirmed" | "exact" | "election" | "auto" | "platform";
   score?: number;
   status: "open" | "closed";
   openedAt: string;

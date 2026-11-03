@@ -1,3 +1,4 @@
+import type { ExactPair } from "./exact-pairs.js";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { parse as parseYaml } from "yaml";
@@ -33,9 +34,15 @@ export interface ArbBasket {
   legs: ArbLegSpec[];
   /** Guaranteed payout per set (one contract of every leg). */
   payoutPerSet: number;
-  matchedBy: "confirmed" | "auto" | "platform";
+  /**
+   * confirmed: you said so (pairs file). exact: same game by the platforms' ids. election: same race
+   * by the platforms' ids (alerts until confirmed). auto: title match. platform: same-site basket.
+   */
+  matchedBy: "confirmed" | "exact" | "election" | "auto" | "platform";
   score?: number;
   url?: string;
+  /** Why the two markets are the same question (exact matches). */
+  how?: string;
 }
 
 export interface ArbQuoteLeg extends ArbLegSpec {
@@ -186,6 +193,8 @@ export interface DiscoverInput {
   /** Fetch one market by id (confirmed pairs that aren't in the listing). */
   lookup?: (platform: PlatformId, id: string) => Promise<NormalizedMarket | null>;
   eventGroups: EventGroup[];
+  /** Exact twins found from the platforms' ids (see exact-pairs.ts). */
+  exact?: ExactPair[];
 }
 
 export interface Discovery {
@@ -199,8 +208,9 @@ export function crossBaskets(
   k: NormalizedMarket,
   p: NormalizedMarket,
   invert: boolean,
-  matchedBy: "confirmed" | "auto",
+  matchedBy: "confirmed" | "exact" | "election" | "auto",
   score?: number,
+  how?: string,
 ): ArbBasket[] {
   const key = pairKey(k.id, p.id, p.platform);
   const title = `${k.title} ↔ ${p.title}`;
@@ -216,6 +226,7 @@ export function crossBaskets(
     matchedBy,
     score,
     url: k.url,
+    ...(how ? { how } : {}),
   }));
 }
 
@@ -254,6 +265,15 @@ export async function discoverBaskets(input: DiscoverInput): Promise<Discovery> 
         continue;
       }
       baskets.push(...crossBaskets(k, p, c.invert, "confirmed"));
+    }
+
+    for (const e of input.exact ?? []) {
+      if (e.us.platform !== venue) continue;
+      const key = pairKey(e.kalshi.id, e.us.id, venue);
+      if (blocked.has(key) || claimed.has(`kalshi:${e.kalshi.id}`) || claimed.has(`${venue}:${e.us.id}`)) continue;
+      claimed.add(`kalshi:${e.kalshi.id}`);
+      claimed.add(`${venue}:${e.us.id}`);
+      baskets.push(...crossBaskets(e.kalshi, e.us, false, e.kind === "game" ? "exact" : "election", undefined, e.how));
     }
 
     if (cfg.cross_platform.auto_match) {

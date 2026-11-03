@@ -21,6 +21,9 @@ import { fetchMarkets } from "../engine/runner.js";
 import { findMatches } from "../engine/match.js";
 import { crossBaskets, discoverBaskets, bestQuotes, loadPairsFile, pairKey, pairsFilePath, quoteBasket } from "../engine/arb.js";
 import { quoteEnv } from "../engine/arb-runtime.js";
+import { findExactPairs } from "../engine/exact-pairs.js";
+import { KalshiAdapter } from "../platforms/kalshi.js";
+import { PolymarketUsAdapter } from "../platforms/polymarket-us.js";
 import { positionSizeUsd } from "../engine/risk.js";
 import { arbitrageAsRule } from "../rules/schema.js";
 import type { EventGroup } from "../platforms/types.js";
@@ -99,8 +102,75 @@ async function find() {
   cands.sort((a, b) => rank(a) - rank(b) || b.score - a.score);
 
   const saved: Saved[] = [];
+  /** Best hedge for a pair right now: the arb, or how far off it is. */
+  const priceLine = (k: (typeof markets)[number], p: (typeof markets)[number], invert: boolean, same: boolean) => {
+    const baskets = crossBaskets(k, p, invert, "confirmed");
+    const best = baskets
+      .map((b) => quoteBasket(b, { sizeUsd: size }, env))
+      .filter((q): q is NonNullable<typeof q> => q != null)
+      .sort((a, b) => b.edge - a.edge)[0];
+    const quotedBoth = k.yesBid != null && k.yesAsk != null && p.yesBid != null && p.yesAsk != null;
+    const cheapest = quotedBoth
+      ? Math.min(...baskets.map((b) => b.legs.reduce((a, l) => a + (l.side === "yes" ? l.market.yesAsk! : 1 - l.market.yesBid!), 0)))
+      : undefined;
+    if (!same) {
+      // Two different questions: a "gap" between them is not money you can lock in.
+      return best && best.edge > 0
+        ? `    Not an arb: these are different questions, so both bets could lose (it would look like +${(best.edge * 100).toFixed(1)}¢ if they were the same).`
+        : "    Not an arb: these are different questions.";
+    }
+    return best
+      ? `    Arb now: ${best.edge > 0 ? "+" : ""}${(best.edge * 100).toFixed(1)}¢ per $1 after fees` +
+          ` (${best.legs.map((l) => `${l.side.toUpperCase()} ${platformName(l.market.platform)}`).join(" + ")})` +
+          (best.edge >= cfg.min_edge ? "  ← above your min_edge" : "")
+      : cheapest != null
+        ? `    Arb now: none — a $1 hedge costs ${(cheapest * 100).toFixed(1)}¢ before fees`
+        : "    Arb now: none (one side has no bid or ask)";
+  };
+
+  // Exact twins first: the same game or race by the platforms' own ids.
+  if (cfg.cross_platform.exact_match && venue === "polymarket_us" && !args.demo) {
+    const k = adapters.find((a) => a.id === "kalshi") as KalshiAdapter;
+    const u = adapters.find((a) => a.id === "polymarket_us") as PolymarketUsAdapter;
+    try {
+      const exact = await findExactPairs(
+        { kalshiSeries: (x) => k.listSeriesMarkets(x), kalshiTickers: (x) => k.getMarkets(x), usSlugs: (x) => u.getMarketsBySlug(x) },
+        listed,
+      );
+      const games = exact.filter((e) => e.kind === "game");
+      const races = exact.filter((e) => e.kind === "election");
+      console.log(`Exact twins: ${games.length} games (trade automatically) and ${races.length} election races (confirm to trade).\n`);
+      const withEdge = exact
+        .map((e) => {
+          const qs = crossBaskets(e.kalshi, e.us, false, "confirmed").map((b) => quoteBasket(b, { sizeUsd: size }, env)).filter((q) => q != null);
+          return { e, edge: Math.max(-1, ...qs.map((q) => q!.edge)) };
+        })
+        .sort((a, b) => b.edge - a.edge);
+      for (const { e } of withEdge.slice(0, args.all ? 40 : 10)) {
+        const key = pairKey(e.kalshi.id, e.us.id, venue);
+        const n = saved.length + 1;
+        saved.push({ n, kalshi: { id: e.kalshi.id, title: e.kalshi.title }, polymarket: { id: e.us.id, title: e.us.title }, platform: venue });
+        const status = blocked.has(key)
+          ? "BLOCKED"
+          : confirmed.has(key) || e.kind === "game"
+            ? "SAME GAME — trades"
+            : "SAME RACE — alerts only; confirm it to paper-trade";
+        console.log(`#${n}  ${confirmed.has(key) && e.kind === "election" ? "SAME RACE — confirmed, trades" : status}`);
+        console.log(`    ${e.how}`);
+        console.log(`    Kalshi      ${e.kalshi.title}  [${e.kalshi.id}]  YES ${cents(e.kalshi.yesBid)} / ${cents(e.kalshi.yesAsk)}`);
+        console.log(`    ${venueName.padEnd(11)} ${e.us.title}  [${e.us.id}]  YES ${cents(e.us.yesBid)} / ${cents(e.us.yesAsk)}`);
+        console.log(priceLine(e.kalshi, e.us, false, true));
+        console.log("");
+      }
+      if (withEdge.length > (args.all ? 40 : 10)) console.log(`(${withEdge.length - (args.all ? 40 : 10)} more exact twins, none closer to an arb${args.all ? "" : "; --all shows more"})\n`);
+    } catch (err) {
+      console.error(`⚠ exact matching: ${(err as Error).message}`);
+    }
+    console.log("Title look-alikes (most are different questions):\n");
+  }
+
   if (!cands.length) console.log("No likely pairs found. Try --all to see weaker look-alikes.\n");
-  for (const c of cands.slice(0, 60)) {
+  for (const c of cands.slice(0, args.all ? 60 : 25)) {
     const key = pairKey(c.kalshi.id, c.polymarket.id, venue);
     const gap = Math.abs(c.kalshi.yesPrice - c.polymarket.yesPrice);
     const status = confirmed.has(key)
@@ -117,31 +187,14 @@ async function find() {
             ? `SKIPPED — prices ${Math.round(gap * 100)}¢ apart`
             : `not matched — ${c.reason}`;
     const invert = confirmed.get(key)?.invert ?? false;
-    const baskets = crossBaskets(c.kalshi, c.polymarket, invert, "confirmed");
-    const quotes = baskets
-      .map((b) => quoteBasket(b, { sizeUsd: size }, env))
-      .filter((q): q is NonNullable<typeof q> => q != null)
-      .sort((a, b) => b.edge - a.edge);
-    const best = quotes[0];
-    // Cheapest cost of a $1 hedge before fees, to show how close a pair is when there's no arb.
-    const quotedBoth = c.kalshi.yesBid != null && c.kalshi.yesAsk != null && c.polymarket.yesBid != null && c.polymarket.yesAsk != null;
-    const cheapest = quotedBoth
-      ? Math.min(...baskets.map((b) => b.legs.reduce((a, l) => a + (l.side === "yes" ? l.market.yesAsk! : 1 - l.market.yesBid!), 0)))
-      : undefined;
+    // Only a match (or a pair you confirmed) is the same question; the rest just look alike.
+    const same = confirmed.has(key) || (c.ok && !blocked.has(key) && gap <= cfg.cross_platform.max_price_gap);
     const n = saved.length + 1;
     saved.push({ n, kalshi: { id: c.kalshi.id, title: c.kalshi.title }, polymarket: { id: c.polymarket.id, title: c.polymarket.title }, platform: venue });
     console.log(`#${n}  ${status}   similarity ${c.score.toFixed(2)}`);
     console.log(`    Kalshi      ${c.kalshi.title}  [${c.kalshi.id}]  YES ${cents(c.kalshi.yesBid)} / ${cents(c.kalshi.yesAsk)}`);
     console.log(`    ${venueName.padEnd(11)} ${c.polymarket.title}  [${c.polymarket.id}]  YES ${cents(c.polymarket.yesBid)} / ${cents(c.polymarket.yesAsk)}`);
-    console.log(
-      best
-        ? `    Arb now: ${best.edge > 0 ? "+" : ""}${(best.edge * 100).toFixed(1)}¢ per $1 after fees` +
-            ` (${best.legs.map((l) => `${l.side.toUpperCase()} ${platformName(l.market.platform)}`).join(" + ")})` +
-            (best.edge >= cfg.min_edge ? "  ← above your min_edge" : "")
-        : cheapest != null
-          ? `    Arb now: none — a $1 hedge costs ${(cheapest * 100).toFixed(1)}¢ before fees`
-          : "    Arb now: none (one side has no bid or ask)",
-    );
+    console.log(priceLine(c.kalshi, c.polymarket, invert, same));
     console.log("");
   }
 

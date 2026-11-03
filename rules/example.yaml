@@ -85,7 +85,7 @@ copy_trading:
     min_decided: 30          # …over at least 30 results
     min_profit_usd: 10000    # and made $10k+ this month
     max_leaders: 10
-    refresh_hours: 6
+    refresh_hours: 1         # re-check the leaderboard every hour for who's hot
     include: []              # wallets to always follow (0x…)
     exclude: []              # wallets to never follow
   copy:
@@ -104,11 +104,10 @@ copy_trading:
     position_size_fraction: 0.03      # $30 per copy on a $1,000 paper bankroll
     bankroll_usd: 1000
     max_position_usd: 30
-    max_open_positions: 10
-    fire_after_n_losses: 4
+    max_open_positions: 20
+    fire_after_n_losses: 0            # never pause after a losing streak: keep tailing the leaders
     pause_hours_after_losses: 24
-    daily_loss_cap_usd: 100
-    reentry_cooldown_hours: 12
+    reentry_cooldown_hours: 12        # (no daily loss cap either)
   paper:
     slippage: 0.005
     include_fees: true

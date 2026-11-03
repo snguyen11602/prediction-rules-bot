@@ -88,6 +88,12 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 - Fast ticks (`fastTick`) run exits + paper entries only; they don't write `lastPrices` or price history,
   and don't run arbitrage discovery or alert-only rules.
 
+- Exact twins (`src/engine/exact-pairs.ts`) come from the platforms' ids, not titles: games need league,
+  date and both teams to agree by abbreviation AND name (never trust one signal for which side is YES);
+  election races need office, state, district, year and party, plus the same party/state/office words on
+  both sides. Games trade (`matchedBy: "exact"`); races alert until confirmed (`"election"`), because the
+  payout wording differs. Leave out leagues where a draw or tie can settle differently.
+
 ## Copy trading
 
 - `src/platforms/polymarket-data.ts` (global Polymarket Data API, public), `src/engine/copy.ts` (pure:
