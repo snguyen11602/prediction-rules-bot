@@ -6,6 +6,8 @@
  *   npm run arb:find                 list likely pairs (numbered) with today's edge
  *   npm run arb:confirm -- 3         always treat pair #3 as the same question
  *   npm run arb:confirm -- 3 --invert   …where Polymarket YES = Kalshi NO
+ *
+ * Pairs Kalshi with the Polymarket exchange in arbitrage.cross_platform.with (Polymarket US by default).
  *   npm run arb:block -- 3           never trade pair #3
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -22,11 +24,14 @@ import { quoteEnv } from "../engine/arb-runtime.js";
 import { positionSizeUsd } from "../engine/risk.js";
 import { arbitrageAsRule } from "../rules/schema.js";
 import type { EventGroup } from "../platforms/types.js";
+import { platformName, type PlatformId } from "../types.js";
 
 interface Saved {
   n: number;
   kalshi: { id: string; title: string };
   polymarket: { id: string; title: string };
+  /** Which Polymarket exchange (older candidate files didn't record it: global). */
+  platform?: "polymarket" | "polymarket_us";
 }
 
 const candidatesPath = (demo: boolean) => path.resolve(demo ? "data/arb-candidates.demo.json" : "data/arb-candidates.json");
@@ -36,7 +41,9 @@ async function find() {
   const args = parseArgs(process.argv);
   const file = await loadRulesFile(args.rules);
   const cfg = file.arbitrage ?? ArbitrageSchema.parse({});
-  const adapters = createAdapters({ demo: args.demo, platforms: ["kalshi", "polymarket"], fixturePath: args.fixture });
+  const venue = cfg.cross_platform.with;
+  const venueName = platformName(venue);
+  const adapters = createAdapters({ demo: args.demo, platforms: ["kalshi", venue] as PlatformId[], fixturePath: args.fixture });
   const now = new Date();
   const { markets: listed } = await fetchMarkets(adapters, cfg.cross_platform.scan_limit, async (e) => {
     if (e.type === "adapter_error") console.error(`⚠ ${e.message}`);
@@ -68,24 +75,25 @@ async function find() {
   const markets = [...byKey.values()];
   const pairsPath = pairsFilePath(args.rules, cfg);
   const pairs = await loadPairsFile(pairsPath);
-  const confirmed = new Map(pairs.confirmed.map((c) => [pairKey(c.kalshi, c.polymarket), c]));
-  const blocked = new Set(pairs.blocked.map((b) => pairKey(b.kalshi, b.polymarket)));
+  const confirmed = new Map(pairs.confirmed.filter((c) => c.platform === venue).map((c) => [pairKey(c.kalshi, c.polymarket, venue), c]));
+  const venueBlocks = pairs.blocked.filter((b) => b.platform === venue);
+  const blocked = new Set(venueBlocks.map((b) => pairKey(b.kalshi, b.polymarket, venue)));
   const env = quoteEnv(cfg, adapters, now);
   const size = positionSizeUsd(arbitrageAsRule(cfg).risk);
 
   const kal = markets.filter((m) => m.platform === "kalshi");
-  const poly = markets.filter((m) => m.platform === "polymarket");
-  console.log(`\nScanned ${kal.length} Kalshi and ${poly.length} Polymarket markets (${groups.length} events)${args.demo ? " [DEMO]" : ""}.\n`);
+  const poly = markets.filter((m) => m.platform === venue);
+  console.log(`\nScanned ${kal.length} Kalshi and ${poly.length} ${venueName} markets (${groups.length} events)${args.demo ? " [DEMO]" : ""}.\n`);
 
   const cands = findMatches(kal, poly, {
     minScore: cfg.cross_platform.min_score,
     maxCloseGapHours: cfg.cross_platform.max_close_gap_hours,
     includeRejected: true,
     reviewFloor: args.all ? 0.25 : 0.4,
-    exclude: new Set(pairs.blocked.map((b) => `${b.kalshi}|${b.polymarket}`)),
+    exclude: new Set(venueBlocks.map((b) => `${b.kalshi}|${b.polymarket}`)),
   });
   const rank = (c: (typeof cands)[number]) => {
-    const key = pairKey(c.kalshi.id, c.polymarket.id);
+    const key = pairKey(c.kalshi.id, c.polymarket.id, venue);
     return confirmed.has(key) ? 0 : blocked.has(key) ? 3 : c.ok ? 1 : 2;
   };
   cands.sort((a, b) => rank(a) - rank(b) || b.score - a.score);
@@ -93,7 +101,7 @@ async function find() {
   const saved: Saved[] = [];
   if (!cands.length) console.log("No likely pairs found. Try --all to see weaker look-alikes.\n");
   for (const c of cands.slice(0, 60)) {
-    const key = pairKey(c.kalshi.id, c.polymarket.id);
+    const key = pairKey(c.kalshi.id, c.polymarket.id, venue);
     const gap = Math.abs(c.kalshi.yesPrice - c.polymarket.yesPrice);
     const status = confirmed.has(key)
       ? "CONFIRMED — trades"
@@ -121,14 +129,14 @@ async function find() {
       ? Math.min(...baskets.map((b) => b.legs.reduce((a, l) => a + (l.side === "yes" ? l.market.yesAsk! : 1 - l.market.yesBid!), 0)))
       : undefined;
     const n = saved.length + 1;
-    saved.push({ n, kalshi: { id: c.kalshi.id, title: c.kalshi.title }, polymarket: { id: c.polymarket.id, title: c.polymarket.title } });
+    saved.push({ n, kalshi: { id: c.kalshi.id, title: c.kalshi.title }, polymarket: { id: c.polymarket.id, title: c.polymarket.title }, platform: venue });
     console.log(`#${n}  ${status}   similarity ${c.score.toFixed(2)}`);
     console.log(`    Kalshi      ${c.kalshi.title}  [${c.kalshi.id}]  YES ${cents(c.kalshi.yesBid)} / ${cents(c.kalshi.yesAsk)}`);
-    console.log(`    Polymarket  ${c.polymarket.title}  [${c.polymarket.id}]  YES ${cents(c.polymarket.yesBid)} / ${cents(c.polymarket.yesAsk)}`);
+    console.log(`    ${venueName.padEnd(11)} ${c.polymarket.title}  [${c.polymarket.id}]  YES ${cents(c.polymarket.yesBid)} / ${cents(c.polymarket.yesAsk)}`);
     console.log(
       best
         ? `    Arb now: ${best.edge > 0 ? "+" : ""}${(best.edge * 100).toFixed(1)}¢ per $1 after fees` +
-            ` (${best.legs.map((l) => `${l.side.toUpperCase()} ${l.market.platform}`).join(" + ")})` +
+            ` (${best.legs.map((l) => `${l.side.toUpperCase()} ${platformName(l.market.platform)}`).join(" + ")})` +
             (best.edge >= cfg.min_edge ? "  ← above your min_edge" : "")
         : cheapest != null
           ? `    Arb now: none — a $1 hedge costs ${(cheapest * 100).toFixed(1)}¢ before fees`
@@ -149,7 +157,7 @@ async function find() {
   await mkdir(path.dirname(candidatesPath(args.demo)), { recursive: true });
   await writeFile(candidatesPath(args.demo), JSON.stringify(saved, null, 2));
   console.log(`Pairs file: ${pairsPath}`);
-  console.log("Same question?   npm run arb:confirm -- <#>      (add --invert if Polymarket YES = Kalshi NO)");
+  console.log(`Same question?   npm run arb:confirm -- <#>      (add --invert if ${venueName} YES = Kalshi NO)`);
   console.log("Different?       npm run arb:block -- <#>");
 }
 
@@ -177,9 +185,10 @@ async function edit(kind: "confirmed" | "blocked") {
   const pairsPath = pairsFilePath(args.rules, cfg);
   const raw = await readFile(pairsPath, "utf8").catch(() => "confirmed: []\nblocked: []\n");
   const doc = parseDocument(raw);
+  const venue = pick.platform ?? "polymarket";
   const same = (item: unknown) => {
-    const j = (item as { toJSON?: () => unknown })?.toJSON?.() as { kalshi?: string; polymarket?: string } | undefined;
-    return j?.kalshi === pick.kalshi.id && String(j?.polymarket) === pick.polymarket.id;
+    const j = (item as { toJSON?: () => unknown })?.toJSON?.() as { kalshi?: string; polymarket?: string; platform?: string } | undefined;
+    return j?.kalshi === pick.kalshi.id && String(j?.polymarket) === pick.polymarket.id && (j?.platform ?? "polymarket") === venue;
   };
   for (const list of ["confirmed", "blocked"] as const) {
     let seq = doc.get(list, true);
@@ -195,6 +204,7 @@ async function edit(kind: "confirmed" | "blocked") {
         doc.createNode({
           kalshi: pick.kalshi.id,
           polymarket: pick.polymarket.id,
+          platform: venue,
           ...(kind === "confirmed" && args.invert ? { invert: true } : {}),
           note: `${pick.kalshi.title} ↔ ${pick.polymarket.title}`.slice(0, 160),
         }),

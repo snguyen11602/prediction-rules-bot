@@ -145,7 +145,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     const platforms = new Set<PlatformId>(platformsFromRules(rules));
     if (arbCfg) {
       platforms.add("kalshi");
-      platforms.add("polymarket");
+      platforms.add(arbCfg.cross_platform.with);
     }
     for (const p of openPositions(ledger)) platforms.add(p.platform);
 
@@ -367,7 +367,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
           if (!papersRule(rule, opts.paperAll)) return false;
           const price = buyPrice(market, side, rule.paper.slippage);
           const adapter = adapterFor(market.platform);
-          const contracts = adapter?.roundContracts ? adapter.roundContracts(sizeUsd / price) : sizeUsd / price;
+          const contracts = adapter?.roundContracts ? adapter.roundContracts(sizeUsd / price, market) : sizeUsd / price;
           if (!(contracts > 0)) {
             await push({
               at: now.toISOString(),

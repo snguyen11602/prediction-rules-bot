@@ -1,4 +1,6 @@
-# Example shared rules for Kalshi + Polymarket.
+# Example shared rules for Kalshi + Polymarket US.
+# (Polymarket US is the exchange US residents can trade. Add `polymarket` to a rule's platforms
+#  to also scan the global site.)
 #
 # action: alert  → console/webhook/JSONL only (scan, watch, paper)
 #         paper  → hypothetical fills in the paper ledger (npm run paper)
@@ -42,6 +44,7 @@ arbitrage:
     max_price_gap: 0.15      # an "arb" wider than 15¢ is almost always two different questions
     scan_limit: 400          # markets per platform to look through for pairs
     pairs_file: arb-pairs.yaml
+    with: polymarket_us      # which Polymarket to pair with Kalshi (polymarket = the global site)
   same_platform:
     enabled: true
     scan_events: 100
@@ -68,7 +71,7 @@ rules:
     enabled: true
     action: alert
     filters:
-      platforms: [kalshi, polymarket]
+      platforms: [kalshi, polymarket_us]
       keywords_any: [election, senate, house, governor, midterm, primary, president, trump, poll, approval]
       keywords_exclude: [parlay, same game]
       min_price: 0.15
@@ -98,7 +101,7 @@ rules:
     enabled: true
     action: alert
     filters:
-      platforms: [kalshi, polymarket]
+      platforms: [kalshi, polymarket_us]
       keywords_exclude: [parlay, same game]
       min_price: 0.05
       max_price: 0.95
@@ -125,7 +128,7 @@ rules:
     enabled: true
     action: alert
     filters:
-      platforms: [kalshi, polymarket]
+      platforms: [kalshi, polymarket_us]
       keywords_any: [fomc, federal reserve, fed rate, rate cut, rate hike, interest rate, cpi, inflation, unemployment, jobs report, payrolls, gdp, recession]
       min_price: 0.10
       max_price: 0.90
@@ -222,7 +225,7 @@ rules:
     enabled: true
     action: paper
     filters:
-      platforms: [kalshi, polymarket]
+      platforms: [kalshi, polymarket_us]
       keywords_exclude: [parlay, same game, mention]
       min_price: 0.85
       max_price: 0.95
@@ -254,7 +257,7 @@ rules:
     enabled: true
     action: paper
     filters:
-      platforms: [kalshi, polymarket]
+      platforms: [kalshi, polymarket_us]
       keywords_exclude: [parlay, same game, mention]
       min_price: 0.05
       max_price: 0.15
@@ -291,7 +294,7 @@ rules:
     enabled: true
     action: paper
     filters:
-      platforms: [kalshi, polymarket]
+      platforms: [kalshi, polymarket_us]
       keywords_exclude: [parlay, same game]
       min_price: 0.20
       max_price: 0.80

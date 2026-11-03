@@ -1,5 +1,25 @@
 /** Normalized market snapshot shared across platforms. */
-export type PlatformId = "kalshi" | "polymarket";
+/**
+ * kalshi        — Kalshi
+ * polymarket    — global Polymarket (polymarket.com); US residents can't open trades there
+ * polymarket_us — Polymarket US (polymarket.us), the separate US exchange
+ */
+export type PlatformId = "kalshi" | "polymarket" | "polymarket_us";
+
+export const PLATFORM_IDS = ["kalshi", "polymarket", "polymarket_us"] as const satisfies readonly PlatformId[];
+
+/** Platforms used when a rule doesn't list any (and for arbitrage unless configured). */
+export const DEFAULT_PLATFORMS: PlatformId[] = ["kalshi", "polymarket_us"];
+
+export const PLATFORM_NAMES: Record<PlatformId, string> = {
+  kalshi: "Kalshi",
+  polymarket: "Polymarket (global)",
+  polymarket_us: "Polymarket US",
+};
+
+export function platformName(id: string): string {
+  return PLATFORM_NAMES[id as PlatformId] ?? id;
+}
 
 export interface NormalizedMarket {
   platform: PlatformId;
@@ -19,6 +39,11 @@ export interface NormalizedMarket {
   liquidityUsd?: number;
   /** 24h volume in USD when available. */
   volume24hUsd?: number;
+  /**
+   * The platform doesn't publish 24h volume for this market (Polymarket US). The 24h-volume
+   * filter is then skipped and says so, instead of failing every market on that platform.
+   */
+  volume24hUnavailable?: boolean;
   /** ISO close / resolve time when known. */
   closesAt?: string;
   /**

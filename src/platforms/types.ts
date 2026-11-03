@@ -45,7 +45,7 @@ export interface PlatformAdapter {
    * Round a paper order size to what the platform can actually trade
    * (e.g. whole contracts). Omit when fractional sizes are allowed.
    */
-  roundContracts?(contracts: number): number;
+  roundContracts?(contracts: number, market?: NormalizedMarket): number;
   /**
    * Public read of multi-outcome events with their markets nested, for
    * same-platform arbitrage. Optional; adapters that can't group omit it.

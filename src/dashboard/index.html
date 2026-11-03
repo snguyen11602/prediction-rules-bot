@@ -323,7 +323,7 @@
   </div>
 
   <footer>
-    <span>Nothing here places real orders. Prices come from public Kalshi and Polymarket data.</span>
+    <span>Nothing here places real orders. Prices come from public Kalshi and Polymarket US data.</span>
     <span id="ledgerPath"></span>
   </footer>
 </div>
@@ -375,6 +375,8 @@
   function clock(iso) {
     return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
+  const PLATFORM_LABEL = { kalshi: "Kalshi", polymarket: "Polymarket (global)", polymarket_us: "Polymarket US" };
+  function platformLabel(id) { return PLATFORM_LABEL[id] || String(id || ""); }
   function safeUrl(u) { return typeof u === "string" && /^https?:\/\//i.test(u) ? u : null; }
   function marketCell(p, rulesById) {
     const href = safeUrl(p.url);
@@ -382,7 +384,7 @@
       ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: p.title })
       : el("span", { text: p.title });
     const rule = rulesById[p.ruleId]?.name || p.ruleId;
-    return el("td", { class: "title" }, title, el("div", { class: "meta", text: `${rule} · ${p.platform === "kalshi" ? "Kalshi" : "Polymarket"}` }));
+    return el("td", { class: "title" }, title, el("div", { class: "meta", text: `${rule} · ${platformLabel(p.platform)}` }));
   }
   const REASONS = {
     take_profit: "Hit profit target",
@@ -693,7 +695,7 @@
     for (const l of legs.slice(0, 8)) {
       const href = safeUrl(l.url);
       const name = href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: l.title }) : el("span", { text: l.title });
-      ul.append(el("li", null, el("span", { class: "side", text: String(l.side).toUpperCase() }), `${l.platform === "kalshi" ? "Kalshi" : "Polymarket"} @ ${cents(l[priceKey])} · `, name));
+      ul.append(el("li", null, el("span", { class: "side", text: String(l.side).toUpperCase() }), `${platformLabel(l.platform)} @ ${cents(l[priceKey])} · `, name));
     }
     if (legs.length > 8) ul.append(el("li", { text: `+ ${legs.length - 8} more` }));
     return ul;
@@ -790,7 +792,7 @@
         ? `Paper ${String(u.side).toUpperCase()} (${(state.ruleNames || {})[u.ruleId] || rulesById[u.ruleId]?.name || u.ruleId})`
         : `Alert — would ${m.direction === "up" ? "buy YES" : "buy NO"}`;
       body.append(el("tr", null,
-        el("td", { class: "title" }, title, el("div", { class: "meta", text: `${u.platform === "kalshi" ? "Kalshi" : "Polymarket"} · now ${cents(u.yesPrice)}` })),
+        el("td", { class: "title" }, title, el("div", { class: "meta", text: `${platformLabel(u.platform)} · now ${cents(u.yesPrice)}` })),
         el("td", { class: "num" }, el("span", { class: m.direction === "up" ? "pos" : "neg", text: `${m.direction === "up" ? "+" : MINUS}${(Math.abs(m.move) * 100).toFixed(1)}¢` }), el("div", { class: "meta", text: `${cents(m.from)} → ${cents(m.to)} in ${m.windowMinutes}m` })),
         el("td", { class: "num", text: `${m.zscore}σ` }),
         el("td", { class: "num", text: m.volumeRatio != null ? `${m.volumeRatio}×` : "—" }),
@@ -840,7 +842,7 @@
     const rule = rulesById[p.ruleId]?.name || p.ruleId;
     const head = [
       el("h3", { text: p.title }),
-      el("div", { class: "meta", text: `${rule} · ${p.platform === "kalshi" ? "Kalshi" : "Polymarket"} · ${p.side.toUpperCase()} · opened ${new Date(p.entryAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }),
+      el("div", { class: "meta", text: `${rule} · ${platformLabel(p.platform)} · ${p.side.toUpperCase()} · opened ${new Date(p.entryAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }),
     ];
     const after = el("div", { class: "story-stage" });
     if (p.status === "open") {
@@ -868,7 +870,7 @@
   function decisionStory(d, rulesById) {
     const rule = rulesById[d.ruleId]?.name || (state.ruleNames || {})[d.ruleId] || d.ruleId;
     const [k, label] = OUTCOME[d.outcome] || ["info", d.outcome];
-    openStory([el("h3", { text: d.market.title }), el("div", { class: "meta" }, `${rule} · ${d.market.platform === "kalshi" ? "Kalshi" : "Polymarket"} · YES ${cents(d.market.yesPrice)} · `, el("span", { class: `outcome ${k}`, text: label }))], d.checks);
+    openStory([el("h3", { text: d.market.title }), el("div", { class: "meta" }, `${rule} · ${platformLabel(d.market.platform)} · YES ${cents(d.market.yesPrice)} · `, el("span", { class: `outcome ${k}`, text: label }))], d.checks);
   }
 
   let replayToken = 0;
@@ -892,7 +894,7 @@
         dots.append(el("span", { class: c }, (i < upto || (i === upto && !failed)) && i <= reach ? "✓ " : failed && i === upto ? "✗ " : "", STAGE_LABEL[st]));
       });
       box.replaceChildren(
-        el("div", { class: "scan-head" }, el("span", { class: "scan-title", text: s.title }), el("span", { class: "meta", text: `${rule} · ${s.platform === "kalshi" ? "Kalshi" : "Polymarket"}` })),
+        el("div", { class: "scan-head" }, el("span", { class: "scan-title", text: s.title }), el("span", { class: "meta", text: `${rule} · ${platformLabel(s.platform)}` })),
         dots,
         el("div", { class: "scan-reason", text: failed ? `Dropped: ${s.fail || ""}` : upto >= reach && s.passed ? "Passed every check → trade / alert" : "" }),
       );

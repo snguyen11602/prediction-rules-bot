@@ -1,6 +1,6 @@
 # prediction-rules-bot
 
-Shared **rules engine** for **Kalshi** and **Polymarket**. Run locally alongside Claude / Cursor / Grok Bot: edit YAML rules, scan public markets, get alerts. Paper trading writes a local ledger. **Live trading is stubbed and gated** — nothing places real orders by default.
+Shared **rules engine** for **Kalshi** and **Polymarket US** (global Polymarket is still supported). Run locally alongside Claude / Cursor / Grok Bot: edit YAML rules, scan public markets, get alerts. Paper trading writes a local ledger. **Live trading is stubbed and gated** — nothing places real orders by default.
 
 ## Quick start
 
@@ -14,7 +14,7 @@ npm run paper         # marks/exits open paper positions, then paper-enters new 
 npm run paper:report  # offline PnL report from the paper ledger
 npm run paper:close -- --id <id> --price <0-1>   # manually close a stuck paper position
 npm run paper:watch   # paper trade every 5 min + live dashboard at http://localhost:4321
-npm run arb:find      # review likely Kalshi ↔ Polymarket pairs for the arbitrage strategy
+npm run arb:find      # review likely Kalshi ↔ Polymarket US pairs for the arbitrage strategy
 npm test              # unit + demo end-to-end tests (no network)
 npm run live          # exits with “not implemented / needs keys”
 ```
@@ -37,7 +37,7 @@ after the bid/ask spread, slippage and fees.
 
 | Kind | When | Trade | Guaranteed payout per set |
 |------|------|-------|---------------------------|
-| Kalshi ↔ Polymarket | Same question priced differently on the two sites | YES on one, NO on the other | $1 |
+| Kalshi ↔ Polymarket US | Same question priced differently on the two sites | YES on one, NO on the other | $1 |
 | Same site, NO basket | Outcomes where only one can win (the platform says so) and YES bids add up to more than $1 | NO on each outcome | $1 × (outcomes − 1) |
 | Same site, YES basket | Outcomes where exactly one must win and YES asks add up to less than $1 | YES on every outcome | $1 |
 
@@ -52,7 +52,7 @@ after the bid/ask spread, slippage and fees.
   page of events and matching uses a rolling cache (`data/*.arb-cache.json`). It takes about two hours
   of checks to page through everything. Matched markets are always re-priced before quoting.
 - **Same-site baskets** only use the platforms' own flags: Kalshi's `mutually_exclusive` events and
-  Polymarket's neg-risk events. NO baskets are on. YES baskets are off by default, because neither
+  global Polymarket's neg-risk events. Polymarket US doesn't publish such a flag, so it has none. NO baskets are on. YES baskets are off by default, because neither
   site guarantees that one listed outcome must win.
 - **Sizing and risk** use the same knobs as the other rules: `position_size_fraction`, `max_position_usd`,
   `max_open_positions` (counted per arb, not per leg) and the consecutive-loss pause. An arb that
@@ -61,7 +61,8 @@ after the bid/ask spread, slippage and fees.
   leg already returns the full guaranteed payout. Each arb counts as one trade in the stats.
 - **Limits:** paper trading assumes the best price is available for the whole size and that both legs
   fill at once; real books are thin and prices move. Real opportunities are rare and usually a few
-  cents. Live trading would also need money on both sites. Opportunities only need public data,
+  cents. Live trading would also need money on both sites. From the US, only Polymarket US can open trades,
+  which is why it's the default (`arbitrage.cross_platform.with`). Opportunities only need public data,
   so `npm run scan` and `npm run watch` report them as alerts.
 
 ## Unusual moves (possible informed trading)
@@ -106,7 +107,9 @@ Each `npm run paper` is one cycle against the ledger:
 Fill realism: buys pay the ask, sells hit the bid (NO quotes are the complement of YES quotes), plus
 optional `paper.slippage`. Empty book sides (bid 0 / ask 1) are treated as no quote. Kalshi fills are
 whole contracts and include an *approximate* taker fee (`0.07 × contracts × P × (1 − P)`, rounded up);
-Polymarket is modelled fee-free with fractional shares. Settlement has no fee. The bankroll gate
+Polymarket US charges `Θ × contracts × P × (1 − P)` with the market's `feeCoefficient` (Θ = 0.0695 on most
+markets), rounded to the cent, and trades in steps of the market's `minimumTradeQty` (0.01 or 1 contract).
+Global Polymarket uses its published fee schedule with fractional shares. Settlement has no fee. The bankroll gate
 counts open cost basis; entry fees show up in unrealized, then realized, PnL.
 
 Ledger: `data/paper-ledger.json` (`data/paper-ledger.demo.json` with `--demo`; the two never mix).
@@ -211,7 +214,8 @@ Optional:
 
 - `POLL_INTERVAL_SEC` — watch interval (default 60)
 - `WEBHOOK_URL` / `EVENT_LOG_FILE` — extra event sinks
-- `KALSHI_API_BASE` / `POLYMARKET_GAMMA_BASE` — override public bases
+- `KALSHI_API_BASE` / `POLYMARKET_US_BASE` / `POLYMARKET_GAMMA_BASE` — override public bases
+- `POLYMARKET_US_BOOKS` — Polymarket US order books read per scan for liquidity (default 100)
 
 ## Layout
 
@@ -219,7 +223,7 @@ Optional:
 rules/                 YAML rule configs
 fixtures/              Offline markets for --demo (markets.json, markets.later.json)
 src/rules/             Shared Zod schema + loader
-src/platforms/         Kalshi + Polymarket adapters (+ demo)
+src/platforms/         Kalshi, Polymarket US and global Polymarket adapters (+ demo)
 src/engine/            Evaluate, exits, pricing, risk, runner, paper session, events
 src/ledger/            Paper ledger: positions, fills journal, PnL (JSON)
 src/cli/               scan | watch | paper | paper-report | live
@@ -235,11 +239,35 @@ AGENTS.md              How to extend without breaking the schema
 - Some hosts (e.g. `external-api.kalshi.com`) may 403 from certain networks — override with `KALSHI_API_BASE` or use `--demo`.
 - **Trading / portfolio** endpoints need API key ID + RSA private key signing (documented by Kalshi; not wired in this starter).
 
-### Polymarket (public read)
+### Polymarket US (public read) — platform id `polymarket_us`, the default
+
+Polymarket US (polymarket.us) is a separate exchange from global Polymarket, with its own markets and
+prices. It's the one US residents can trade; the global site is close-only from the US.
+
+- Public gateway: `https://gateway.polymarket.us` — `GET /v1/markets` (most-traded first),
+  `/v1/market/id/{id}`, `/v1/markets/{slug}/book`, `/v1/markets/{slug}/settlement`. No key needed.
+- Each market is one YES/NO contract. YES is the market's "long" side; two-sided markets (team vs
+  team, over/under) say which side is YES in the title, e.g. `… [YES = Seoul SK Knights]`.
+- **Liquidity** comes from the order book (resting orders within 10¢ of the mid) for the first 100
+  markets of each scan. **24h volume isn't published**: the 24h-volume filter is skipped for these
+  markets and the checklist says so (spread and liquidity still apply). A market with no trade in
+  24h counts as 0 volume. Unusual-move signals need volume, so they rarely fire here.
+- Close times are the market's `endDate`, which is often the settlement deadline (weeks after the
+  game or election), so time-to-resolve filters see them as further away than they are.
+- Results come from the settlement endpoint once the market is `RESOLVED`, never from prices.
+- No public flag says which events are "only one can win", so there's no same-site arbitrage here.
+- **Live trading** later: Key ID + Secret Key from polymarket.us/developer (Ed25519 signing) — not
+  used by this bot.
+
+Pick the Polymarket for arbitrage with `arbitrage.cross_platform.with: polymarket_us | polymarket`.
+Pairs in `rules/arb-pairs.yaml` carry `platform:` (`arb:confirm` writes it; old pairs without it are global).
+
+### Polymarket global (public read) — platform id `polymarket`
 
 - Gamma discovery: `https://gamma-api.polymarket.com/markets?closed=false&active=true`
 - CLOB book/price reads: `https://clob.polymarket.com` (optional; listing uses Gamma)
-- **Live trading** later: L1 wallet signature + L2 HMAC API credentials — not required for alerts.
+- Add `polymarket` to a rule's `platforms` to scan it. Paper positions opened there before
+  Polymarket US support keep being priced and closed on the global site.
 
 ## CLI flags
 
