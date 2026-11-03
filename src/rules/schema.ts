@@ -116,9 +116,9 @@ export const RiskSchema = z.object({
   max_open_positions: z.number().int().positive().default(5),
   /**
    * After N consecutive losing paper/live closes, pause new entries
-   * until the cooldown elapses.
+   * until the cooldown elapses. 0 = never pause.
    */
-  fire_after_n_losses: z.number().int().positive().default(3),
+  fire_after_n_losses: z.number().int().nonnegative().default(3),
   /** Hours to stay paused after consecutive-loss trip. */
   pause_hours_after_losses: z.number().positive().default(24),
   /** Cap absolute daily realized paper/live loss (USD). */
@@ -185,6 +185,12 @@ export const ArbitrageSchema = z.object({
       enabled: z.boolean().default(true),
       /** Look for pairs automatically by title (they're reported; see auto_trade). */
       auto_match: z.boolean().default(true),
+      /**
+       * Exact twins from the platforms' own ids (Polymarket US only): games, matched by league,
+       * date and both teams, trade like confirmed pairs; election races, matched by office, state,
+       * year and party, alert until you confirm them (the sites word the payout differently).
+       */
+      exact_match: z.boolean().default(true),
       /**
        * Paper-trade automatic pairs too. Off by default: a wrong match is two bets that can
        * both lose, so automatic pairs only alert until you confirm them (npm run arb:confirm).
@@ -287,7 +293,7 @@ export const CopyTradingSchema = z.object({
       /** Leaderboard profit in the window, USD. */
       min_profit_usd: z.number().nonnegative().default(10_000),
       max_leaders: z.number().int().positive().max(50).default(10),
-      refresh_hours: z.number().positive().default(6),
+      refresh_hours: z.number().positive().default(1),
       /** Wallets to always follow / never follow (0x… proxy wallets). */
       include: z.array(z.string()).default([]),
       exclude: z.array(z.string()).default([]),
@@ -322,10 +328,10 @@ export const CopyTradingSchema = z.object({
   risk: RiskSchema.default({
     position_size_fraction: 0.03,
     max_position_usd: 30,
-    max_open_positions: 10,
-    fire_after_n_losses: 4,
+    max_open_positions: 20,
+    // Copy trading keeps going through losing streaks (it follows the leaders, not its own luck).
+    fire_after_n_losses: 0,
     pause_hours_after_losses: 24,
-    daily_loss_cap_usd: 100,
     bankroll_usd: 1000,
     reentry_cooldown_hours: 12,
   }),

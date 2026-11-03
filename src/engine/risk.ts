@@ -55,13 +55,17 @@ export function checkEntryRisk(
   const add = (name: string, ok: boolean, detail: string) => checks.push({ stage: "risk", name, ok, detail });
   const block = (reason: string): RiskCheckResult => ({ ok: false, reason, checks });
 
-  const paused = !!state.pausedUntil && new Date(state.pausedUntil).getTime() > now.getTime();
+  // fire_after_n_losses: 0 = never pause (an old pause from before that setting no longer counts).
+  const neverPause = risk.fire_after_n_losses === 0;
+  const paused = !neverPause && !!state.pausedUntil && new Date(state.pausedUntil).getTime() > now.getTime();
   add(
     "Losing-streak pause",
     !paused,
-    paused
-      ? `paused until ${new Date(state.pausedUntil!).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} after ${risk.fire_after_n_losses} losses in a row`
-      : `not paused (${state.consecutiveLosses} of ${risk.fire_after_n_losses} losses in a row)`,
+    neverPause
+      ? "never pauses after losses (fire_after_n_losses: 0)"
+      : paused
+        ? `paused until ${new Date(state.pausedUntil!).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} after ${risk.fire_after_n_losses} losses in a row`
+        : `not paused (${state.consecutiveLosses} of ${risk.fire_after_n_losses} losses in a row)`,
   );
   if (paused) return block(`paused until ${state.pausedUntil} after ${risk.fire_after_n_losses} consecutive losses`);
 
@@ -104,7 +108,7 @@ export function applyOutcome(
 
   if (pnlUsd < 0) {
     next.consecutiveLosses = state.consecutiveLosses + 1;
-    if (next.consecutiveLosses >= rule.risk.fire_after_n_losses) {
+    if (rule.risk.fire_after_n_losses > 0 && next.consecutiveLosses >= rule.risk.fire_after_n_losses) {
       const until = new Date(
         now.getTime() + rule.risk.pause_hours_after_losses * 3600_000,
       );

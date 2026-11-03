@@ -265,6 +265,16 @@ export class KalshiAdapter implements PlatformAdapter {
   }
 
   /** One event's markets by event ticker (e.g. a game: KXNBAGAME-26NOV02ATLIND); [] when it doesn't exist. */
+  /** Open markets in one series (e.g. KXNBAGAME: every upcoming NBA game). Public read. */
+  async listSeriesMarkets(series: string): Promise<NormalizedMarket[]> {
+    const url = new URL(`${this.baseUrl}/markets`);
+    url.searchParams.set("series_ticker", series);
+    url.searchParams.set("status", "open");
+    url.searchParams.set("limit", "1000");
+    const data = (await getJson<KalshiMarketsResponse>(url, "Kalshi")).data ?? {};
+    return (data.markets ?? []).map(normalize).filter((m): m is NormalizedMarket => m != null);
+  }
+
   async getEventMarkets(eventTicker: string): Promise<NormalizedMarket[]> {
     const url = new URL(`${this.baseUrl}/events/${encodeURIComponent(eventTicker)}`);
     url.searchParams.set("with_nested_markets", "true");

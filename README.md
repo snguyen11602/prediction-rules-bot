@@ -41,7 +41,21 @@ after the bid/ask spread, slippage and fees.
 | Same site, NO basket | Outcomes where only one can win (the platform says so) and YES bids add up to more than $1 | NO on each outcome | $1 × (outcomes − 1) |
 | Same site, YES basket | Outcomes where exactly one must win and YES asks add up to less than $1 | YES on every outcome | $1 |
 
-- **Matching across sites** is the hard part. Pairs are found automatically only when the numbers,
+- **Exact twins** come first, from the platforms' own ids (`exact_match`, on by default):
+  - **Games** (NBA, NHL, MLB, WNBA, college basketball and football): Kalshi's game market and the
+    Polymarket US moneyline for the same date, with both teams agreeing by abbreviation **and** by name,
+    so a pair can't come out flipped. These trade like pairs you confirmed. NFL is left out because a tie
+    can settle differently on the two sites.
+  - **Election races** (Senate, governor, House): office, state, district, year and party. Kalshi pays when
+    the party's candidate is sworn in, Polymarket US when the party's nominee wins, so these **alert until
+    you confirm them**. They also tie money up until the result is certified, past the 60-day
+    `max_hours_to_resolve`.
+- **What a gap is worth.** You buy YES on one site and NO on the other, so you pay both asks plus both
+  sites' fees. At mid prices the fees alone are about 3.5¢ per $1 (≈1.75¢ on each site), so a 1¢ gap
+  loses about 2.5¢ and you need roughly a 4–5¢ gap (incl. slippage) to clear the 2¢ `min_edge`. Near
+  5¢ / 95¢ fees are much smaller. The same game is usually priced within a cent on both sites; gaps
+  open for seconds after news, so `npm run paper:fast` gives the best chance.
+- **Matching by title** is the hard part. Pairs are found automatically only when the numbers,
   years, direction and timing words (cut/hike, above/below, before/after, "at any time"), election
   and role words (primary/general, vice), and names (in the same order) all agree, and the titles
   are similar. Even then, **auto-matched pairs only alert**: paper trades need you to confirm the
@@ -72,7 +86,8 @@ Configured in the `copy_trading:` block of `rules/example.yaml`. Paper by defaul
 - **Who to follow.** Global Polymarket is the only exchange that publishes other traders' accounts, so
   leaders come from its public leaderboard (`data-api.polymarket.com`): the top 50 by profit this
   month, kept only if they've traded at least 50 markets and won at least 55% of their last ~200
-  closed positions (30+ results). The best 10 by profit are followed; the list refreshes every 6 hours.
+  closed positions (30+ results). The best 10 by profit are followed; the leaderboard is re-checked every
+  hour (`refresh_hours`).
   `include` / `exclude` take wallets to always / never follow.
 - **What gets copied.** Their new buys of $500+ from the last 30 minutes, on the same market where you
   can trade it:
@@ -89,8 +104,9 @@ Configured in the `copy_trading:` block of `rules/example.yaml`. Paper by defaul
   `min_leader_trade_usd` counts, so a partial trim closes the whole copy), when the market resolves, or at
   the stop loss. A leader's sell is remembered, so a copy that can't sell right away (no bid) sells on a
   later check, and anyone you still hold a copy from keeps being watched after they leave the leader list
-  or copy trading is switched off. Sizing, caps and the losing-streak pause use the same risk block as
-  every other strategy.
+  or copy trading is switched off. Sizing and caps use the same risk block as every other strategy, but
+  copy trading **never pauses after a losing streak** (`fire_after_n_losses: 0`) and has no daily loss
+  cap: it keeps tailing the leaders. Up to 20 copies can be open at once.
 - **Honest limits.** You see a trade only after it happens (a minute or more later), and a big trader's
   buy often moves the price first. High win rates often come from buying heavy favorites (small wins,
   rare big losses), and a monthly leaderboard is partly luck. The dashboard lists each copied and skipped
@@ -281,7 +297,7 @@ rm data/paper-ledger.demo.json                                 # reset the demo
 Example risk knobs in `rules/example.yaml`:
 
 - `position_size_fraction: 0.25` — size new ideas at 25% of assumed bankroll
-- `fire_after_n_losses: 3` — pause new entries after 3 consecutive losses
+- `fire_after_n_losses: 3` — pause new entries after 3 consecutive losses (`0` = never pause)
 - `daily_loss_cap_usd`, `max_open_positions`, `max_position_usd`, `reentry_cooldown_hours`
 
 Example rules: three alert watchlists (contested politics, short-dated price moves, macro/econ) and

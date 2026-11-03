@@ -1,3 +1,4 @@
+import { findExactPairs, type ExactPair } from "./exact-pairs.js";
 import type { ArbitrageConfig, Rule, RulesFile } from "../rules/schema.js";
 import { arbitrageAsRule } from "../rules/schema.js";
 import type { EventGroup, PlatformAdapter } from "../platforms/types.js";
@@ -140,6 +141,8 @@ export interface ArbTrace {
     freshEvents: number;
     exclusiveEvents: number;
     autoPairs: number;
+    /** Exact twins (same game / same race) found from the platforms' ids. */
+    exactPairs?: number;
     confirmedPairs: number;
     setsChecked: number;
     profitableBeforeLimits: number;
@@ -204,14 +207,19 @@ export function quoteEnv(cfg: ArbitrageConfig, adapters: PlatformAdapter[], now:
   };
 }
 
+/** Title matches and election races alert until you confirm them (unless auto_trade is on). */
+export function needsConfirming(matchedBy: string): boolean {
+  return matchedBy === "auto" || matchedBy === "election";
+}
+
 function canTrade(cfg: ArbitrageConfig, q: ArbQuote): boolean {
-  return q.basket.matchedBy !== "auto" || cfg.cross_platform.auto_trade;
+  return !needsConfirming(q.basket.matchedBy) || cfg.cross_platform.auto_trade;
 }
 
 function summarize(q: ArbQuote, cfg?: ArbitrageConfig): ArbOpportunity {
   return {
     key: q.basket.key,
-    tradable: cfg ? canTrade(cfg, q) : q.basket.matchedBy !== "auto",
+    tradable: cfg ? canTrade(cfg, q) : !needsConfirming(q.basket.matchedBy),
     kind: q.basket.kind,
     kindLabel: kindLabel(q.basket.kind),
     title: q.basket.title,
@@ -303,12 +311,36 @@ export async function findOpportunities(args: {
     }
   }
 
+  // Exact twins (games, election races) from the platforms' own ids; their prices are fresh.
+  let exact: ExactPair[] = [];
+  if (cfg.cross_platform.enabled && cfg.cross_platform.exact_match && cfg.cross_platform.with === "polymarket_us") {
+    const unwrap = (a: PlatformAdapter | undefined) => ((a as { inner?: PlatformAdapter } | undefined)?.inner ?? a) as Record<string, unknown> | undefined;
+    const k = unwrap(adapters.find((a) => a.id === "kalshi"));
+    const u = unwrap(adapters.find((a) => a.id === "polymarket_us"));
+    const fn = <T>(o: Record<string, unknown> | undefined, name: string) => (typeof o?.[name] === "function" ? ((o[name] as (...x: unknown[]) => T).bind(o)) : undefined);
+    try {
+      exact = await findExactPairs(
+        {
+          kalshiSeries: fn(k, "listSeriesMarkets"),
+          kalshiTickers: fn(k, "getMarkets"),
+          usSlugs: fn(u, "getMarketsBySlug"),
+        },
+        args.markets,
+      );
+      for (const e of exact) for (const m of [e.kalshi, e.us]) fresh.set(`${m.platform}:${m.id}`, m);
+    } catch (err) {
+      complete = false;
+      await push({ at: now.toISOString(), type: "adapter_error", ruleId: "arbitrage", message: `Exact game / race matching skipped: ${(err as Error).message}` });
+    }
+  }
+
   const discovery = await discoverBaskets({
     cfg,
     pairs,
     markets: [...forMatching.values()],
     lookup: args.lookup,
     eventGroups: cfg.same_platform.enabled ? freshGroups : [],
+    exact,
   });
 
   // Cached markets were only good enough to match on: refresh their prices before quoting.
@@ -344,10 +376,12 @@ export async function findOpportunities(args: {
   const baskets = discovery.baskets
     .filter((b) => b.legs.every((l) => current(l.market)))
     .map((b) => ({ ...b, legs: b.legs.map((l) => ({ ...l, market: current(l.market)! })) }))
-    // Re-check the "probably different questions" guard on fresh prices, not cached ones.
+    // Re-check the "probably different questions" guard on fresh prices, not cached ones
+    // (for every match you haven't confirmed yourself).
     .filter(
       (b) =>
-        b.matchedBy !== "auto" ||
+        b.matchedBy === "confirmed" ||
+        b.matchedBy === "platform" ||
         Math.abs(b.legs[0].market.yesPrice - b.legs[1].market.yesPrice) <= cfg.cross_platform.max_price_gap,
     );
 
@@ -369,6 +403,7 @@ export async function findOpportunities(args: {
       freshEvents: freshGroups.length,
       exclusiveEvents: freshGroups.filter((g) => g.mutuallyExclusive).length,
       autoPairs: discovery.candidates.length,
+      exactPairs: exact.length,
       confirmedPairs: pairs.confirmed.length,
       setsChecked: checked,
       profitableBeforeLimits: allQuotes.length,
@@ -385,7 +420,7 @@ export async function findOpportunities(args: {
     type: "info",
     ruleId: "arbitrage",
     message:
-      `Arbitrage: checked ${checked} set(s) — ${discovery.candidates.length} auto-matched pair(s), ` +
+      `Arbitrage: checked ${checked} set(s) — ${exact.filter((e) => e.kind === "game").length} same game(s), ${exact.filter((e) => e.kind === "election").length} same race(s), ${discovery.candidates.length} auto-matched pair(s), ` +
       `${pairs.confirmed.length} confirmed pair(s), ${freshGroups.filter((g) => g.mutuallyExclusive).length} exclusive event(s), ` +
       `${universe.size} events cached for matching; ${quotes.length} opportunit${quotes.length === 1 ? "y" : "ies"} ≥ ${(cfg.min_edge * 100).toFixed(1)}¢ per $1`,
   });
@@ -417,7 +452,11 @@ export async function emitArbSignals(
           ? s.tradable
             ? " (auto-matched: check both questions are the same)"
             : " (auto-matched: check it, then npm run arb:confirm to paper-trade it)"
-          : ""),
+          : q.basket.matchedBy === "election"
+            ? s.tradable
+              ? " (same race; the sites word the payout differently)"
+              : " (same race: check the payout rules on both sites, then npm run arb:confirm to paper-trade it)"
+            : ""),
       market: {
         platform: q.legs[0].market.platform,
         id: q.legs[0].market.id,
@@ -634,7 +673,9 @@ function arbChecks(cfg: ArbitrageConfig, q: ArbQuote, now: Date): Check[] {
   const same =
     b.matchedBy === "confirmed"
       ? "you confirmed this is the same question on both sites"
-      : b.matchedBy === "auto"
+      : (b.matchedBy === "exact" || b.matchedBy === "election") && b.how
+        ? b.how
+        : b.matchedBy === "auto"
         ? `auto-matched (similarity ${b.score?.toFixed(2) ?? "?"}): numbers, directions and names agree`
         : b.kind === "no_basket"
           ? "the platform says only one of these outcomes can win"
