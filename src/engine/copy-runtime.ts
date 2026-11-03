@@ -9,12 +9,15 @@ import { buyPrice } from "./pricing.js";
 import {
   betKey,
   copyChecks,
+  isKalshiWallet,
   kalshiGameEvents,
   matchKalshiGame,
   loadCopyState,
   matchGame,
   matchTitle,
+  pickKalshiLeaders,
   pickLeaders,
+  pollKalshiLeaders,
   pollLeaders,
   saveCopyState,
   usGameSlugs,
@@ -23,7 +26,11 @@ import {
   type CopyTarget,
   type Leader,
   type LeaderBet,
+  type LegCandidate,
+  type ParlayDecision,
 } from "./copy.js";
+import { KalshiSocialClient } from "../platforms/kalshi-social.js";
+import { addLeg, buildParlays, copyLeaderParlays, type ParlayCtx } from "./parlays.js";
 import { cents, type Check } from "./trace.js";
 import { marketRef } from "./runner.js";
 
@@ -36,6 +43,10 @@ export interface CopyDeps {
   usBySlug: (slugs: string[]) => Promise<NormalizedMarket[]>;
   /** Kalshi markets of one event (a game), [] when there's no such event. */
   kalshiEvent?: (eventTicker: string) => Promise<NormalizedMarket[]>;
+  /** Kalshi's public leaderboard and trader profiles (no Kalshi leaders without it). */
+  kalshiSocial?: Pick<KalshiSocialClient, "leaderboard" | "metrics" | "trades">;
+  /** One Kalshi market, settled or not (for how a leader's past parlays went). */
+  kalshiMarket?: (ticker: string) => Promise<NormalizedMarket | null>;
 }
 
 export function defaultCopyDeps(): CopyDeps {
@@ -47,6 +58,8 @@ export function defaultCopyDeps(): CopyDeps {
     globalBySlug: (s) => gamma.getMarketsBySlug(s),
     usBySlug: (s) => us.getMarketsBySlug(s),
     kalshiEvent: (t) => kalshi.getEventMarkets(t),
+    kalshiSocial: new KalshiSocialClient(),
+    kalshiMarket: (t) => kalshi.getMarket(t),
   };
 }
 
@@ -54,12 +67,27 @@ export function defaultCopyDeps(): CopyDeps {
 export interface CopyView {
   enabled: boolean;
   action: "alert" | "paper";
+  /** Everyone followed: global Polymarket first, then Kalshi. */
   leaders: Leader[];
   considered: number;
   leadersAt?: string;
+  kalshi?: { enabled: boolean; considered: number; hidden: number; at?: string; count: number };
   checkedAt?: string;
   recent: CopyDecision[];
   note?: string;
+  parlays?: ParlayView;
+}
+
+export interface ParlayView {
+  enabled: boolean;
+  action: "alert" | "paper";
+  legsPerParlay: number;
+  minLegPrice: number;
+  maxLegPrice: number;
+  minBackingUsd: number;
+  /** Legs waiting to be combined (best-backed first). */
+  pool: LegCandidate[];
+  recent: ParlayDecision[];
 }
 
 export interface CopyCtx {
@@ -124,7 +152,52 @@ export async function pollCopy(ctx: CopyCtx, opts: { force?: boolean }): Promise
       });
     }
   }
-  const leaders = ctx.cfg.enabled ? state.leaders?.list ?? [] : [];
+  // Kalshi's leaderboard: a second, separate list (its own retry, so one outage doesn't stop the other).
+  const K = ctx.cfg.kalshi_leaders;
+  const social = ctx.deps.kalshiSocial;
+  const kStale = !state.kalshiLeaders || now.getTime() - Date.parse(state.kalshiLeaders.at) > ctx.cfg.leaders.refresh_hours * 3600_000;
+  const kMayRetry = !state.kalshiRetryAt || now.getTime() >= Date.parse(state.kalshiRetryAt);
+  if (ctx.cfg.enabled && K.enabled && social && kStale && kMayRetry) {
+    try {
+      const lookup = ctx.deps.kalshiMarket;
+      const nowSec = Math.floor(now.getTime() / 1000);
+      const cache = (state.comboResults ??= {});
+      for (const [t, v] of Object.entries(cache)) if (v.at < nowSec - 30 * 86_400) delete cache[t];
+      const comboResult =
+        ctx.cfg.parlays.enabled && ctx.cfg.parlays.copy_leader_parlays && lookup
+          ? async (t: string) => {
+              if (cache[t]) return cache[t].r;
+              const m = await lookup(t);
+              if (!m) return null;
+              if (m.status !== "resolved") return "open" as const;
+              const r = m.resolvedOutcome === "yes" ? ("won" as const) : m.resolvedOutcome === "no" ? ("lost" as const) : null;
+              if (r) cache[t] = { r, at: nowSec };
+              return r;
+            }
+          : undefined;
+      const { list, considered, hidden, failed } = await pickKalshiLeaders(social, ctx.cfg, comboResult, (state.kalshiPrivate ??= {}), now);
+      if (considered > 0 && failed > considered / 2) throw new Error(`${failed} of ${considered} Kalshi profiles couldn't be read`);
+      state.kalshiLeaders = { at: now.toISOString(), list, considered, hidden };
+      state.kalshiRetryAt = undefined;
+      await ctx.push({
+        at: now.toISOString(),
+        type: "info",
+        ruleId: ctx.rule.id,
+        message:
+          `Copy trading: following ${list.length} Kalshi traders of the top ${considered} (${hidden} keep their trades private)` +
+          (list.length ? `: ${list.map((l) => l.name).join(", ")}` : ""),
+      });
+    } catch (err) {
+      state.kalshiRetryAt = new Date(now.getTime() + RETRY_MS).toISOString();
+      await ctx.push({
+        at: now.toISOString(),
+        type: "adapter_error",
+        ruleId: ctx.rule.id,
+        message: `Copy trading: couldn't refresh Kalshi's leaderboard (${(err as Error).message}); keeping the last list, retrying in 15 min`,
+      });
+    }
+  }
+  const leaders = ctx.cfg.enabled ? [...(state.leaders?.list ?? []), ...(K.enabled ? state.kalshiLeaders?.list ?? [] : [])] : [];
 
   // Anyone we still hold a copy from is polled too, so their sells are never missed.
   const wallets = new Map<string, { leader: Leader; since?: number }>(leaders.map((l) => [l.wallet.toLowerCase(), { leader: l }]));
@@ -134,13 +207,23 @@ export async function pollCopy(ctx: CopyCtx, opts: { force?: boolean }): Promise
     const since = Math.floor(Date.parse(p.entryAt) / 1000) - 300;
     const cur = wallets.get(k);
     if (cur) cur.since = Math.min(cur.since ?? since, since);
-    else wallets.set(k, { leader: { wallet: p.copiedFrom.wallet, name: p.copiedFrom.name, windowPnlUsd: 0, markets: 0, decided: 0, wins: 0, winRate: 0 }, since });
+    else
+      wallets.set(k, {
+        leader: { wallet: p.copiedFrom.wallet, name: p.copiedFrom.name, source: isKalshiWallet(p.copiedFrom.wallet) ? "kalshi" : "polymarket", windowPnlUsd: 0, markets: 0, decided: 0, wins: 0, winRate: 0 },
+        since,
+      });
   }
   const due = opts.force || !state.lastPollAt || now.getTime() - Date.parse(state.lastPollAt) >= ctx.cfg.copy.poll_seconds * 1000;
   if (!due || !wallets.size) return { state, bets: [], leaders, polled: false };
-  const bets = await pollLeaders(ctx.deps.data as PolymarketDataClient, [...wallets.values()], state, ctx.cfg, now);
+  const all = [...wallets.values()];
+  const kalshiWallets = all.filter((w) => isKalshiWallet(w.leader.wallet));
+  const polyWallets = all.filter((w) => !isKalshiWallet(w.leader.wallet));
+  const [poly, kal] = await Promise.all([
+    polyWallets.length ? pollLeaders(ctx.deps.data as PolymarketDataClient, polyWallets, state, ctx.cfg, now) : [],
+    kalshiWallets.length && social ? pollKalshiLeaders(social, kalshiWallets, state, ctx.cfg, now) : [],
+  ]);
   state.lastPollAt = now.toISOString();
-  return { state, bets, leaders, polled: true };
+  return { state, bets: [...poly, ...kal].sort((a, b) => b.at - a.at), leaders, polled: true };
 }
 
 /** A held copy whose leader has sold that bet since we copied it → why we sell too. */
@@ -166,6 +249,7 @@ export async function enterCopies(ctx: CopyCtx, poll: CopyPoll): Promise<{ opene
   const buys = poll.bets.filter(
     (b) =>
       b.side === "BUY" &&
+      !b.combo && // a leader's parlay is handled by the parlay copier
       b.usd >= cfg.copy.min_leader_trade_usd &&
       nowSec - b.at <= cfg.copy.max_trade_age_minutes * 60 &&
       leaders(poll).has(b.leader.wallet.toLowerCase()),
@@ -174,16 +258,18 @@ export async function enterCopies(ctx: CopyCtx, poll: CopyPoll): Promise<{ opene
   let alerts = 0;
   if (!buys.length) return { opened, alerts };
 
+  const globalBuys = buys.filter((b) => !b.kalshiTicker);
   const globals = new Map<string, NormalizedMarket>();
   try {
-    for (const m of await ctx.deps.globalBySlug(buys.map((b) => b.slug ?? "").filter(Boolean))) {
+    const slugs = globalBuys.map((b) => b.slug ?? "").filter(Boolean);
+    for (const m of slugs.length ? await ctx.deps.globalBySlug(slugs) : []) {
       const slug = (m.raw as { slug?: string } | undefined)?.slug;
       if (slug) globals.set(slug, m);
     }
   } catch {
     // reported per bet below
   }
-  const gameSlugs = buys.flatMap((b) => (cfg.copy.venues.includes("polymarket_us") && b.slug ? usGameSlugs(b.slug) : []));
+  const gameSlugs = globalBuys.flatMap((b) => (cfg.copy.venues.includes("polymarket_us") && b.slug ? usGameSlugs(b.slug) : []));
   const usGames = gameSlugs.length ? await ctx.deps.usBySlug(gameSlugs).catch(() => [] as NormalizedMarket[]) : [];
   const venue = (p: PlatformId) => ctx.venueMarkets().filter((m) => m.platform === p);
   const eventCache = new Map<string, Promise<NormalizedMarket[]>>();
@@ -209,12 +295,17 @@ export async function enterCopies(ctx: CopyCtx, poll: CopyPoll): Promise<{ opene
       record(state, { ...base, result: "skipped", reason: "the leader already sold it again" });
       continue;
     }
-    const global = bet.slug ? globals.get(bet.slug) : undefined;
-    if (!global) {
+    // A Kalshi leader's bet is copied on the very same Kalshi market: nothing to match.
+    if (bet.kalshiTicker && !cfg.copy.venues.includes("kalshi")) {
+      record(state, { ...base, result: "skipped", reason: "Kalshi isn't in copy.venues" });
+      continue;
+    }
+    const global = bet.slug && !bet.kalshiTicker ? globals.get(bet.slug) : undefined;
+    if (!bet.kalshiTicker && !global) {
       record(state, { ...base, result: "skipped", reason: "couldn't look up the leader's market" });
       continue;
     }
-    if ((global.status ?? "open") !== "open") {
+    if (global && (global.status ?? "open") !== "open") {
       record(state, { ...base, result: "skipped", reason: "the leader's market already closed" });
       continue;
     }
@@ -224,8 +315,13 @@ export async function enterCopies(ctx: CopyCtx, poll: CopyPoll): Promise<{ opene
     const found: CopyTarget[] = [];
     const misses: string[] = [];
     let usTwin: NormalizedMarket | undefined;
-    const venues = [...cfg.copy.venues].sort((a, b) => Number(a === "kalshi") - Number(b === "kalshi"));
+    const venues = bet.kalshiTicker ? [] : [...cfg.copy.venues].sort((a, b) => Number(a === "kalshi") - Number(b === "kalshi"));
+    if (bet.kalshiTicker) {
+      const stub: NormalizedMarket = { platform: "kalshi", id: bet.kalshiTicker, title: bet.kalshiTicker, yesPrice: 0.5 };
+      found.push({ market: stub, side: /^yes$/i.test(bet.outcome) ? "yes" : "no", how: "the leader's own Kalshi market" });
+    }
     for (const v of venues) {
+      if (!global) break;
       const tries: Array<CopyTarget | { reason: string }> = [];
       if (v === "polymarket_us") {
         const games = usGames.filter((m) => usGameSlugs(bet.slug ?? "").includes(String((m.raw as { slug?: string })?.slug)));
@@ -275,6 +371,8 @@ export async function enterCopies(ctx: CopyCtx, poll: CopyPoll): Promise<{ opene
       if (!fresh) reason = `couldn't get a current price on ${platformName(t.market.platform)}`;
       else if ((fresh.status ?? "open") !== "open") reason = "that market is closed";
       else if (!(t.side === "yes" ? fresh.yesAsk != null : fresh.yesBid != null)) reason = `nobody is selling ${t.side.toUpperCase()} there right now`;
+      // Kalshi leaders' trades carry only a ticker: show the market's real title.
+      if (fresh && bet.kalshiTicker) base.title = fresh.title;
       let checks: Check[] = [];
       if (fresh && !reason) {
         checks = copyChecks(bet, global, { ...t, market: fresh }, cfg, now);
@@ -309,6 +407,8 @@ export async function enterCopies(ctx: CopyCtx, poll: CopyPoll): Promise<{ opene
     const fresh = target.market;
     const checks = pick.checks;
     const tgt = { platform: fresh.platform, id: fresh.id, title: fresh.title, side: target.side };
+    // A big bet on a tradable market is a possible parlay leg, whether or not the copy fills.
+    addLeg(state, bet, fresh, target.side, cfg);
     const skip = ctx.skipMarket(ctx.rule, fresh, target.side);
     if (skip) {
       record(state, { ...base, result: "skipped", reason: skip, target: tgt });
@@ -353,15 +453,45 @@ function leaders(poll: CopyPoll): Set<string> {
   return new Set(poll.leaders.map((l) => l.wallet.toLowerCase()));
 }
 
+/** Parlays after this poll's copies: copy leaders' own parlays, then build from the leg pool. */
+export async function runParlays(ctx: CopyCtx, poll: CopyPoll): Promise<number> {
+  if (!ctx.cfg.parlays.enabled) return 0;
+  const pctx: ParlayCtx = {
+    cfg: ctx.cfg,
+    ledger: ctx.ledger,
+    now: ctx.now,
+    push: ctx.push,
+    freshMarket: ctx.freshMarket,
+    feeUsd: (m, contracts, price) => ctx.feePerContract(m, price) * contracts,
+  };
+  const kalshiLeaders = poll.leaders.filter((l) => l.source === "kalshi");
+  const copied = await copyLeaderParlays(pctx, poll.state, poll.bets, kalshiLeaders);
+  const built = await buildParlays(pctx, poll.state);
+  return copied + built;
+}
+
 export function copyView(cfg: CopyTradingConfig, poll: CopyPoll): CopyView {
+  const P = cfg.parlays;
+  const k = poll.state.kalshiLeaders;
   return {
     enabled: cfg.enabled,
     action: cfg.action,
-    leaders: poll.state.leaders?.list ?? [],
+    leaders: [...(poll.state.leaders?.list ?? []), ...(cfg.kalshi_leaders.enabled ? k?.list ?? [] : [])],
     considered: poll.state.leaders?.considered ?? 0,
     leadersAt: poll.state.leaders?.at,
+    kalshi: { enabled: cfg.kalshi_leaders.enabled, considered: k?.considered ?? 0, hidden: k?.hidden ?? 0, at: k?.at, count: k?.list.length ?? 0 },
     checkedAt: poll.state.lastPollAt,
     recent: poll.state.recent,
+    parlays: {
+      enabled: P.enabled,
+      action: P.action,
+      legsPerParlay: P.legs,
+      minLegPrice: P.min_leg_price,
+      maxLegPrice: P.max_leg_price,
+      minBackingUsd: P.min_leg_backing_usd,
+      pool: (poll.state.legs ?? []).filter((l) => !l.usedAt).sort((a, b) => b.backingUsd - a.backingUsd).slice(0, 30),
+      recent: poll.state.parlayRecent ?? [],
+    },
   };
 }
 

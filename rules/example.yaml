@@ -88,11 +88,43 @@ copy_trading:
     refresh_hours: 1         # re-check the leaderboard every hour for who's hot
     include: []              # wallets to always follow (0x…)
     exclude: []              # wallets to never follow
+  # Kalshi's public leaderboard too: only traders who show their trades can be copied (~1 in 6).
+  # Their bets are copied on the very same Kalshi market.
+  kalshi_leaders:
+    enabled: true
+    time_period: week          # who's hot this week: day | week | month | year | all
+    candidates: 100            # top accounts to check
+    min_markets: 100
+    min_profit_usd: 10000      # $10k+ this week…
+    min_lifetime_profit_usd: 10000   # …and $10k+ over their whole account (has won before)
+    max_leaders: 10
+    include: []                # nicknames to always follow
+    exclude: []                # nicknames to never follow
+  # Parlays (paper): combine 70%+ legs the leaders put big money on, and copy Kalshi leaders' own
+  # parlays when they bet big on them and have won parlays before. One exchange and one leg per game per
+  # parlay. Priced as the legs multiplied + a 5% market-maker cut; one lost leg loses it all.
+  parlays:
+    enabled: true
+    action: paper              # alert = just suggest them
+    legs: 4                    # legs per parlay the bot builds
+    min_leg_price: 0.70        # every leg 70%+ likely…
+    max_leg_price: 0.95        # …and at most 95¢
+    min_leg_backing_usd: 1000  # leaders put $1,000+ on that outcome (one bet or several leaders)
+    max_leg_age_hours: 12
+    venues: [kalshi, polymarket_us]
+    copy_leader_parlays: true  # copy a Kalshi leader's own parlay when…
+    min_leader_parlay_usd: 250 # …they put $250+ on it…
+    min_leader_parlay_wins: 1  # …and won at least one of their recent parlays
+    max_chase_pct: 0.15        # pay at most 15% more than they did
+    combo_margin: 0.05
+    stake_usd: 10
+    max_open: 5
   copy:
     venues: [polymarket_us, kalshi]   # where to look for the same market, in order
     min_leader_trade_usd: 500         # skip small fills (bots, tests)
     max_trade_age_minutes: 30
     max_chase: 0.03                   # pay at most 3¢ more than the leader
+    max_buy_price: 0.95               # and never more than 95¢
     max_price_gap: 0.10
     follow_sells: true                # sell when the leader sells
     poll_seconds: 60                  # with paper:fast, checks leaders every minute

@@ -2,29 +2,44 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { CopyTradingConfig } from "../rules/schema.js";
 import type { PolymarketDataClient, TraderTrade } from "../platforms/polymarket-data.js";
+import type { KalshiPeriod, KalshiSocialClient, KalshiSocialTrade } from "../platforms/kalshi-social.js";
 import { platformName, type NormalizedMarket, type PlatformId, type SignalSide } from "../types.js";
 import { findMatches } from "./match.js";
 import { buyPrice } from "./pricing.js";
 import { cents, usd, type Check } from "./trace.js";
 
 /**
- * Copy trading, the pure-ish parts: pick leaders from global Polymarket's public data, read their
- * new fills, and find the same bet on an exchange you can trade (Polymarket US / Kalshi).
- * Nothing here places orders; the paper session decides and records hypothetical fills.
+ * Copy trading, the pure-ish parts: pick leaders from global Polymarket's and Kalshi's public
+ * leaderboards, read their new fills, and find the same bet on an exchange you can trade
+ * (Polymarket US / Kalshi). Nothing here places orders; the paper session decides and records
+ * hypothetical fills.
  */
 
 export interface Leader {
+  /** 0x… proxy wallet on global Polymarket, `kalshi:<nickname>` on Kalshi. */
   wallet: string;
   name: string;
+  /** Where they trade (missing = global Polymarket, from before Kalshi leaders existed). */
+  source?: "polymarket" | "kalshi";
   /** Leaderboard PnL over the configured window, USD. */
   windowPnlUsd: number;
   /** Distinct markets traded, lifetime. */
   markets: number;
-  /** Closed positions with a result in the sample, and how many made money. */
+  /** Closed positions with a result in the sample, and how many made money (Polymarket only). */
   decided: number;
   wins: number;
   winRate: number;
+  /** Kalshi: profit over their whole account, USD. */
+  lifetimePnlUsd?: number;
+  /** Kalshi: how their recent parlays went (from the trades they show). */
+  parlays?: { won: number; lost: number; open: number };
 }
+
+export const KALSHI_PREFIX = "kalshi:";
+export const isKalshiWallet = (w: string) => w.toLowerCase().startsWith(KALSHI_PREFIX);
+const kalshiNick = (w: string) => w.slice(KALSHI_PREFIX.length);
+/** Kalshi parlays ("combos") are multivariate markets with these tickers. */
+export const isKalshiCombo = (ticker: string) => /^KXMVE/i.test(ticker);
 
 export interface CopyDecision {
   at: string;
@@ -56,6 +71,56 @@ export interface CopyState {
   exits: Record<string, number>;
   lastPollAt?: string;
   recent: CopyDecision[];
+  /** Kalshi leaders, refreshed on the same schedule as the Polymarket ones. */
+  kalshiLeaders?: { at: string; list: Leader[]; considered: number; hidden: number };
+  kalshiRetryAt?: string;
+  /** Kalshi traders who keep their trades private (lowercase nickname → epoch seconds checked). */
+  kalshiPrivate?: Record<string, number>;
+  /** Settled Kalshi parlays: ticker → result (results never change, so they're read once). */
+  comboResults?: Record<string, { r: "won" | "lost"; at: number }>;
+  /** Parlays: legs the leaders put big money on, waiting to be combined. */
+  legs?: LegCandidate[];
+  /** Leader parlays already handled (`${wallet}|${ticker}`), so each is copied or reported once. */
+  parlaySeen?: Record<string, number>;
+  /** Leader parlays that couldn't be read yet (Kalshi busy): tried again while fresh. */
+  parlayPending?: LeaderBet[];
+  parlayRecent?: ParlayDecision[];
+}
+
+/** One outcome the leaders bought, on an exchange you can trade, as a possible parlay leg. */
+export interface LegCandidate {
+  /** `${platform}:${marketId}:${side}` */
+  key: string;
+  platform: PlatformId;
+  marketId: string;
+  side: SignalSide;
+  title: string;
+  url?: string;
+  /** Legs of one game never go in the same parlay. */
+  game: string;
+  /** Leaders' USD on this outcome, summed over their bets. */
+  backingUsd: number;
+  leaders: string[];
+  /** Size-weighted price the leaders paid for this side. */
+  leaderPrice: number;
+  firstAt: string;
+  lastAt: string;
+  /** Put in a parlay (or suggested) already: never reused. */
+  usedAt?: string;
+}
+
+export interface ParlayDecision {
+  at: string;
+  kind: "built" | "leader";
+  result: "opened" | "alerted" | "skipped";
+  title: string;
+  legs: number;
+  leader?: string;
+  /** Combined price (per $1 payout). */
+  price?: number;
+  /** Leader's stake on their parlay. */
+  usd?: number;
+  reason?: string;
 }
 
 /** Same key for a leader's bet and our copy of it. */
@@ -146,6 +211,106 @@ export async function pickLeaders(client: PolymarketDataClient, cfg: CopyTrading
   return { list, considered: candidates.length, failed: scored.filter((l) => !l).length };
 }
 
+/** A trader who keeps their trades private is asked again after this long. */
+const PRIVATE_TTL_SEC = 86_400;
+
+const KALSHI_PERIOD: Record<CopyTradingConfig["kalshi_leaders"]["time_period"], KalshiPeriod> = {
+  day: "daily",
+  week: "weekly",
+  month: "monthly",
+  year: "yearly",
+  all: "all_time",
+};
+
+/** How a Kalshi parlay (combo market) ended: won / lost / still open, or unknown. */
+export type ComboResult = (ticker: string) => Promise<"won" | "lost" | "open" | null>;
+
+/**
+ * Who to follow on Kalshi: profitable in the window AND over their whole account, enough markets,
+ * and trades they show publicly (private traders can't be copied). With `comboResult`, also how
+ * their recent parlays went, so "has won before" can be checked before copying one.
+ */
+export async function pickKalshiLeaders(
+  client: Pick<KalshiSocialClient, "leaderboard" | "metrics" | "trades">,
+  cfg: CopyTradingConfig,
+  comboResult?: ComboResult,
+  /** Traders known to keep their trades private (not asked again); updated in place. */
+  privateSince?: Record<string, number>,
+  now = new Date(),
+): Promise<{ list: Leader[]; considered: number; hidden: number; failed: number }> {
+  const K = cfg.kalshi_leaders;
+  const lower = (s: string) => s.toLowerCase();
+  const exclude = new Set(K.exclude.map(lower));
+  const always = new Set(K.include.map(lower));
+  const nowSec = Math.floor(now.getTime() / 1000);
+  if (privateSince) for (const [n, at] of Object.entries(privateSince)) if (at < nowSec - PRIVATE_TTL_SEC) delete privateSince[n];
+  const rows = await client.leaderboard(KALSHI_PERIOD[K.time_period], K.candidates);
+  const byNick = new Map(rows.filter((r) => !r.is_anonymous).map((r) => [lower(r.nickname), r]));
+  for (const n of K.include) if (!byNick.has(lower(n))) byNick.set(lower(n), { nickname: n, value: 0, rank: 0 });
+  const candidates = [...byNick.values()].filter((r) => !exclude.has(lower(r.nickname)));
+  let hidden = 0;
+  const shown = new Map<string, KalshiSocialTrade[]>();
+  const scored = await pool(candidates, 3, async (r): Promise<Leader | "hidden" | null> => {
+    try {
+      if (privateSince?.[lower(r.nickname)] != null && !always.has(lower(r.nickname))) {
+        hidden += 1;
+        return "hidden";
+      }
+      const t = await client.trades(r.nickname, 100);
+      if (!t.visible) {
+        hidden += 1;
+        if (privateSince) privateSince[lower(r.nickname)] = nowSec;
+        return "hidden";
+      }
+      const m = await client.metrics(r.nickname);
+      shown.set(r.nickname, t.trades);
+      return {
+        source: "kalshi",
+        wallet: KALSHI_PREFIX + r.nickname,
+        name: r.nickname,
+        windowPnlUsd: r.value,
+        markets: m?.markets ?? 0,
+        decided: 0,
+        wins: 0,
+        winRate: 0,
+        lifetimePnlUsd: m?.pnlUsd ?? 0,
+      };
+    } catch {
+      return null;
+    }
+  });
+  const list = scored
+    .filter((l): l is Leader => !!l && l !== "hidden")
+    .filter(
+      (l) =>
+        always.has(lower(l.name)) ||
+        (l.markets >= K.min_markets && l.windowPnlUsd >= K.min_profit_usd && (l.lifetimePnlUsd ?? 0) >= K.min_lifetime_profit_usd),
+    )
+    .sort((a, b) => b.windowPnlUsd - a.windowPnlUsd)
+    .slice(0, K.max_leaders);
+  if (comboResult) {
+    // Their most recent parlays (combos they bought YES on), newest first.
+    await pool(list, 3, async (l) => {
+      const combos = [
+        ...new Set(
+          (shown.get(l.name) ?? [])
+            .filter((t) => isKalshiCombo(t.ticker) && t.taker_nickname === l.name && t.taker_action === "buy" && t.taker_side === "yes")
+            .map((t) => t.ticker),
+        ),
+      ].slice(0, 12);
+      // One at a time: these are Kalshi market reads, which share the paper cycle's rate limit.
+      const results: Array<Awaited<ReturnType<ComboResult>>> = [];
+      for (const c of combos) results.push(await comboResult(c).catch(() => null));
+      l.parlays = {
+        won: results.filter((r) => r === "won").length,
+        lost: results.filter((r) => r === "lost").length,
+        open: results.filter((r) => r === "open").length,
+      };
+    });
+  }
+  return { list, considered: candidates.length, hidden, failed: scored.filter((l) => l === null).length };
+}
+
 /** One leader bet: their fills on one market + outcome in this poll, combined. */
 export interface LeaderBet {
   leader: Leader;
@@ -161,6 +326,10 @@ export interface LeaderBet {
   usd: number;
   /** Epoch seconds of the latest fill. */
   at: number;
+  /** Kalshi leaders: the Kalshi market they traded (copied as is). */
+  kalshiTicker?: string;
+  /** That market is a Kalshi parlay (combo). */
+  combo?: boolean;
 }
 
 function combine(leader: Leader, trades: TraderTrade[]): LeaderBet[] {
@@ -229,13 +398,82 @@ export async function pollLeaders(
       // try again next poll
     }
   });
+  recordExits(bets, state, cfg, nowSec);
+  return bets.sort((a, b) => b.at - a.at);
+}
+
+/**
+ * A leader closing a bet: a sell of it, or (Kalshi) a buy of the other side of the same market,
+ * which nets their position out. Remembered until old so a copy still sells on a later check.
+ */
+function recordExits(bets: LeaderBet[], state: CopyState, cfg: CopyTradingConfig, nowSec: number): void {
   for (const b of bets) {
-    if (b.side !== "SELL" || b.usd < cfg.copy.min_leader_trade_usd / 2) continue;
-    const k = betKey(b.leader.wallet, b.conditionId ?? b.slug, b.outcome);
+    if (b.usd < cfg.copy.min_leader_trade_usd / 2) continue;
+    const market = b.conditionId ?? b.slug;
+    const closes = b.side === "SELL" ? b.outcome : b.kalshiTicker && !b.combo ? (/^yes$/i.test(b.outcome) ? "No" : "Yes") : undefined;
+    if (!closes) continue;
+    const k = betKey(b.leader.wallet, market, closes);
     state.exits[k] = Math.max(state.exits[k] ?? 0, b.at);
   }
   for (const [k, at] of Object.entries(state.exits)) if (at < nowSec - EXIT_TTL_SEC) delete state.exits[k];
   if (state.seen.length > MAX_SEEN) state.seen.splice(0, state.seen.length - MAX_SEEN);
+}
+
+/**
+ * A Kalshi leader's own fills as trades: only where they took liquidity (a resting order that got
+ * hit is often market making, not a view). Price is the side they bought or sold.
+ */
+export function kalshiFills(nickname: string, trades: KalshiSocialTrade[]): TraderTrade[] {
+  return trades
+    .filter((t) => t.taker_nickname === nickname)
+    .map((t) => {
+      const yes = Number(t.price_dollars);
+      return {
+        proxy_wallet: KALSHI_PREFIX + nickname,
+        side: t.taker_action === "buy" ? ("BUY" as const) : ("SELL" as const),
+        outcome: t.taker_side === "yes" ? "Yes" : "No",
+        outcome_index: t.taker_side === "yes" ? 0 : 1,
+        price: t.taker_side === "yes" ? yes : 1 - yes,
+        size: Number(t.count_fp ?? t.count ?? 0),
+        timestamp: Math.floor(Date.parse(t.create_date) / 1000),
+        slug: t.ticker,
+        title: t.ticker,
+        transaction_hash: `kalshi-${t.trade_id}`,
+      };
+    })
+    .filter((t) => Number.isFinite(t.timestamp) && t.size > 0 && t.price > 0 && t.price < 1);
+}
+
+/** New fills of Kalshi leaders since the last poll (same bookkeeping as `pollLeaders`). */
+export async function pollKalshiLeaders(
+  client: Pick<KalshiSocialClient, "trades">,
+  wallets: Array<{ leader: Leader; since?: number }>,
+  state: CopyState,
+  cfg: CopyTradingConfig,
+  now: Date,
+): Promise<LeaderBet[]> {
+  const nowSec = Math.floor(now.getTime() / 1000);
+  const floor = nowSec - cfg.copy.max_trade_age_minutes * 60;
+  const seen = new Set(state.seen);
+  const bets: LeaderBet[] = [];
+  await pool(wallets, 3, async ({ leader: l, since: start }) => {
+    const last = state.lastSeen[l.wallet];
+    const since = last != null ? last - OVERLAP_SEC : Math.min(start ?? floor, floor);
+    try {
+      const { trades: raw } = await client.trades(kalshiNick(l.wallet), 100);
+      const trades = kalshiFills(kalshiNick(l.wallet), raw);
+      const fresh = trades.filter((t) => t.timestamp >= since && !seen.has(fillId(t)));
+      for (const t of fresh) {
+        seen.add(fillId(t));
+        state.seen.push(fillId(t));
+      }
+      if (trades.length) state.lastSeen[l.wallet] = Math.max(last ?? 0, ...trades.map((t) => t.timestamp));
+      for (const b of combine(l, fresh)) bets.push({ ...b, kalshiTicker: b.slug, combo: isKalshiCombo(b.slug ?? "") });
+    } catch {
+      // try again next poll
+    }
+  });
+  recordExits(bets, state, cfg, nowSec);
   return bets.sort((a, b) => b.at - a.at);
 }
 
@@ -388,6 +626,15 @@ export function matchTitle(
   return { market: best.kalshi, side: /^yes$/i.test(outcome) ? "yes" : "no", how: `same question (title match ${best.score.toFixed(2)})` };
 }
 
+/** One line on why this leader is followed. */
+export function leaderLine(L: Leader, cfg: CopyTradingConfig): string {
+  if (L.source === "kalshi") {
+    const p = L.parlays && L.parlays.won + L.parlays.lost > 0 ? `, parlays ${L.parlays.won} won / ${L.parlays.lost} lost` : "";
+    return `${L.name} (Kalshi): ${usd(L.windowPnlUsd)} profit (${cfg.kalshi_leaders.time_period}), ${usd(L.lifetimePnlUsd ?? 0)} all-time, ${L.markets.toLocaleString("en-US")} markets${p}`;
+  }
+  return `${L.name}: ${Math.round(L.winRate * 100)}% wins over ${L.decided} results, ${L.markets.toLocaleString("en-US")} markets, ${usd(L.windowPnlUsd)} profit (${cfg.leaders.time_period})`;
+}
+
 /** Price of the side we'd hold, from the YES price. */
 const sidePrice = (yes: number, side: SignalSide) => (side === "yes" ? yes : 1 - yes);
 
@@ -401,7 +648,7 @@ export function copyChecks(bet: LeaderBet, global: NormalizedMarket | undefined,
       stage: "filters",
       name: "Leader",
       ok: true,
-      detail: `${L.name}: ${Math.round(L.winRate * 100)}% wins over ${L.decided} results, ${L.markets.toLocaleString("en-US")} markets, ${usd(L.windowPnlUsd)} profit (${cfg.leaders.time_period})`,
+      detail: leaderLine(L, cfg),
     },
     {
       stage: "filters",

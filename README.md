@@ -83,24 +83,35 @@ after the bid/ask spread, slippage and fees.
 
 Configured in the `copy_trading:` block of `rules/example.yaml`. Paper by default.
 
-- **Who to follow.** Global Polymarket is the only exchange that publishes other traders' accounts, so
-  leaders come from its public leaderboard (`data-api.polymarket.com`): the top 50 by profit this
-  month, kept only if they've traded at least 50 markets and won at least 55% of their last ~200
-  closed positions (30+ results). The best 10 by profit are followed; the leaderboard is re-checked every
-  hour (`refresh_hours`).
-  `include` / `exclude` take wallets to always / never follow.
+- **Who to follow.** Two public leaderboards (both re-checked every hour, `refresh_hours`):
+  - **Global Polymarket** (`data-api.polymarket.com`): the top 50 by profit this month, kept only if
+    they've traded at least 50 markets and won at least 55% of their last ~200 closed positions (30+
+    results). The best 10 by profit are followed. `include` / `exclude` take wallets.
+  - **Kalshi** (`kalshi_leaders:`, its public social API): the top 100 by profit this week, kept only if
+    they show their trades publicly (about 1 in 6 do), traded 100+ markets, made $10k+ this week **and**
+    $10k+ over their whole account (so one lucky week isn't enough). Kalshi doesn't publish a win rate, so
+    the dashboard shows their all-time profit and how their recent parlays went instead. The best 10 are
+    followed. `include` / `exclude` take nicknames.
+  - Polymarket US publishes no trader data (no leaderboard, no trades, and its in-app chat has no public
+    feed), so nobody is followed there; their bets are still copied *onto* it.
 - **What gets copied.** Their new buys of $500+ from the last 30 minutes, on the same market where you
   can trade it:
-  - sports: the exact game on Polymarket US (same teams and start time; the side is chosen by team name)
-    and on Kalshi (its game event for the same teams and date; team names checked against Polymarket US),
-  - everything else: the strict Yes/No title match used for arbitrage, on Polymarket US, then Kalshi.
-  Spreads, over/unders and props aren't copied yet. Bets with no clear twin are skipped, not guessed.
-- **Price.** A copy never pays more than 3¢ above the leader's price, and the two sites must agree on the
-  price within 10¢ (otherwise it's probably not the same bet).
+  - Kalshi leaders: the very same Kalshi market (only trades they took; a resting order that got filled is
+    often market making). Their parlays go to the parlay copier below.
+  - global Polymarket leaders, sports: the exact game on Polymarket US (same teams and start time; the side
+    is chosen by team name) and on Kalshi (its game event for the same teams and date; team names checked
+    against Polymarket US),
+  - global Polymarket leaders, everything else: the strict Yes/No title match used for arbitrage, on
+    Polymarket US, then Kalshi. Spreads, over/unders and props aren't copied yet. Bets with no clear twin
+    are skipped, not guessed.
+- **Price.** A copy never pays more than 3¢ above the leader's price or more than 95¢ (`max_buy_price`),
+  and for global Polymarket bets the two sites must agree on the price within 10¢ (otherwise it's
+  probably not the same bet).
 - **Which venue.** When the bet is on both Kalshi and Polymarket US, it goes to Kalshi if Kalshi costs no
   more than 1¢ extra per contract including fees (`prefer: kalshi`, `prefer_within: 0.01`), otherwise to
   the cheaper one. The trade's **Why?** shows both prices.
-- **Exits.** It sells when the leader sells (`follow_sells`; a sale worth at least half of
+- **Exits.** It sells when the leader sells (`follow_sells`; on Kalshi, buying the other side of the same
+  market counts too, since that nets their position out; a sale worth at least half of
   `min_leader_trade_usd` counts, so a partial trim closes the whole copy), when the market resolves, or at
   the stop loss. A leader's sell is remembered, so a copy that can't sell right away (no bid) sells on a
   later check, and anyone you still hold a copy from keeps being watched after they leave the leader list
@@ -111,6 +122,29 @@ Configured in the `copy_trading:` block of `rules/example.yaml`. Paper by defaul
   buy often moves the price first. High win rates often come from buying heavy favorites (small wins,
   rare big losses), and a monthly leaderboard is partly luck. The dashboard lists each copied and skipped
   bet with the reason; every copied trade's **Why?** shows the leader, their bet and the price checks.
+
+## Parlays (leaders' 70%+ picks, combined)
+
+Configured in `copy_trading.parlays:`. Paper only (`action: alert` just suggests them). Two kinds:
+
+- **Built from leaders' big bets.** Every bet a leader makes that copy trading can place on Kalshi or
+  Polymarket US becomes a possible leg. A leg needs **$1,000+ of leaders' money** on that exact outcome
+  (one big bet, or several leaders together, `min_leg_backing_usd`) and must cost **70–95¢** right now.
+  The bot combines the best-backed **4 legs** (`legs`) into one parlay: all on one exchange (a real parlay
+  can't mix them), one leg per game, never a game that's already in an open parlay, and each leg used once.
+  Legs stay candidates for 12 hours after the leaders bought them.
+- **Copies of a Kalshi leader's own parlay.** Kalshi parlays ("combos") show up in a leader's public trades
+  with every leg. One is copied when the leader put **$250+** on it, has **won at least one of their
+  recent parlays**, every leg still costs **70%+**, and it doesn't cost more than 15% above what they paid.
+  The dashboard says why each one was copied or skipped.
+- **Price and payout.** Real parlays are priced by market makers on request, with a cut. Paper parlays are
+  priced as the legs' asks multiplied plus 5% (`combo_margin`), so four 80¢ legs cost about 43¢ and pay
+  about 2.3× ($10 → ~$23). Stake is $10 each (`stake_usd`), up to 5 open (`max_open`).
+- **Settling.** Leg by leg on each full check: one lost leg loses the whole parlay right away; when every
+  leg has won it pays stake ÷ price; a cancelled (void) leg drops out and the payout shrinks to match.
+  "Worth now" on the dashboard is the legs at their current prices (a parlay usually can't be sold early).
+- **Honest limits.** Four 75% legs win together only about 32% of the time, and each leg's price already
+  includes the bid/ask gap, so the cut compounds. Big money from a top trader is a signal, not a guarantee.
 
 ## Fast mode (live prices)
 
@@ -177,7 +211,7 @@ Every league strategy aims to win at least **2×** what it risks (profit target 
 **48 hours** per trade: with ~5% in fees and the bid/ask gap on each round trip, small targets and short time
 limits mostly pay costs. A 40% win rate is fine when the wins are twice the losses.
 
-Two more guard rails for league strategies (your own rules and copy trading aren't limited):
+Two more guard rails for league strategies (copy trading has its own 95¢ cap; your own rules aren't limited):
 - **No buying above 95¢.** A 98¢ contract risks 98¢ to make 2¢, so one loss wipes out dozens of wins.
 - **No stacking: one league strategy per game.** League strategies often think alike, so without this
   three or four of them would pile into the same game at once, which is really one big bet. "Same game"
@@ -349,6 +383,8 @@ Optional:
 - `POLL_INTERVAL_SEC` — watch interval (default 60)
 - `WEBHOOK_URL` / `EVENT_LOG_FILE` — extra event sinks
 - `KALSHI_API_BASE` / `POLYMARKET_US_BASE` / `POLYMARKET_GAMMA_BASE` — override public bases
+- `KALSHI_SOCIAL_BASE` — Kalshi's public social API (leaderboard, trader profiles; default
+  `https://api.elections.kalshi.com/v1/social`)
 - `POLYMARKET_US_BOOKS` — Polymarket US order books read per scan for liquidity (default 100)
 - `KALSHI_API_KEY_ID`, `KALSHI_PRIVATE_KEY_PATH`, `POLYMARKET_KEY_ID`, `POLYMARKET_SECRET_KEY` — only for
   `npm run paper:fast` (read-only price streams); keep them in `.env`, never in git

@@ -186,6 +186,9 @@
   .decisions li { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--grid); cursor: pointer; }
   .decisions li:hover { background: var(--hover); }
   .decisions li:last-child { border-bottom: none; }
+  .decisions .legs li { display: block; padding: 2px 0; border-bottom: none; }
+  .decisions .legs li:hover { background: none; }
+  .decisions .legs .side { white-space: nowrap; }
   dialog.story { border: 1px solid var(--border); border-radius: 14px; padding: 0; max-width: 640px; width: calc(100% - 32px); background: var(--surface); color: var(--ink); box-shadow: 0 12px 40px rgba(0,0,0,.25); }
   dialog.story::backdrop { background: rgba(0,0,0,.35); }
   .story-in { padding: 18px 20px 20px; max-height: 80vh; overflow-y: auto; }
@@ -371,6 +374,27 @@
       <div>
         <div class="sub-h" style="margin-top:0">Their latest bets</div>
         <ul class="decisions" id="copyBets"></ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="card section" id="parlaySection" hidden>
+    <div class="arb-head">
+      <h2>Parlays</h2>
+      <span class="arb-note" id="parlayNote"></span>
+    </div>
+    <div class="grid2" style="margin-bottom:0">
+      <div>
+        <div class="sub-h" style="margin-top:0">Open</div>
+        <ul class="decisions" id="parlayOpen"></ul>
+        <div class="sub-h">Settled</div>
+        <ul class="decisions" id="parlayClosed"></ul>
+      </div>
+      <div>
+        <div class="sub-h" style="margin-top:0">Legs waiting (leaders' big bets)</div>
+        <ul class="decisions" id="parlayPool"></ul>
+        <div class="sub-h">Parlay decisions</div>
+        <ul class="decisions" id="parlayRecent"></ul>
       </div>
     </div>
   </section>
@@ -872,7 +896,8 @@
       for (const e of state.events) {
         const rule = (state.ruleNames || {})[e.ruleId] || rulesById[e.ruleId]?.name || e.ruleId || "";
         const title = e.market?.title || "";
-        if (e.type === "entry_signal" && e.data?.unusual) items.push({ at: e.at, kind: "Unusual move", msg: `${title} — ${e.data.reason}` });
+        if (e.ruleId === "copy-parlays" && (e.type === "paper_fill" || e.type === "paper_exit" || e.type === "entry_signal")) items.push({ at: e.at, kind: e.type === "paper_exit" ? "Parlay settled" : e.type === "entry_signal" ? "Parlay idea" : "Parlay", msg: e.message.replace(/^(Paper |PARLAY IDEA )/, ""), pnl: e.type === "paper_exit" ? e.data?.pnlUsd : undefined });
+        else if (e.type === "entry_signal" && e.data?.unusual) items.push({ at: e.at, kind: "Unusual move", msg: `${title} — ${e.data.reason}` });
         else if (e.type === "entry_signal" && e.data?.action === "alert") items.push({ at: e.at, kind: "Alert", msg: `${rule}: ${title} (YES ${cents(e.market?.yesPrice)})` });
         else if (e.type === "paper_fill") items.push({ at: e.at, kind: "Bought", msg: `${title} — ${usd(e.sizeUsd)} of ${String(e.side).toUpperCase()}` });
         else if (e.type === "paper_exit") items.push({ at: e.at, kind: "Sold", msg: `${title} — ${REASONS[e.data?.reason] || e.data?.reason}`, pnl: e.data?.pnlUsd });
@@ -884,7 +909,9 @@
       }
     } else {
       for (const f of state.journal) {
-        if (f.kind === "arb_open") items.push({ at: f.at, kind: "Arb opened", msg: `${f.title} — locks in`, pnl: f.pnlUsd });
+        if (f.kind === "parlay_open") items.push({ at: f.at, kind: "Parlay", msg: `${f.title} — ${usd(f.sizeUsd)} at ${cents(f.price)}` });
+        else if (f.kind === "parlay_close") items.push({ at: f.at, kind: "Parlay settled", msg: `${f.title} — ${f.reason || ""}`, pnl: f.pnlUsd });
+        else if (f.kind === "arb_open") items.push({ at: f.at, kind: "Arb opened", msg: `${f.title} — locks in`, pnl: f.pnlUsd });
         else if (f.kind === "arb_close") items.push({ at: f.at, kind: "Arb closed", msg: `${f.title} — ${REASONS[f.reason] || f.reason || ""}`, pnl: f.pnlUsd });
         else items.push(f.kind === "open"
           ? { at: f.at, kind: "Bought", msg: `${f.title} — ${usd(f.sizeUsd)} of ${String(f.side).toUpperCase()}` }
@@ -992,17 +1019,26 @@
     const sec = $("copySection");
     sec.hidden = !c;
     if (!c) return;
-    $("copyNote").textContent = `${c.action === "paper" ? "Paper-copies" : "Alerts on"} new bets from top global-Polymarket traders onto the same market on Polymarket US / Kalshi. ` +
-      `Following ${c.leaders.length} of the top ${c.considered}${c.leadersAt ? ` (picked ${ago(c.leadersAt)})` : ""}. A leaderboard is partly luck.`;
+    const poly = c.leaders.filter((l) => l.source !== "kalshi");
+    const kal = c.leaders.filter((l) => l.source === "kalshi");
+    const k = c.kalshi;
+    $("copyNote").textContent = `${c.action === "paper" ? "Paper-copies" : "Alerts on"} new bets from top traders onto the same market on Polymarket US / Kalshi. ` +
+      `Following ${poly.length} of the top ${c.considered} on global Polymarket${c.leadersAt ? ` (picked ${ago(c.leadersAt)})` : ""}` +
+      (k && k.enabled ? ` and ${kal.length} of the top ${k.considered} on Kalshi (${k.hidden} keep their trades private)` : "") +
+      `. A leaderboard is partly luck.`;
     const lb = $("leadersBody");
     lb.replaceChildren();
     if (!c.leaders.length) lb.append(emptyRow(4, "No trader passes the filters right now."));
     for (const l of c.leaders) {
+      const isK = l.source === "kalshi";
+      const pr = l.parlays && (l.parlays.won + l.parlays.lost) > 0 ? `parlays ${l.parlays.won}W / ${l.parlays.lost}L` : "";
       lb.append(el("tr", null,
-        el("td", null, el("div", { text: l.name }), el("div", { class: "meta", text: `${l.wallet.slice(0, 6)}…${l.wallet.slice(-4)}` })),
-        el("td", { class: "num" }, `${Math.round(l.winRate * 100)}%`, el("div", { class: "meta", text: `of ${l.decided}` })),
+        el("td", null, el("div", { text: l.name }), el("div", { class: "meta", text: isK ? "Kalshi" : `Polymarket · ${l.wallet.slice(0, 6)}…${l.wallet.slice(-4)}` })),
+        isK
+          ? el("td", { class: "num" }, "n/a", el("div", { class: "meta", text: pr || "Kalshi doesn't publish it" }))
+          : el("td", { class: "num" }, `${Math.round(l.winRate * 100)}%`, el("div", { class: "meta", text: `of ${l.decided}` })),
         el("td", { class: "num", text: l.markets.toLocaleString() }),
-        el("td", { class: `num ${cls(l.windowPnlUsd)}`, text: compactUsd(l.windowPnlUsd) })));
+        el("td", { class: `num ${cls(l.windowPnlUsd)}` }, compactUsd(l.windowPnlUsd), isK && l.lifetimePnlUsd != null ? el("div", { class: "meta", text: `${compactUsd(l.lifetimePnlUsd)} all-time` }) : "")));
     }
     const ul = $("copyBets");
     ul.replaceChildren();
@@ -1019,6 +1055,65 @@
           el("div", { text: `${d.leader} bought ${d.outcome} · ${d.title}` }),
           el("div", { class: "meta", text: `${cents(d.price)} · ${compactUsd(d.usd).replace("+", "")} · ${ago(d.at)}${detail ? ` — ${detail}` : ""}` }))));
     }
+  }
+
+  function renderParlays() {
+    const v = state.loop && state.loop.copy && state.loop.copy.parlays;
+    const led = state.parlays || { open: [], closed: [] };
+    const sec = $("parlaySection");
+    sec.hidden = !(v && v.enabled) && !led.open.length && !led.closed.length;
+    if (sec.hidden) return;
+    const won = led.closed.filter((p) => p.status === "won").length;
+    const lost = led.closed.filter((p) => p.status === "lost").length;
+    const pnl = led.closed.reduce((a, p) => a + (p.realizedPnlUsd || 0), 0);
+    $("parlayNote").textContent = (v
+      ? `${v.action === "paper" ? "Paper-bets" : "Suggests"} ${v.legsPerParlay}-leg parlays: legs at ${cents(v.minLegPrice)}–${cents(v.maxLegPrice)} that leaders put ${compactUsd(v.minBackingUsd).replace("+", "")}+ on, one per game, on one exchange — plus copies of Kalshi leaders' own parlays when they bet big and have won parlays before. ` +
+        `Priced as the legs multiplied plus a market-maker cut; one lost leg loses it all. `
+      : "") + `So far ${won} won, ${lost} lost (${pnl >= 0 ? "+" : MINUS}$${Math.abs(pnl).toFixed(2)}).`;
+    const legsOf = (p) => {
+      const ul = el("ul", { class: "legs" });
+      for (const l of p.legs) {
+        const href = safeUrl(l.url);
+        const name = href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: l.title }) : el("span", { text: l.title });
+        const st = l.status === "open" ? (l.lastPrice != null ? `now ${cents(l.lastPrice)}` : "open") : l.status;
+        ul.append(el("li", null, el("span", { class: "side", text: String(l.side).toUpperCase() }), `${cents(l.entryPrice)} · `, name, ` · ${st}`));
+      }
+      return ul;
+    };
+    const item = (p) => {
+      const [k, label] = p.status === "won" ? ["ok", "Won"] : p.status === "lost" ? ["no", "Lost"] : p.status === "void" ? ["info", "Void"] : ["info", "Open"];
+      const from = p.leader ? `copied from ${p.leader.name} (${compactUsd(p.leader.usd).replace("+", "")} at ${cents(p.leader.price)})` : "built from leaders' bets";
+      const money = p.status === "open"
+        ? `$${p.stakeUsd.toFixed(2)} to win $${p.payoutUsd.toFixed(2)} · worth now ~$${(p.markValueUsd ?? p.stakeUsd).toFixed(2)}`
+        : `$${p.stakeUsd.toFixed(2)} → `;
+      const meta = el("div", { class: "meta" }, `${platformLabel(p.platform)} · ${cents(p.price)} (pays ${(1 / p.price).toFixed(1)}×) · ${from} · ${ago(p.openedAt)} · ${money}`);
+      if (p.status !== "open") meta.append(pnlNode(p.realizedPnlUsd || 0));
+      return el("li", { style: "cursor:default" }, el("span", { class: `outcome ${k}`, text: label }), el("div", null, el("div", { text: `${p.legs.length}-leg parlay` }), meta, legsOf(p)));
+    };
+    const fill = (id, list, empty) => {
+      const ul = $(id);
+      ul.replaceChildren();
+      if (!list.length) ul.append(el("li", { class: "empty", text: empty }));
+      for (const x of list) ul.append(x);
+    };
+    fill("parlayOpen", led.open.map(item), "No open parlays.");
+    fill("parlayClosed", led.closed.slice(0, 10).map(item), "None settled yet.");
+    fill("parlayPool", (v ? v.pool : []).slice(0, 15).map((l) => el("li", { style: "cursor:default" },
+      el("span", { class: "outcome info", text: cents(l.leaderPrice) }),
+      el("div", null,
+        el("div", { text: `${String(l.side).toUpperCase()} · ${l.title}` }),
+        el("div", { class: "meta", text: `${platformLabel(l.platform)} · ${compactUsd(l.backingUsd).replace("+", "")} from ${l.leaders.join(", ")} · ${ago(l.lastAt)}` +
+          (v && l.backingUsd < v.minBackingUsd ? ` · needs ${compactUsd(v.minBackingUsd).replace("+", "")} of backing` : v && (l.leaderPrice < v.minLegPrice || l.leaderPrice > v.maxLegPrice) ? ` · bought at ${cents(l.leaderPrice)}; legs must cost ${cents(v.minLegPrice)}–${cents(v.maxLegPrice)}` : v ? ` · waiting for ${v.legsPerParlay} legs on one exchange` : "") })))),
+      v ? `No leader bets on ${platformLabel("kalshi")} / ${platformLabel("polymarket_us")} yet.` : "Shows while npm run paper:watch is running.");
+    const BADGE = { opened: ["ok", "Placed"], alerted: ["info", "Idea"], skipped: ["info", "Skipped"] };
+    fill("parlayRecent", (v ? v.recent : []).slice(0, 15).map((d) => {
+      const [k, label] = BADGE[d.result] || ["info", d.result];
+      const who = d.kind === "leader" ? `${d.leader}'s parlay` : "Built parlay";
+      return el("li", { style: "cursor:default" }, el("span", { class: `outcome ${k}`, text: label }),
+        el("div", null,
+          el("div", { text: `${who}${d.legs ? ` · ${d.legs} legs` : ""}${d.usd ? ` · ${compactUsd(d.usd).replace("+", "")}` : ""}${d.price != null ? ` · ${cents(d.price)}` : ""}` }),
+          el("div", { class: "meta", text: `${ago(d.at)} — ${d.reason || d.title}` })));
+    }), "No parlays yet.");
   }
 
   function renderUnusual(rulesById) {
@@ -1566,6 +1661,7 @@
     renderArbs();
     renderUnusual(rulesById);
     renderCopy();
+    renderParlays();
     renderChart();
     renderRules(rulesById);
     renderOpen(rulesById);
