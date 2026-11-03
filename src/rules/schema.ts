@@ -310,6 +310,12 @@ export const CopyTradingSchema = z.object({
       follow_sells: z.boolean().default(true),
       /** How often to check the leaders' new trades (seconds; fast mode checks between full checks). */
       poll_seconds: z.number().int().min(15).default(60),
+      /**
+       * When the same bet is on more than one venue, use this one if it costs no more than
+       * `prefer_within` above the cheapest (price + fee per contract). none = always the cheapest.
+       */
+      prefer: z.enum(["kalshi", "polymarket_us", "none"]).default("kalshi"),
+      prefer_within: z.number().min(0).max(0.1).default(0.01),
     })
     .default({}),
   exit: ExitConditionsSchema,
@@ -326,11 +332,45 @@ export const CopyTradingSchema = z.object({
   paper: PaperSchema.default({ slippage: 0.005, include_fees: true }),
 });
 
+/**
+ * Strategy league: the bot invents strategies (named like traders), backtests them on past prices,
+ * paper-trades the roster, clones the winners and diagnoses + retires the losers.
+ */
+export const LeagueSchema = z.object({
+  enabled: z.boolean().default(true),
+  /** Bot-made strategies paper-trading at once. */
+  roster_size: z.number().int().min(2).max(50).default(12),
+  /** Kinds of idea rookies are drawn from. */
+  families: z
+    .array(z.enum(["dip_buyer", "momentum", "favorite", "longshot_fade", "scalper"]))
+    .min(1)
+    .default(["dip_buyer", "momentum", "favorite", "longshot_fade", "scalper"]),
+  /** Finished trades needed before a strategy is ranked (or cloned, or retired for losing). */
+  min_trades: z.number().int().positive().default(5),
+  /** Each round: the top `winners` each get `clones_per_winner` clones… */
+  winners: z.number().int().min(1).max(10).default(3),
+  clones_per_winner: z.number().int().min(0).max(3).default(1),
+  /** …and up to `retire` of the worst are diagnosed and retired. */
+  retire: z.number().int().min(0).max(10).default(3),
+  /** Your own paper rules can be cloned too (they're never retired). */
+  clone_house_rules: z.boolean().default(true),
+  /** Backtest window and resolution. */
+  backtest_days: z.number().int().min(2).max(60).default(14),
+  step_minutes: z.number().int().min(30).max(240).default(60),
+  /** The last part of the window is held out: a winner must also make money there. */
+  test_share: z.number().min(0.1).max(0.5).default(0.3),
+  /** Markets with price history to load per platform. */
+  markets_per_platform: z.number().int().min(10).max(500).default(120),
+  /** paper:watch runs a league round this often. */
+  evolve_every_hours: z.number().positive().default(24),
+});
+
 export const RulesFileSchema = z.object({
   version: z.literal(1).default(1),
   rules: z.array(RuleSchema).min(1),
   arbitrage: ArbitrageSchema.optional(),
   copy_trading: CopyTradingSchema.optional(),
+  league: LeagueSchema.optional(),
 }).superRefine((file, ctx) => {
   file.rules.forEach((r, i) => {
     for (const [reserved, what, used] of [
@@ -381,6 +421,7 @@ export type RulesFile = z.infer<typeof RulesFileSchema>;
 export type ArbitrageConfig = z.infer<typeof ArbitrageSchema>;
 export type ArbPairsFile = z.infer<typeof ArbPairsFileSchema>;
 export type CopyTradingConfig = z.infer<typeof CopyTradingSchema>;
+export type LeagueConfig = z.infer<typeof LeagueSchema>;
 
 /** Copy trading as a Rule: shared sizing, caps, loss pause and exits. */
 export function copyAsRule(cfg: CopyTradingConfig): Rule {

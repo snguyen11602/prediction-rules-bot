@@ -16,6 +16,7 @@
     "paper:watch": "tsx src/cli/dashboard.ts --paper",
     "paper:fast": "tsx src/cli/dashboard.ts --paper --fast",
     "dashboard": "tsx src/cli/dashboard.ts",
+    "league": "tsx src/cli/league.ts",
     "live": "tsx src/cli/live.ts",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",

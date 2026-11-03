@@ -7,7 +7,7 @@ import { CopyTradingSchema } from "../rules/schema.js";
 import type { NormalizedMarket } from "../types.js";
 import type { TraderTrade } from "../platforms/polymarket-data.js";
 import { DemoAdapter } from "../platforms/demo.js";
-import { matchGame, matchTitle, pickLeaders, pollLeaders, usGameSlugs, type CopyState, type Leader } from "./copy.js";
+import { kalshiGameEvents, matchGame, matchKalshiGame, matchTitle, pickLeaders, pollLeaders, usGameSlugs, type CopyState, type Leader } from "./copy.js";
 import type { CopyDeps } from "./copy-runtime.js";
 import { runPaperCycle } from "./paper-session.js";
 import type { PaperLedger } from "../ledger/paper.js";
@@ -202,7 +202,7 @@ ${extraRules}`,
     proxy_wallet: w, side, outcome, outcome_index: 1, price, size: 5000, timestamp: at, slug, condition_id: `c-${slug}`, title: slug, transaction_hash: `${slug}-${side}-${at}`,
   });
   const ledger = async () => JSON.parse(await readFile(ledgerPath, "utf8")) as PaperLedger;
-  return { dir, trades, run, buy, writeMarkets, ledger, w, statePath: path.join(dir, "ledger.copy.json") };
+  return { dir, trades, run, buy, writeMarkets, ledger, w, deps, fixture, statePath: path.join(dir, "ledger.copy.json") };
 }
 
 test("a loss pause armed by this cycle's exits blocks copies in the same cycle", async () => {
@@ -247,4 +247,58 @@ test("a buy the leader already sold again isn't copied", async () => {
   const r = await s.run(T0);
   assert.equal(r.opened, 0);
   assert.match(r.copy?.recent.find((d) => d.outcome === "Pacers")?.reason ?? "", /already sold/);
+});
+
+test("Kalshi game tickers come from the global slug (both team orders, same day or a day earlier)", () => {
+  assert.deepEqual(kalshiGameEvents("nba-atl-ind-2026-11-02").map((e) => e.event), [
+    "KXNBAGAME-26NOV02ATLIND",
+    "KXNBAGAME-26NOV02INDATL",
+    "KXNBAGAME-26NOV01ATLIND",
+    "KXNBAGAME-26NOV01INDATL",
+  ]);
+  assert.deepEqual(kalshiGameEvents("epl-ars-che-2026-11-02"), [], "leagues without a known Kalshi series are skipped");
+});
+
+const kalshiTeam = (code: string, city: string, bid: number, ask: number): NormalizedMarket => ({
+  platform: "kalshi", id: `KXNBAGAME-26NOV02ATLIND-${code}`, title: `Atlanta vs Indiana — ${city}`, subtitle: city, yesPrice: (bid + ask) / 2, yesBid: bid, yesAsk: ask,
+});
+
+test("Kalshi game: the team comes from the slug's codes and is checked against Polymarket US names", () => {
+  const ks = [kalshiTeam("ATL", "Atlanta", 0.79, 0.8), kalshiTeam("IND", "Indiana", 0.2, 0.21)];
+  const twin = usGame(["Atlanta Hawks", "Indiana Pacers"]);
+  const hit = matchKalshiGame(globalGame, ks, ["ATL", "IND"], "Pacers", twin);
+  assert.ok("market" in hit && hit.market.id.endsWith("-IND") && hit.side === "yes");
+  const wrongNames = [kalshiTeam("ATL", "Indiana", 0.79, 0.8), kalshiTeam("IND", "Atlanta", 0.2, 0.21)];
+  assert.ok("reason" in matchKalshiGame(globalGame, wrongNames, ["ATL", "IND"], "Pacers", twin), "names must line up");
+  const coinFlip = { ...globalGame, yesPrice: 0.52 };
+  assert.ok("reason" in matchKalshiGame(coinFlip, ks, ["ATL", "IND"], "Pacers"), "a close game needs the US names to confirm");
+  assert.ok("market" in matchKalshiGame(globalGame, ks, ["ATL", "IND"], "Pacers"), "a lopsided game is safe without them");
+});
+
+test("copies go to Kalshi when it costs about the same, otherwise to the cheaper venue", async () => {
+  const run = async (kalshiAsk: number) => {
+    const s = await copySetup();
+    const fixtureK = path.join(s.dir, "k.json");
+    const ks = [kalshiTeam("ATL", "Atlanta", 0.79, 0.8), kalshiTeam("IND", "Indiana", kalshiAsk - 0.01, kalshiAsk)];
+    await writeFile(fixtureK, JSON.stringify(ks.map((m) => ({ ...m, closesInHours: 3 }))));
+    await s.writeMarkets({ takerFeeRate: 0.0695 }); // Polymarket US fees, so the comparison is like for like
+    s.trades.push(s.buy("nba-atl-ind-2026-11-02", "Pacers", sec(T0) - 300));
+    const r = await runPaperCycle({
+      rulesPath: path.join(s.dir, "rules.yaml"),
+      ledgerPath: path.join(s.dir, "ledger.json"),
+      demo: true,
+      now: T0,
+      emit: () => undefined,
+      copyDeps: { ...s.deps, kalshiEvent: async (t) => (t === "KXNBAGAME-26NOV02ATLIND" ? ks : []) },
+      adapters: [new DemoAdapter("polymarket_us", { fixturePath: s.fixture, now: () => T0 }), new DemoAdapter("kalshi", { fixturePath: fixtureK, now: () => T0 })],
+    });
+    return { r, pos: (await s.ledger()).positions[0] };
+  };
+  // Polymarket US: NO on "Hawks win" costs 1 − 0.79 = 21¢ (+ slippage). Kalshi: YES on Indiana.
+  const same = await run(0.21);
+  assert.equal(same.pos.platform, "kalshi", "about the same → Kalshi");
+  assert.equal(same.pos.side, "yes");
+  assert.ok(same.pos.entryTrace?.some((c) => c.name === "Venue" && /Kalshi/.test(c.detail)));
+  const dearer = await run(0.24);
+  assert.equal(dearer.pos.platform, "polymarket_us", "3¢ dearer on Kalshi → the cheaper venue");
 });

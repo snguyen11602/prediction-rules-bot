@@ -267,6 +267,67 @@ export function usGameSlugs(globalSlug: string): string[] {
   return [0, -1, 1].map((k) => `aec-${league}-${a}-${b}-${new Date(d + k * 86_400_000).toISOString().slice(0, 10)}`);
 }
 
+/** Global league prefix → Kalshi's game series. */
+const KALSHI_GAME_SERIES: Record<string, string> = {
+  nba: "KXNBAGAME",
+  nfl: "KXNFLGAME",
+  nhl: "KXNHLGAME",
+  mlb: "KXMLBGAME",
+  wnba: "KXWNBAGAME",
+  cbb: "KXNCAAMBGAME",
+  cfb: "KXNCAAFGAME",
+};
+const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+/** Kalshi game event tickers that could be this global moneyline (date as is or a day earlier). */
+export function kalshiGameEvents(globalSlug: string): Array<{ event: string; codes: [string, string] }> {
+  const m = GAME_SLUG.exec(globalSlug);
+  if (!m) return [];
+  const [, league, a, b, date] = m;
+  const series = KALSHI_GAME_SERIES[league];
+  if (!series) return [];
+  const d = new Date(`${date}T12:00:00Z`).getTime();
+  const out: Array<{ event: string; codes: [string, string] }> = [];
+  for (const k of [0, -1]) {
+    const day = new Date(d + k * 86_400_000);
+    const yymmmdd = `${String(day.getUTCFullYear()).slice(2)}${MON[day.getUTCMonth()]}${String(day.getUTCDate()).padStart(2, "0")}`;
+    for (const [x, y] of [[a, b], [b, a]]) out.push({ event: `${series}-${yymmmdd}${x.toUpperCase()}${y.toUpperCase()}`, codes: [a.toUpperCase(), b.toUpperCase()] });
+  }
+  return out;
+}
+
+/**
+ * Same game on Kalshi: one market per team, ticker ending in the team's code (…ATLIND-ATL). The
+ * global slug's team codes are in outcome order, which picks the team; when a Polymarket US
+ * twin is known its full team names must agree with Kalshi's city names, and without one the
+ * game must not be a near coin-flip (so a mix-up would show as a price disagreement).
+ */
+export function matchKalshiGame(
+  global: NormalizedMarket,
+  kalshi: NormalizedMarket[],
+  codes: [string, string],
+  boughtOutcome: string,
+  usTwin?: NormalizedMarket,
+): CopyTarget | { reason: string } {
+  const gRaw = global.raw as { sportsMarketType?: string } | undefined;
+  if (gRaw?.sportsMarketType !== "moneyline" || global.outcomes?.length !== 2) return { reason: "not a two-team game" };
+  const [g0, g1] = global.outcomes;
+  const idx = sameTeam(boughtOutcome, g0) && !sameTeam(boughtOutcome, g1) ? 0 : sameTeam(boughtOutcome, g1) && !sameTeam(boughtOutcome, g0) ? 1 : -1;
+  if (idx < 0) return { reason: "couldn't tell which team was bought" };
+  const [mine, theirs] = idx === 0 ? codes : [codes[1], codes[0]];
+  const team = kalshi.find((m) => m.id.toUpperCase().endsWith(`-${mine}`));
+  const other = kalshi.find((m) => m.id.toUpperCase().endsWith(`-${theirs}`));
+  if (!team || !other || (team.status ?? "open") !== "open") return { reason: "game not open on Kalshi" };
+  if (usTwin?.outcomes?.length === 2) {
+    // US full names ("Atlanta Hawks") bridge Kalshi cities ("Atlanta") and global nicknames ("Hawks").
+    const usTeam = usTwin.outcomes.find((n) => sameTeam(boughtOutcome, n));
+    if (!usTeam || !team.subtitle || !sameTeam(team.subtitle, usTeam)) return { reason: "Kalshi's team names don't line up" };
+  } else if (Math.abs(global.yesPrice - 0.5) < 0.08) {
+    return { reason: "close game with no Polymarket US twin to confirm Kalshi's team names" };
+  }
+  return { market: team, side: "yes", how: `same game (${team.id})` };
+}
+
 export interface CopyTarget {
   market: NormalizedMarket;
   side: SignalSide;

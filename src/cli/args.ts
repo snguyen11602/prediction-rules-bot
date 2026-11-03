@@ -116,6 +116,7 @@ export function parseArgs(argv: string[]): CliArgs {
   npm run paper:watch -- [--demo] [--interval sec] [--port N] [--no-open]   # paper loop + dashboard
   npm run paper:fast -- [--tick sec] [--interval sec]   # live streamed prices, checks every few seconds (keys in .env)
   npm run dashboard -- [--demo] [--ledger path] [--port N] [--no-open]      # dashboard only (read-only)
+  npm run league -- [--show] [--days N] [--markets N]   # strategy league round: backtest, clone winners, retire losers
   npm run arb:find -- [--demo] [--all]          # likely Kalshi ↔ Polymarket pairs + current edge
   npm run arb:confirm -- <n> [--invert]         # trade pair #n from the last arb:find
   npm run arb:block -- <n>                      # never trade pair #n
