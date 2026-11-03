@@ -8,6 +8,9 @@ import { FAMILIES, mutate, rookieRule, toBody, type FamilyId, type RuleBody } fr
 import {
   activeMembers,
   backtestDirs,
+  houseContestantRules,
+  houseNames,
+  migrateNames,
   leagueConfig,
   PAPER_TRADES_TO_COUNT,
   scoreOf,
@@ -21,7 +24,7 @@ import {
   type Member,
 } from "./league.js";
 import { openTradesByRule, statsFromTrades, tradesByRule, type StrategyStats } from "./metrics.js";
-import { hashSeed, housePersona, inheritTraits, personName, randomTraits, rng, surnameOf, type Traits } from "./personas.js";
+import { cloneName, hashSeed, housePersonas, inheritTraits, randomTraits, rng, rookieName, type Traits } from "./personas.js";
 
 /**
  * One league round: fill the roster with rookies, backtest everyone (plus your own rules), rank,
@@ -84,9 +87,9 @@ function nextFamily(cfg: LeagueConfig, members: Member[]): Exclude<FamilyId, "cu
   return [...cfg.families].sort((a, b) => count(a) - count(b))[0];
 }
 
-/** Names in use now or used before (so a newcomer never looks like an old strategy). */
-function takenNames(l: LeagueFile): Set<string> {
-  return new Set([...l.members.map((m) => m.name), ...(l.pastNames ?? [])]);
+/** Names in use now, used recently, or given to your own rules. */
+function takenNames(l: LeagueFile, reserved?: Set<string>): Set<string> {
+  return new Set([...l.members.map((m) => m.name), ...(l.pastNames ?? []), ...(reserved ?? [])]);
 }
 
 /** Ids come from a counter that only goes up, so a new strategy never inherits an old one's trades. */
@@ -95,10 +98,10 @@ function nextId(l: LeagueFile, name: string): string {
   return memberId(name, l.seq);
 }
 
-export function makeRookie(l: LeagueFile, cfg: LeagueConfig, r: () => number, now: Date): Member {
+export function makeRookie(l: LeagueFile, cfg: LeagueConfig, r: () => number, now: Date, reserved?: Set<string>): Member {
   const family = nextFamily(cfg, activeMembers(l));
   const traits = randomTraits(r);
-  const name = personName(r, undefined, takenNames(l));
+  const name = rookieName(r, takenNames(l, reserved));
   return {
     id: nextId(l, name),
     name,
@@ -112,9 +115,9 @@ export function makeRookie(l: LeagueFile, cfg: LeagueConfig, r: () => number, no
   };
 }
 
-export function makeClone(l: LeagueFile, parent: Contestant, r: () => number, now: Date): Member {
+export function makeClone(l: LeagueFile, parent: Contestant, r: () => number, now: Date, reserved?: Set<string>): Member {
   const traits = inheritTraits(parent.traits, r);
-  const name = personName(r, surnameOf(parent.name), takenNames(l));
+  const name = cloneName(parent.name, takenNames(l, reserved));
   const family: FamilyId = parent.member?.family ?? "custom";
   return {
     id: nextId(l, name),
@@ -130,10 +133,7 @@ export function makeClone(l: LeagueFile, parent: Contestant, r: () => number, no
   };
 }
 
-/** Your own paper rules seen as league players (alert-only rules, arbitrage and copy trading aren't). */
-export function houseContestantRules(file: { rules: Rule[] }): Rule[] {
-  return file.rules.filter((r) => r.enabled && r.action === "paper");
-}
+export { houseContestantRules };
 
 export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; summary: RoundSummary }> {
   const now = o.now ?? new Date();
@@ -142,6 +142,9 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
   const cfg = leagueConfig(file);
   const leaguePath = leaguePathFor(o.ledgerPath);
   const l = await loadLeague(leaguePath);
+  const houseNameMap = houseNames(file);
+  const reserved = new Set(houseNameMap.values());
+  migrateNames(l, houseNameMap);
   const round = l.round + 1;
   const born: Member[] = [];
   const cloned: Member[] = [];
@@ -149,7 +152,7 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
 
   // 1. Fill the roster.
   while (activeMembers(l).length < cfg.roster_size) {
-    const m = makeRookie(l, cfg, r, now);
+    const m = makeRookie(l, cfg, r, now, reserved);
     l.members.push(m);
     born.push(m);
     event(l, now, "born", `${m.name} joined as ${m.style} (${FAMILIES[m.family].idea}).`, m.id);
@@ -157,6 +160,7 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
 
   // 2. Backtest everyone still playing, and your own rules.
   const house = houseContestantRules(file);
+  const personas = housePersonas(house.map((h) => h.id));
   const players = activeMembers(l);
   let bt: BacktestResult | undefined;
   if (!o.noBacktest) {
@@ -205,7 +209,7 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
     add({ id: m.id, name: m.name, style: m.style, house: false, member: m, traits: m.traits, rule: m.rule, paper: paperStats(m.id, m.rule.risk.bankroll_usd) });
   }
   for (const h of house) {
-    const p = housePersona(h.id);
+    const p = personas.get(h.id)!;
     add({ id: h.id, name: p.name, style: `${FAMILIES.custom.style} (${h.name})`, house: true, traits: p.traits, rule: toBody({ ...h, action: "paper", enabled: true }), paper: paperStats(h.id, h.risk.bankroll_usd) });
   }
 
@@ -260,7 +264,7 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
   // 6. Clone the winners (best first).
   for (const w of winners) {
     for (let k = 0; k < cfg.clones_per_winner && room > 0; k++, room--) {
-      const child = makeClone(l, w, r, now);
+      const child = makeClone(l, w, r, now, reserved);
       l.members.push(child);
       cloned.push(child);
       event(l, now, "cloned", `${child.name} was cloned from ${w.house ? `your rule "${w.style}"` : w.name} (generation ${child.generation}).`, child.id);
@@ -269,7 +273,7 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
 
   // 7. Top the roster back up with rookies (they're backtested next round).
   while (activeMembers(l).length < cfg.roster_size) {
-    const m = makeRookie(l, cfg, r, now);
+    const m = makeRookie(l, cfg, r, now, reserved);
     l.members.push(m);
     born.push(m);
     event(l, now, "born", `${m.name} joined as ${m.style} (${FAMILIES[m.family].idea}).`, m.id);
@@ -300,9 +304,9 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
   // Keep the newest retirees for the history page. Only drop ones we know have nothing open
   // (their rule must stay in the file while a position is open, so its exits keep running).
   if (ledger) {
-    const retiredOld = l.members.filter((m) => m.status === "retired").sort((a, b) => (b.retiredAt ?? "").localeCompare(a.retiredAt ?? "")).slice(60);
+    const retiredOld = l.members.filter((m) => m.status === "retired").sort((a, b) => (b.retiredAt ?? "").localeCompare(a.retiredAt ?? "")).slice(30);
     const drop = new Set(retiredOld.filter((m) => !ledger!.positions.some((p) => p.ruleId === m.id && p.status === "open")).map((m) => m.id));
-    l.pastNames = [...(l.pastNames ?? []), ...l.members.filter((m) => drop.has(m.id)).map((m) => m.name)].slice(-500);
+    l.pastNames = [...(l.pastNames ?? []), ...l.members.filter((m) => drop.has(m.id)).map((m) => m.name)].slice(-40);
     l.members = l.members.filter((m) => !drop.has(m.id));
   }
   await saveLeague(leaguePath, l);

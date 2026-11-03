@@ -250,5 +250,5 @@ test("a broken league file or member never stops paper trading", async () => {
   );
   ({ res, events } = await run());
   assert.ok(res.trace?.rules.some((r) => r.ruleId === "fav"));
-  assert.match(events.join(" "), /League strategy Bad Member skipped/);
+  assert.match(events.join(" "), /League strategy \w+ skipped/);
 });

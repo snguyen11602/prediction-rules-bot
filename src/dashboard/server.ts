@@ -12,9 +12,9 @@ import { loadSeries, seriesPathFor } from "../engine/series.js";
 import type { EngineEvent } from "../types.js";
 import type { RulesFile } from "../rules/schema.js";
 import { FAMILIES, describeRule, toBody } from "../league/genome.js";
-import { backtestDirs, leagueConfig, leaguePathFor, loadLeague, scoreOf, type LeagueFile } from "../league/league.js";
+import { backtestDirs, houseNames, leagueConfig, leaguePathFor, loadLeague, migrateNames, scoreOf, type LeagueFile } from "../league/league.js";
 import { openTradesByRule, statsFromTrades, tradesByRule } from "../league/metrics.js";
-import { housePersona } from "../league/personas.js";
+import { housePersonas } from "../league/personas.js";
 import { houseContestantRules } from "../league/evolve.js";
 import { testTradesNeeded } from "../backtest/run.js";
 
@@ -178,6 +178,7 @@ export async function buildState(opts: DashboardOptions) {
   } catch (err) {
     rulesError = (err as Error).message;
   }
+  migrateNames(league, houseNames(file));
   // League strategies trade under their own names.
   const leagueOn = file ? leagueConfig(file).enabled : true;
   for (const m of league.members) {
@@ -319,9 +320,10 @@ function leagueView(l: LeagueFile, ledger: PaperLedger, file: RulesFile | undefi
   const paper = (id: string, bankrollUsd: number) =>
     statsFromTrades(trades.get(id) ?? [], { bankrollUsd, minTrades, openTrades: open.get(id) });
   const houseRules = file ? houseContestantRules(file) : [];
+  const personas = housePersonas(houseRules.map((r) => r.id));
   const names = new Map<string, string>([
     ...l.members.map((m) => [m.id, m.name] as [string, string]),
-    ...houseRules.map((r) => [r.id, `${housePersona(r.id).name} (your rule)`] as [string, string]),
+    ...houseRules.map((r) => [r.id, `${personas.get(r.id)!.name} (your rule)`] as [string, string]),
   ]);
   // A member with a broken rule is left off the board rather than breaking the whole page.
   const valid = l.members.filter((m) => m && typeof m.id === "string" && m.rule?.risk && m.rule?.filters && m.rule?.entry && m.traits);
@@ -352,7 +354,7 @@ function leagueView(l: LeagueFile, ledger: PaperLedger, file: RulesFile | undefi
     };
   });
   const house = houseRules.map((r) => {
-    const persona = housePersona(r.id);
+    const persona = personas.get(r.id)!;
     const bt = l.lastRun?.house[r.id];
     const p = paper(r.id, r.risk.bankroll_usd);
     const { score, ranked } = scoreOf(bt, p);
