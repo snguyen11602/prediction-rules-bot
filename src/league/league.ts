@@ -3,7 +3,7 @@ import path from "node:path";
 import { LeagueSchema, RuleSchema, type LeagueConfig, type Rule } from "../rules/schema.js";
 import type { StrategyStats } from "./metrics.js";
 import type { Diagnosis } from "./diagnose.js";
-import type { FamilyId, RuleBody } from "./genome.js";
+import { withRewardRisk, type FamilyId, type RuleBody } from "./genome.js";
 import { cloneName, hashSeed, housePersonas, legacyHouseName, NAMES, rookieName, type Traits } from "./personas.js";
 
 /** A strategy the league made (or one of your rules, seen as a "house" player). */
@@ -61,6 +61,8 @@ export interface LeagueFile {
   pastNames?: string[];
   /** 2 = one-word names ("Blaze", "Blaze II"). Older files used first + last names. */
   nameStyle?: number;
+  /** 2 = rules follow the profit-target / time-limit floors (withRewardRisk). */
+  ruleStyle?: number;
 }
 
 /** Your own paper rules seen as league players (alert-only rules, arbitrage and copy trading aren't). */
@@ -79,6 +81,21 @@ export function houseNames(file: { rules: Rule[] } | undefined): Map<string, str
  * Deterministic, so every reader shows the same names before then. Ids don't change, so trades,
  * cool-downs and history stay attached. Clones become "<parent's name> II", "III"…
  */
+/** Bring an older league file up to date, in memory (the next round saves it). */
+export function upgradeLeague(l: LeagueFile, house: Map<string, string>): void {
+  migrateNames(l, house);
+  if (l.ruleStyle !== 2) {
+    l.ruleStyle = 2;
+    for (const m of l.members) {
+      try {
+        if (m.rule?.exit) m.rule = withRewardRisk(m.rule);
+      } catch {
+        // a broken member is skipped later, with a warning
+      }
+    }
+  }
+}
+
 export function migrateNames(l: LeagueFile, house: Map<string, string>): void {
   if (l.nameStyle === 2) return;
   l.nameStyle = 2;
@@ -158,12 +175,19 @@ export function leagueConfig(file: { league?: LeagueConfig }): LeagueConfig {
 }
 
 /** Rules the paper session should run for the league: active members (and retired ones, disabled, for exits). */
+/** Is this member's type of strategy switched on (`families`)? Clones of your rules always are. */
+export function familyAllowed(m: Pick<Member, "family">, cfg: LeagueConfig | undefined): boolean {
+  if (m.family === "custom") return true;
+  return (cfg ?? LeagueSchema.parse({})).families.includes(m.family);
+}
+
 export function leagueRules(l: LeagueFile, cfg: LeagueConfig | undefined, onBad?: (m: Member, err: Error) => void): Rule[] {
   const out: Rule[] = [];
   for (const m of l.members) {
     try {
       const r = memberRule(m);
-      out.push(cfg && !cfg.enabled ? { ...r, enabled: false } : r);
+      // Switched off (the whole league, or this type): no new trades, open ones still get their exits.
+      out.push((cfg && !cfg.enabled) || !familyAllowed(m, cfg) ? { ...r, enabled: false } : r);
     } catch (err) {
       // One broken member mustn't stop paper trading for everything else.
       onBad?.(m, err as Error);

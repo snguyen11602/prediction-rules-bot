@@ -152,7 +152,7 @@ export async function runBacktest(o: BacktestOptions): Promise<BacktestResult> {
     const train = statsFromTrades(mine.filter((t) => !inTest(t)), { ...opts, openTrades: held.filter((t) => !inTest(t)) });
     const test = statsFromTrades(mine.filter(inTest), { ...opts, minTrades: testTradesNeeded(o.minTrades), openTrades: held.filter(inTest) });
     const b = blocks.get(r.id)!;
-    results.set(r.id, { all, train, test, blocks: b, diagnosis: diagnose(all, { minTrades: o.minTrades, blocks: b, test, now }) });
+    results.set(r.id, { all, train, test, blocks: b, diagnosis: diagnose(all, { minTrades: o.minTrades, blocks: b, test, now, rule: r }) });
   }
 
   return {

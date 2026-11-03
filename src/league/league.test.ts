@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { RuleSchema } from "../rules/schema.js";
 import { LeagueSchema } from "../rules/schema.js";
 import { diagnose } from "./diagnose.js";
-import { describeRule, mutate, rookieRule, type FamilyId } from "./genome.js";
-import { leagueRules, memberRule, migrateNames, scoreOf, type LeagueFile, type Member } from "./league.js";
+import { describeRule, MIN_HOLD_HOURS, MIN_REWARD_RISK, mutate, rookieRule, type FamilyId } from "./genome.js";
+import { familyAllowed, leagueRules, memberRule, migrateNames, scoreOf, upgradeLeague, type LeagueFile, type Member } from "./league.js";
 import { statsFromTrades, tradesByRule, type TradeResult } from "./metrics.js";
 import { baseName, cloneName, hashSeed, housePersonas, inheritTraits, NAMES, randomTraits, rng, rookieName } from "./personas.js";
 import { makeClone, makeRookie, type Contestant } from "./evolve.js";
@@ -174,7 +174,7 @@ function member(over: Partial<Member> = {}): Member {
 
 test("league members become normal paper rules; retired ones only manage exits", () => {
   const l: LeagueFile = { version: 1, round: 1, members: [member(), member({ id: "lg-x-2", name: "Milo Vance", status: "retired" })], events: [] };
-  const rules = leagueRules(l, undefined);
+  const rules = leagueRules(l, LeagueSchema.parse({ families: ["dip_buyer"] }));
   assert.equal(rules.length, 2);
   assert.equal(rules[0].name, "Ava Sterling — The Dip Hunter");
   assert.equal(rules[0].action, "paper");
@@ -192,7 +192,8 @@ test("rookies cycle through families; clones carry the family name and a similar
   for (let i = 0; i < 10; i++) l.members.push(makeRookie(l, cfg, r, new Date("2026-10-01T00:00:00Z")));
   const fams = new Map<string, number>();
   for (const m of l.members) fams.set(m.family, (fams.get(m.family) ?? 0) + 1);
-  assert.deepEqual([...fams.values()], [2, 2, 2, 2, 2]);
+  assert.deepEqual([...fams.keys()].sort(), ["favorite", "longshot_fade", "momentum"], "dip hunters and scalpers are off by default");
+  assert.deepEqual([...fams.values()].sort(), [3, 3, 4]);
   assert.equal(new Set(l.members.map((m) => m.id)).size, 10);
 
   const parent = l.members[0];
@@ -273,4 +274,42 @@ test("an old league switches to one-word names once, keeping ids, families and h
   const before = l.members.map((m) => m.name);
   migrateNames(l, new Map());
   assert.deepEqual(l.members.map((m) => m.name), before, "only once");
+});
+
+test("every league strategy aims to win at least 2x what it risks, with at least 48h per trade", () => {
+  const r = rng(9);
+  for (const f of FAMS) {
+    for (let i = 0; i < 30; i++) {
+      const traits = randomTraits(r);
+      for (const body of [rookieRule(f, traits, r), mutate(rookieRule(f, traits, r), { ...traits, creativity: 0.95 }, traits, r)]) {
+        const x = body.exit ?? {};
+        if (x.stop_loss_pct != null) assert.ok(x.take_profit_pct! >= MIN_REWARD_RISK * x.stop_loss_pct - 1e-9, `${f}: +${x.take_profit_pct} vs −${x.stop_loss_pct}`);
+        if (x.max_hold_hours != null) assert.ok(x.max_hold_hours >= MIN_HOLD_HOURS, `${f}: ${x.max_hold_hours}h`);
+      }
+    }
+  }
+});
+
+test("existing strategies get the new floors, and switched-off types stop opening trades", () => {
+  const old = member({ family: "momentum" });
+  old.rule = { ...old.rule, exit: { take_profit_pct: 0.05, stop_loss_pct: 0.1, max_hold_hours: 2 } };
+  const scalp = member({ id: "lg-s-2", name: "Zap", family: "scalper" });
+  const l: LeagueFile = { version: 1, round: 1, members: [old, scalp], events: [], nameStyle: 2 };
+  upgradeLeague(l, new Map());
+  assert.equal(l.members[0].rule.exit?.take_profit_pct, 0.2);
+  assert.equal(l.members[0].rule.exit?.max_hold_hours, MIN_HOLD_HOURS);
+  assert.equal(l.ruleStyle, 2);
+  assert.ok(!familyAllowed(scalp, undefined) && familyAllowed({ family: "custom" }, undefined));
+  const rules = leagueRules(l, undefined);
+  assert.equal(rules.find((x) => x.id === "lg-s-2")?.enabled, false, "still listed, so its open trades get their exits");
+  assert.equal(rules.find((x) => x.id === old.id)?.enabled, true);
+});
+
+test("the diagnosis calls out targets that can't beat costs or are smaller than the stop", () => {
+  const losing = Array.from({ length: 6 }, (_, i) => trade(`2026-10-0${i + 1}T00:00:00Z`, `2026-10-0${i + 1}T01:00:00Z`, -2, "stop_loss", 2.5));
+  const s = statsFromTrades(losing, { bankrollUsd: 1000, minTrades: 5 });
+  const rule = { exit: { take_profit_pct: 0.05, stop_loss_pct: 0.1 }, risk: { bankroll_usd: 1000, position_size_fraction: 0.05, max_position_usd: 50 } } as unknown as Parameters<typeof diagnose>[1]["rule"];
+  const d = diagnose(s, { minTrades: 5, rule });
+  assert.ok(d.findings.some((f) => /profit target \(\+5%\) is tiny next to its costs: fees alone take about 5\.0%/.test(f)), d.findings.join(" | "));
+  assert.ok(d.findings.some((f) => /aims to win \+5% but risks −10%, so it must be right about 67%/.test(f)));
 });

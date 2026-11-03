@@ -121,8 +121,10 @@ copy_trading:
 league:
   enabled: true
   roster_size: 12            # bot-made strategies trading at once
-  families: [dip_buyer, momentum, favorite, longshot_fade, scalper]
+  # dip_buyer and scalper are off: they lost in every backtest version (add them back to try again)
+  families: [momentum, favorite, longshot_fade]
   min_trades: 5              # finished trades before a strategy is ranked
+  # Every league strategy aims to win at least 2× what it risks and gets at least 48h per trade.
   winners: 3                 # each round the top 3 get a clone…
   clones_per_winner: 1
   retire: 3                  # …and up to 3 of the worst retire (with a diagnosis)
@@ -357,9 +359,11 @@ rules:
   # Stays OUT of drops that look informed (unusual volume) — those tend to keep going.
   # Run paper every 5–15 minutes (cron or --loop); drops measured against a
   # price older than 60 minutes are ignored.
+  # Off: lost money in the 2-week backtest in every version tried (Nov 2026). Drops in game
+  # markets are usually real news, so they rarely bounce back. Set enabled: true to try it again.
   - id: dip-reversion-paper
     name: Liquid mid-range markets that dropped ≥6¢ within the last hour
-    enabled: true
+    enabled: false
     action: paper
     filters:
       platforms: [kalshi, polymarket_us]
@@ -400,10 +404,11 @@ rules:
 
   # Quick flip: made for npm run paper:fast (live prices, a check every few seconds).
   # Buys a sharp drop in a deep, tight market and sells the bounce within the hour.
-  # Fees on a round trip are ~3¢ at mid prices, so only bigger bounces pay; paper first.
+  # Off: fees + the bid/ask gap (~5% a round trip) were bigger than the bounces it caught, and it
+  # lost in every version backtested (Nov 2026). Set enabled: true to try it again.
   - id: quick-flip-paper
     name: Deep, tight markets that dropped ≥5¢ since the last full check — sell the bounce fast
-    enabled: true
+    enabled: false
     action: paper
     filters:
       platforms: [kalshi, polymarket_us]

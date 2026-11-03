@@ -340,11 +340,15 @@ export const LeagueSchema = z.object({
   enabled: z.boolean().default(true),
   /** Bot-made strategies paper-trading at once. */
   roster_size: z.number().int().min(2).max(50).default(12),
-  /** Kinds of idea rookies are drawn from. */
+  /**
+   * Kinds of idea in play. dip_buyer and scalper are off by default: in backtests they lost in every
+   * variant (game-market drops are usually real news, and quick flips can't cover fees). League
+   * strategies of a type that's switched off stop opening trades and retire at the next round.
+   */
   families: z
     .array(z.enum(["dip_buyer", "momentum", "favorite", "longshot_fade", "scalper"]))
     .min(1)
-    .default(["dip_buyer", "momentum", "favorite", "longshot_fade", "scalper"]),
+    .default(["momentum", "favorite", "longshot_fade"]),
   /** Finished trades needed before a strategy is ranked (or cloned, or retired for losing). */
   min_trades: z.number().int().positive().default(5),
   /** Each round: the top `winners` each get `clones_per_winner` clones… */

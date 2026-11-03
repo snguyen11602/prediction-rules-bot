@@ -21,6 +21,23 @@ export const FAMILIES: Record<FamilyId, { style: string; idea: string }> = {
 /** Rule settings without id/name (those come from the league member). */
 export type RuleBody = Omit<Rule, "id" | "name">;
 
+/**
+ * Lessons from the first backtests: a round trip costs ~5% in fees plus the bid/ask gap, so small
+ * targets and quick time limits mostly pay costs. Every league strategy therefore aims to win at
+ * least MIN_REWARD_RISK × what it risks, and gets at least MIN_HOLD_HOURS for the move to come.
+ */
+export const MIN_REWARD_RISK = 2;
+export const MIN_HOLD_HOURS = 48;
+
+/** Apply the profit-target and time-limit floors (used for rookies, clones and existing members). */
+export function withRewardRisk<T extends Pick<RuleBody, "exit">>(b: T): T {
+  if (!b.exit) return b;
+  const x = { ...b.exit };
+  if (x.stop_loss_pct != null) x.take_profit_pct = Math.max(x.take_profit_pct ?? 0, Math.round(MIN_REWARD_RISK * x.stop_loss_pct * 100) / 100);
+  if (x.max_hold_hours != null) x.max_hold_hours = Math.max(x.max_hold_hours, MIN_HOLD_HOURS);
+  return { ...b, exit: x };
+}
+
 const round = (v: number, step: number) => Math.round(v / step) * step;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const between = (r: () => number, lo: number, hi: number, step = 0.01) => round(lo + r() * (hi - lo), step);
@@ -68,7 +85,7 @@ export function rookieRule(family: Exclude<FamilyId, "custom">, t: Traits, r: ()
           stop_loss_pct: between(r, 0.05, 0.3),
           trailing_stop: between(r, 0.01, 0.05),
           trailing_activation: between(r, 0.01, 0.05),
-          max_hold_hours: round(between(r, 1, 72, 0.5), 0.5),
+          max_hold_hours: round(between(r, MIN_HOLD_HOURS, 168, 1), 1),
         },
       };
       break;
@@ -95,14 +112,14 @@ export function rookieRule(family: Exclude<FamilyId, "custom">, t: Traits, r: ()
       body = {
         filters: filtersFor(t, { min_price: between(r, 0.2, 0.35), max_price: between(r, 0.65, 0.8), max_spread: between(r, 0.01, 0.02, 0.005) }),
         entry: { side: "against_move", yes_price_move_abs: between(r, 0.02, 0.05), move_direction: "any", max_prior_age_minutes: 15 },
-        exit: { take_profit_pct: between(r, 0.03, 0.1), stop_loss_pct: between(r, 0.03, 0.1), max_hold_hours: between(r, 0.5, 3, 0.5) },
+        exit: { take_profit_pct: between(r, 0.06, 0.2), stop_loss_pct: between(r, 0.03, 0.1), max_hold_hours: between(r, MIN_HOLD_HOURS, 96, 1) },
       };
       // Scalpers always want the tightest spread.
       (body.filters as Record<string, unknown>).max_spread = between(r, 0.01, 0.02, 0.005);
       break;
     }
   }
-  return toBody({ enabled: true, action: "paper", ...body, risk: riskFor(t), paper });
+  return withRewardRisk(toBody({ enabled: true, action: "paper", ...body, risk: riskFor(t), paper }));
 }
 
 /** Validate through the shared schema (fills defaults, rejects nonsense). */
@@ -160,11 +177,13 @@ export function mutate(parent: RuleBody, parentTraits: Traits, childTraits: Trai
     exit.trailing_stop = 0.03;
     exit.trailing_activation = 0.02;
   }
-  return toBody({
-    ...child,
-    filters: { ...(child.filters ?? {}), max_spread: (child.filters?.max_spread as number | undefined) ?? round(0.05 - childTraits.knowledge * 0.035, 0.005) },
-    risk: { ...(child.risk ?? {}), ...riskFor(childTraits) },
-  });
+  return withRewardRisk(
+    toBody({
+      ...child,
+      filters: { ...(child.filters ?? {}), max_spread: (child.filters?.max_spread as number | undefined) ?? round(0.05 - childTraits.knowledge * 0.035, 0.005) },
+      risk: { ...(child.risk ?? {}), ...riskFor(childTraits) },
+    }),
+  );
 }
 
 /** Plain-English summary of what a rule does, for the strategy page. */
