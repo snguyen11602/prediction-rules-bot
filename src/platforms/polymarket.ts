@@ -48,6 +48,9 @@ interface GammaMarket {
   feeSchedule?: { rate?: number; exponent?: number; takerOnly?: boolean };
   /** The catch-all "Other" outcome of a neg-risk event. */
   negRiskOther?: boolean;
+  conditionId?: string;
+  sportsMarketType?: string;
+  gameStartTime?: string;
   events?: Array<{ id?: string | number }>;
 }
 
@@ -190,6 +193,24 @@ export class PolymarketAdapter implements PlatformAdapter {
     }
 
     return out.slice(0, limit);
+  }
+
+  /** Markets by slug (the URL segment), e.g. to look up the market behind a trader's fill. */
+  async getMarketsBySlug(slugs: string[]): Promise<NormalizedMarket[]> {
+    const want = [...new Set(slugs.filter(Boolean))];
+    const out: NormalizedMarket[] = [];
+    for (let i = 0; i < want.length; i += 20) {
+      const url = new URL(`${this.gammaBase}/markets`);
+      for (const s of want.slice(i, i + 20)) url.searchParams.append("slug", s);
+      url.searchParams.set("limit", "20");
+      const batch = (await getJson<GammaMarket[]>(url, "Polymarket Gamma")).data ?? [];
+      if (!Array.isArray(batch)) continue;
+      for (const m of batch) {
+        const n = normalize(m);
+        if (n) out.push(n);
+      }
+    }
+    return out;
   }
 
   async getMarket(id: string): Promise<NormalizedMarket | null> {

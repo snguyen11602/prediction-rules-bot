@@ -261,22 +261,88 @@ export const ArbPairsFileSchema = z.object({
     .transform((v) => v ?? []),
 });
 
+export const COPY_RULE_ID = "copy-leaders";
+
+/**
+ * Copy trading: follow global Polymarket's top traders (the only exchange that publishes other
+ * traders' accounts) and copy their new bets onto the same market on Polymarket US or Kalshi.
+ */
+export const CopyTradingSchema = z.object({
+  enabled: z.boolean().default(true),
+  /** alert = report copyable bets only; paper = also take them in the paper ledger. */
+  action: z.enum(["alert", "paper"]).default("paper"),
+  name: z.string().default("Copy top Polymarket traders"),
+  leaders: z
+    .object({
+      /** Leaderboard window the profit is measured over. */
+      time_period: z.enum(["day", "week", "month", "all"]).default("month"),
+      /** How many of the top accounts to check. */
+      candidates: z.number().int().min(1).max(200).default(50),
+      /** At least this many different markets traded (lifetime). */
+      min_markets: z.number().int().nonnegative().default(50),
+      /** Win rate over their most recent closed positions (count of winners / decided). */
+      min_win_rate: z.number().min(0).max(1).default(0.55),
+      /** Closed positions with a result needed before the win rate counts. */
+      min_decided: z.number().int().positive().default(30),
+      /** Leaderboard profit in the window, USD. */
+      min_profit_usd: z.number().nonnegative().default(10_000),
+      max_leaders: z.number().int().positive().max(50).default(10),
+      refresh_hours: z.number().positive().default(6),
+      /** Wallets to always follow / never follow (0x… proxy wallets). */
+      include: z.array(z.string()).default([]),
+      exclude: z.array(z.string()).default([]),
+    })
+    .default({}),
+  copy: z
+    .object({
+      venues: z.array(z.enum(["polymarket_us", "kalshi"])).min(1).default(["polymarket_us", "kalshi"]),
+      /** Ignore small fills (bots and test trades); USD = shares × price. */
+      min_leader_trade_usd: z.number().nonnegative().default(500),
+      /** Only copy bets this fresh. */
+      max_trade_age_minutes: z.number().positive().default(30),
+      /** Pay at most this much more than the leader did (0.03 = 3¢). */
+      max_chase: z.number().min(0).max(0.5).default(0.03),
+      /** The copy's price must be within this of the leader's market, or it's probably not the same bet. */
+      max_price_gap: z.number().min(0).max(1).default(0.1),
+      /** Title-match score needed when there's no exact game match. */
+      min_score: z.number().min(0).max(1).default(0.6),
+      /** Sell when the leader sells. */
+      follow_sells: z.boolean().default(true),
+      /** How often to check the leaders' new trades (seconds; fast mode checks between full checks). */
+      poll_seconds: z.number().int().min(15).default(60),
+    })
+    .default({}),
+  exit: ExitConditionsSchema,
+  risk: RiskSchema.default({
+    position_size_fraction: 0.03,
+    max_position_usd: 30,
+    max_open_positions: 10,
+    fire_after_n_losses: 4,
+    pause_hours_after_losses: 24,
+    daily_loss_cap_usd: 100,
+    bankroll_usd: 1000,
+    reentry_cooldown_hours: 12,
+  }),
+  paper: PaperSchema.default({ slippage: 0.005, include_fees: true }),
+});
+
 export const RulesFileSchema = z.object({
   version: z.literal(1).default(1),
   rules: z.array(RuleSchema).min(1),
   arbitrage: ArbitrageSchema.optional(),
+  copy_trading: CopyTradingSchema.optional(),
 }).superRefine((file, ctx) => {
-  if (file.arbitrage) {
-    file.rules.forEach((r, i) => {
-      if (r.id === ARB_RULE_ID) {
+  file.rules.forEach((r, i) => {
+    for (const [reserved, what] of [[ARB_RULE_ID, "the arbitrage strategy"], [COPY_RULE_ID, "copy trading"]] as const) {
+      if (r.id === reserved) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["rules", i, "id"],
-          message: `Rule id "${ARB_RULE_ID}" is reserved for the arbitrage strategy`,
+          message: `Rule id "${reserved}" is reserved for ${what}`,
         });
       }
-    });
-  }
+    }
+  });
   file.rules.forEach((r, i) => {
     const relative = r.entry.side === "with_move" || r.entry.side === "against_move";
     const hasMove =
@@ -311,6 +377,20 @@ export type Rule = z.infer<typeof RuleSchema>;
 export type RulesFile = z.infer<typeof RulesFileSchema>;
 export type ArbitrageConfig = z.infer<typeof ArbitrageSchema>;
 export type ArbPairsFile = z.infer<typeof ArbPairsFileSchema>;
+export type CopyTradingConfig = z.infer<typeof CopyTradingSchema>;
+
+/** Copy trading as a Rule: shared sizing, caps, loss pause and exits. */
+export function copyAsRule(cfg: CopyTradingConfig): Rule {
+  return RuleSchema.parse({
+    id: COPY_RULE_ID,
+    name: cfg.name,
+    enabled: cfg.enabled,
+    action: cfg.action,
+    exit: cfg.exit,
+    risk: cfg.risk,
+    paper: cfg.paper,
+  });
+}
 
 /** The arbitrage strategy as a Rule, so the shared risk engine (sizing, caps, loss pause) applies unchanged. */
 export function arbitrageAsRule(cfg: ArbitrageConfig): Rule {

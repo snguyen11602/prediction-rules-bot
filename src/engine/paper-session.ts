@@ -35,7 +35,21 @@ import {
 import { dayKeyLA } from "./clock.js";
 import { cents, type ScanTrace } from "./trace.js";
 import { loadSeries, saveSeries, seriesPathFor } from "./series.js";
-import { ArbitrageSchema, arbitrageAsRule } from "../rules/schema.js";
+import { ArbitrageSchema, arbitrageAsRule, copyAsRule, COPY_RULE_ID } from "../rules/schema.js";
+import { checkEntryRisk } from "./risk.js";
+import type { Check } from "./trace.js";
+import {
+  defaultCopyDeps,
+  enterCopies,
+  finishCopy,
+  leaderSold,
+  pollCopy,
+  type CopyCtx,
+  type CopyDeps,
+  type CopyPoll,
+  type CopyView,
+} from "./copy-runtime.js";
+import { copyStatePathFor } from "./copy.js";
 import {
   arbConfig,
   arbScanLimit,
@@ -76,6 +90,16 @@ export interface PaperCycleOptions {
   now?: Date;
   /** Test hook: inject adapters instead of building them from flags. */
   adapters?: PlatformAdapter[];
+  /** Wrap the adapters this cycle uses (fast mode swaps in live streamed quotes). */
+  wrapAdapters?: (adapters: PlatformAdapter[]) => PlatformAdapter[];
+  /**
+   * A quick in-between check (fast mode): exits and paper entries only, on cached listings with
+   * live quotes. Alert-only rules, arbitrage discovery and price history are left to the full
+   * checks, and "price moved since the last check" still means since the last FULL check.
+   */
+  fastTick?: boolean;
+  /** Test hook: public lookups for copy trading (default: the live Polymarket APIs). */
+  copyDeps?: CopyDeps;
 }
 
 export interface PaperCycleResult {
@@ -93,6 +117,8 @@ export interface PaperCycleResult {
   /** What the scan looked at and why it did / didn't trade (for the dashboard). */
   trace?: ScanTrace;
   arbTrace?: import("./arb-runtime.js").ArbTrace;
+  /** Copy trading: who's followed and what happened to their latest bets. */
+  copy?: CopyView;
 }
 
 function money(n: number): string {
@@ -122,6 +148,10 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
   // Exits use every rule in the file (a disabled rule's open positions still get managed);
   // entries use enabled rules only.
   const allRules = new Map(file.rules.map((r) => [r.id, r]));
+  // Copy positions are managed by the copy strategy's exits even after it's switched off.
+  const copyCfg = file.copy_trading;
+  const copyRule = copyCfg ? copyAsRule(copyCfg) : undefined;
+  if (copyRule) allRules.set(copyRule.id, copyRule);
   const rules = enabledRules(file);
   // arbCfg gates finding / opening new arbs; open arbs are always managed (see arbCtx).
   const arbCfg = arbConfig(file);
@@ -154,6 +184,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       adapters =
         opts.adapters ??
         createAdapters({ demo, platforms: [...platforms], fixturePath: opts.fixturePath });
+      if (opts.wrapAdapters) adapters = opts.wrapAdapters(adapters);
     } catch (err) {
       await push({ at: now.toISOString(), type: "adapter_error", message: (err as Error).message });
       return { events, opened, closed, realizedPnlUsd: realized, arb };
@@ -175,6 +206,44 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       if (!lookups.has(key)) lookups.set(key, adapter.getMarket(id).catch(() => null));
       return lookups.get(key)!;
     };
+    // ---- Copy trading: refresh leaders, read their new bets (sells are needed for exits below).
+    let copyCtx: CopyCtx | undefined;
+    let copyPoll: CopyPoll | undefined;
+    let copyView: CopyView | undefined;
+    let copyRisk = copyRule ? riskStateFromLedger(ledger, copyRule.id, now) : undefined;
+    // Demo data has no real traders to follow (tests inject their own lookups).
+    if (copyCfg?.enabled && copyRule && (!demo || opts.copyDeps)) {
+      let universeMarkets: NormalizedMarket[] | undefined;
+      copyCtx = {
+        cfg: copyCfg,
+        rule: copyRule,
+        ledger,
+        now,
+        push,
+        statePath: copyStatePathFor(opts.ledgerPath),
+        deps: opts.copyDeps ?? defaultCopyDeps(),
+        venueMarkets: () => [...fetched, ...(universeMarkets ?? [])],
+        getMarket,
+        skipMarket: (rule, market, side) => skipMarket(rule, market, side),
+        buy: async (market, side, checks) => {
+          const gate = checkEntryRisk(copyRule, copyRisk!, now);
+          const all: Check[] = [...checks, { stage: "position", name: "Position", ok: true, detail: "not already holding, no re-entry cool-down, ask available" }, ...gate.checks];
+          if (!gate.ok) return { ok: false, reason: gate.reason ?? "risk limits", checks: all };
+          const res = await paperBuy(copyRule, market, side, gate.sizeUsd ?? 0, all);
+          if (!res) return { ok: false, reason: "size buys less than one contract", checks: all };
+          copyRisk!.openPositions += 1;
+          if (copyRisk!.openExposureUsd != null) copyRisk!.openExposureUsd += res.exposureUsd;
+          return { ok: true, position: res.position };
+        },
+      };
+      try {
+        universeMarkets = (await loadUniverse(universePathFor(opts.ledgerPath))).markets();
+        copyPoll = await pollCopy(copyCtx, { force: !opts.fastTick });
+      } catch (err) {
+        await push({ at: now.toISOString(), type: "adapter_error", ruleId: copyRule.id, message: `Copy trading: ${(err as Error).message}` });
+      }
+    }
+
     const hasOpenArbs = Object.values(ledger.arbGroups ?? {}).some((g) => g.status === "open");
     const arbCtx =
       arbCfg || hasOpenArbs
@@ -263,7 +332,10 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       } else {
         const mark = sellPrice(market, pos.side);
         markPosition(pos, mark, now, "open");
-        const decision = rule ? evaluateExit(rule.exit, pos, market, mark, now) : null;
+        const soldBy = pos.ruleId === COPY_RULE_ID && copyCfg ? leaderSold(copyPoll, pos, copyCfg) : null;
+        const decision =
+          (rule ? evaluateExit(rule.exit, pos, market, mark, now) : null) ??
+          (soldBy ? { reason: "leader_sold" as const, detail: soldBy } : null);
         if (decision) {
           const slippage = rule?.paper.slippage ?? 0;
           const price = sellPrice(market, pos.side, slippage);
@@ -325,14 +397,16 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       });
     }
 
+    // Fast checks only look for paper trades; alerts repeat on the full checks.
+    const entryRules = opts.fastTick ? rules.filter((r) => papersRule(r, opts.paperAll)) : rules;
     const riskByRule = new Map<string, RiskState>(
-      rules.map((r) => [r.id, riskStateFromLedger(ledger, r.id, now)]),
+      entryRules.map((r) => [r.id, riskStateFromLedger(ledger, r.id, now)]),
     );
     const history = new Map<string, PriorPrice>(Object.entries(ledger.lastPrices));
     // Price / volume history for unusual-move rules, kept next to the ledger.
     const seriesPath = seriesPathFor(opts.ledgerPath);
     const series = await loadSeries(seriesPath);
-    series.record(markets, now);
+    if (!opts.fastTick) series.record(markets, now);
 
     const skipMarket = (rule: Rule, market: NormalizedMarket, side: "yes" | "no"): string | null => {
       if (findOpenPosition(ledger, rule.id, market.platform, market.id)) return "already holding";
@@ -351,9 +425,9 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     let trace: ScanTrace | undefined;
     let arbTrace: import("./arb-runtime.js").ArbTrace | undefined;
     let skipReasons: Record<string, number> = {};
-    if (markets.length > 0) {
+    if (markets.length > 0 && entryRules.length > 0) {
       const res = await evaluateRules({
-        rules,
+        rules: entryRules,
         markets,
         mode: "paper",
         now,
@@ -365,6 +439,34 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         skipMarket,
         onSignal: async ({ rule, market, side, sizeUsd, checks }) => {
           if (!papersRule(rule, opts.paperAll)) return false;
+          const res = await paperBuy(rule, market, side, sizeUsd, checks);
+          return res ? { exposureUsd: res.exposureUsd, fill: res.fill } : false;
+        },
+      });
+      entrySignals = res.signals;
+      trace = res.trace;
+      skipReasons = res.skipReasons;
+      if (!opts.fastTick) {
+        for (const [k, v] of history) ledger.lastPrices[k] = v;
+        pruneLastPrices(ledger, now);
+      }
+    }
+
+    // Copy trading entries (after the rules, so a rule that already holds a market wins).
+    if (copyCtx && copyPoll) {
+      if (copyPoll.polled) {
+        try {
+          await enterCopies(copyCtx, copyPoll);
+        } catch (err) {
+          await push({ at: now.toISOString(), type: "adapter_error", ruleId: COPY_RULE_ID, message: `Copy trading: ${(err as Error).message}` });
+        }
+      }
+      copyView = await finishCopy(copyCtx, copyPoll);
+    }
+    if (markets.length > 0 && !opts.fastTick) await saveSeries(seriesPath, series).catch(() => undefined);
+
+    /** Shared paper buy: size → contracts, fee, ledger entry, trace, event. */
+    async function paperBuy(rule: Rule, market: NormalizedMarket, side: "yes" | "no", sizeUsd: number, checks: Check[]) {
           const price = buyPrice(market, side, rule.paper.slippage);
           const adapter = adapterFor(market.platform);
           const contracts = adapter?.roundContracts ? adapter.roundContracts(sizeUsd / price, market) : sizeUsd / price;
@@ -415,18 +517,10 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
             sizeUsd: costUsd,
             data: { positionId: pos.id, price, contracts: pos.contracts, feeUsd: fee },
           });
-          return { exposureUsd: costUsd, fill: fillCheck };
-        },
-      });
-      entrySignals = res.signals;
-      trace = res.trace;
-      skipReasons = res.skipReasons;
-      for (const [k, v] of history) ledger.lastPrices[k] = v;
-      pruneLastPrices(ledger, now);
+          return { exposureUsd: costUsd, fill: fillCheck, position: pos };
     }
-    if (markets.length > 0) await saveSeries(seriesPath, series).catch(() => undefined);
 
-    if (arbCfg && arbCtx && fetched.length > 0) {
+    if (arbCfg && arbCtx && fetched.length > 0 && !opts.fastTick) {
       const universePath = universePathFor(opts.ledgerPath);
       const universe = await loadUniverse(universePath);
       const { quotes, trace: aTrace } = await findOpportunities({
@@ -485,7 +579,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     });
 
     arb.realizedPnlUsd = Math.round(arb.realizedPnlUsd * 100) / 100;
-    return { events, opened, closed, realizedPnlUsd: Math.round(realized * 100) / 100, arb, trace, arbTrace };
+    return { events, opened, closed, realizedPnlUsd: Math.round(realized * 100) / 100, arb, trace, arbTrace, copy: copyView };
   });
 }
 

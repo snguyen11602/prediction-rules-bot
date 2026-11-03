@@ -64,6 +64,53 @@ arbitrage:
     slippage: 0.005
     include_fees: true
 
+# ── Copy trading ────────────────────────────────────────────────────────────
+# Follows global Polymarket's top traders (it's the only exchange that shows other people's
+# accounts) and copies their new bets onto the SAME market on Polymarket US or Kalshi.
+#   Leaders: top of the monthly profit board, with many markets traded and a good win rate
+#            on their recent closed positions.
+#   Same market: the exact game for sports (team names + start time), otherwise the strict
+#            title match used for arbitrage. Bets with no clear twin are skipped, not guessed.
+#   Price: never pay more than 3¢ above the leader, and both sites must agree on the price.
+# Copies arrive after the leader's trade (a minute or more), and a big trader's buy can move
+# the price before you'd get there. A leaderboard is also full of luck. Paper only.
+copy_trading:
+  enabled: true
+  action: paper              # alert = just report copyable bets
+  leaders:
+    time_period: month       # profit window: day | week | month | all
+    candidates: 50           # top accounts to check
+    min_markets: 50          # traded at least 50 different markets
+    min_win_rate: 0.55       # won at least 55% of their recent closed positions…
+    min_decided: 30          # …over at least 30 results
+    min_profit_usd: 10000    # and made $10k+ this month
+    max_leaders: 10
+    refresh_hours: 6
+    include: []              # wallets to always follow (0x…)
+    exclude: []              # wallets to never follow
+  copy:
+    venues: [polymarket_us, kalshi]   # where to look for the same market, in order
+    min_leader_trade_usd: 500         # skip small fills (bots, tests)
+    max_trade_age_minutes: 30
+    max_chase: 0.03                   # pay at most 3¢ more than the leader
+    max_price_gap: 0.10
+    follow_sells: true                # sell when the leader sells
+    poll_seconds: 60                  # with paper:fast, checks leaders every minute
+  exit:
+    stop_loss_pct: 0.5                # otherwise hold until the leader sells or it resolves
+  risk:
+    position_size_fraction: 0.03      # $30 per copy on a $1,000 paper bankroll
+    bankroll_usd: 1000
+    max_position_usd: 30
+    max_open_positions: 10
+    fire_after_n_losses: 4
+    pause_hours_after_losses: 24
+    daily_loss_cap_usd: 100
+    reentry_cooldown_hours: 12
+  paper:
+    slippage: 0.005
+    include_fees: true
+
 rules:
   # ── Alerts ────────────────────────────────────────────────────────────────
   - id: mid-prob-politics-alert
@@ -326,6 +373,45 @@ rules:
       pause_hours_after_losses: 24
       daily_loss_cap_usd: 100
       reentry_cooldown_hours: 24
+    paper:
+      slippage: 0.005
+      include_fees: true
+
+  # Quick flip: made for npm run paper:fast (live prices, a check every few seconds).
+  # Buys a sharp drop in a deep, tight market and sells the bounce within the hour.
+  # Fees on a round trip are ~3¢ at mid prices, so only bigger bounces pay; paper first.
+  - id: quick-flip-paper
+    name: Deep, tight markets that dropped ≥5¢ since the last full check — sell the bounce fast
+    enabled: true
+    action: paper
+    filters:
+      platforms: [kalshi, polymarket_us]
+      keywords_exclude: [parlay, same game]
+      min_price: 0.25
+      max_price: 0.75
+      min_liquidity_usd: 20000
+      max_spread: 0.02
+      min_hours_to_resolve: 2
+    entry:
+      side: against_move         # buy the drop
+      yes_price_move_abs: 0.05
+      move_direction: down
+      max_prior_age_minutes: 15
+    exit:
+      take_profit_pct: 0.08      # +8% (about +4¢ at 50¢)
+      trailing_stop: 0.02        # or sell 2¢ off the bounce high…
+      trailing_activation: 0.02  # …once it's 2¢ up
+      stop_loss_pct: 0.06        # −6%
+      max_hold_hours: 1
+    risk:
+      position_size_fraction: 0.03
+      bankroll_usd: 1000
+      max_position_usd: 30
+      max_open_positions: 3
+      fire_after_n_losses: 3
+      pause_hours_after_losses: 12
+      daily_loss_cap_usd: 60
+      reentry_cooldown_hours: 2
     paper:
       slippage: 0.005
       include_fees: true

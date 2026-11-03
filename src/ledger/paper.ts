@@ -62,6 +62,16 @@ export interface PaperPosition {
   groupId?: string;
   /** Every check that led to this trade (filters → signal → position → risk → fill). */
   entryTrace?: Check[];
+  /** Copy trading: the global Polymarket trader and bet this position copies. */
+  copiedFrom?: {
+    wallet: string;
+    name: string;
+    conditionId?: string;
+    slug?: string;
+    outcome: string;
+    price: number;
+    at: string;
+  };
   hypothetical: true;
 }
 

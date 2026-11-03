@@ -4,6 +4,8 @@
  *
  *   npm run dashboard     view the paper ledger (read-only)
  *   npm run paper:watch   also run a paper cycle every --interval seconds (default 300)
+ *   npm run paper:fast    same, plus live streamed prices and a quick check every --tick seconds
+ *                         (needs Kalshi / Polymarket US API keys in .env; read-only market data)
  *
  * Hypothetical only: the paper loop uses public market data and the local ledger.
  * Nothing here imports or calls order-placement code.
@@ -14,7 +16,58 @@ import { runPaperCycle } from "../engine/paper-session.js";
 import { consoleSink, fileSink, webhookSink, type EventSink } from "../engine/events.js";
 import { defaultLedgerPath } from "../ledger/paper.js";
 import { createDashboardServer, type LoopState } from "../dashboard/server.js";
-import type { EngineEvent } from "../types.js";
+import type { EngineEvent, NormalizedMarket, PlatformId } from "../types.js";
+import type { PlatformAdapter } from "../platforms/types.js";
+import { loadDotEnv, readStreamCreds } from "../live-data/credentials.js";
+import { QuoteBook } from "../live-data/quotes.js";
+import { KalshiStream, PolymarketUsStream, type AnyStream } from "../live-data/streams.js";
+import { LiveQuoteAdapter } from "../live-data/live-adapter.js";
+
+/** Fast mode plumbing: one quote book, one stream per platform with keys, one cached adapter per platform. */
+function setUpFastMode(args: ReturnType<typeof parseArgs>, intervalSec: number, log: (m: string) => void) {
+  if (args.demo) return { note: "Fast mode streams real prices, so it's off with --demo." };
+  loadDotEnv();
+  const creds = readStreamCreds();
+  for (const p of creds.problems) log(`⚠ ${p}`);
+  const quotes = new QuoteBook();
+  const streams = new Map<PlatformId, AnyStream>();
+  if (creds.kalshi) streams.set("kalshi", new KalshiStream(quotes, creds.kalshi, { log }));
+  if (creds.polymarketUs) streams.set("polymarket_us", new PolymarketUsStream(quotes, creds.polymarketUs, { log }));
+  if (!streams.size) {
+    return { note: "Fast mode needs your Kalshi and/or Polymarket US API keys in .env (see README). Running normal checks." };
+  }
+  // Per platform: the scanned list (replaced on every refresh) plus single lookups such as
+  // markets we hold, so a held market keeps streaming after it drops out of the list.
+  const listed = new Map<PlatformId, Map<string, NormalizedMarket>>();
+  const looked = new Map<PlatformId, Map<string, NormalizedMarket>>();
+  const watch = (platform: PlatformId, markets: NormalizedMarket[], source: "listing" | "lookup") => {
+    const stream = streams.get(platform);
+    if (!stream) return;
+    const target = source === "listing" ? new Map<string, NormalizedMarket>() : looked.get(platform) ?? new Map();
+    for (const m of markets) if ((m.status ?? "open") === "open") target.set(m.id, m);
+    (source === "listing" ? listed : looked).set(platform, target);
+    const all = new Map([...(listed.get(platform) ?? []), ...(looked.get(platform) ?? [])]);
+    if (stream instanceof PolymarketUsStream) {
+      stream.setSlugs([...all.values()].map((m) => ({ id: m.id, slug: String((m.raw as { slug?: string } | undefined)?.slug ?? "") })).filter((x) => x.slug));
+    } else stream.setMarkets([...all.keys()]);
+  };
+  const wrappers = new Map<PlatformId, LiveQuoteAdapter>();
+  const wrap = (list: PlatformAdapter[]) =>
+    list.map((a) => {
+      let w = wrappers.get(a.id);
+      if (!w) {
+        w = new LiveQuoteAdapter(a, quotes, {
+          refreshMs: intervalSec * 1000,
+          maxQuoteAgeMs: Math.max(120_000, args.tickSec * 4000),
+          watch: (ms, source) => watch(a.id, ms, source),
+        });
+        wrappers.set(a.id, w);
+      }
+      return w;
+    });
+  for (const s of streams.values()) s.start();
+  return { quotes, streams, wrappers, wrap };
+}
 
 const MAX_EVENTS = 300;
 const QUIET_TYPES = new Set(["paper_fill", "paper_exit", "paper_summary", "adapter_error", "arb_open", "arb_close"]);
@@ -99,6 +152,15 @@ async function main() {
 
   if (!args.paper) return; // server keeps the process alive
 
+  const fast = args.fast ? setUpFastMode(args, intervalSec, (m) => console.error(m)) : undefined;
+  const fastOn = !!fast && "wrap" in fast;
+  if (fast) {
+    loop.fast = { tickSec: args.tickSec, ticks: 0, streams: [], note: "note" in fast ? fast.note : undefined };
+    if (loop.fast.note) console.error(loop.fast.note);
+    else console.log(`Fast mode: live prices from ${[...fast.streams!.keys()].join(" + ")}, quick check every ${args.tickSec}s.\n`);
+  }
+  const streamStatus = () => (fastOn ? [...fast!.streams!.values()].map((s) => ({ ...s.status })) : []);
+
   // Terminal shows only trades and problems; --log-file / --webhook still get every event.
   const extraSinks: EventSink[] = [];
   if (args.logFile) extraSinks.push(fileSink(args.logFile));
@@ -115,7 +177,40 @@ async function main() {
     }
   };
 
+  // Fast checks print only trades and problems, and add them to the feed.
+  const FAST_TYPES = new Set(["paper_fill", "paper_exit", "arb_close", "adapter_error"]);
+  const fastEmit = async (e: EngineEvent) => {
+    if (!FAST_TYPES.has(e.type) && !(e.type === "risk_block" && /pause armed/i.test(e.message))) return;
+    await emit(e);
+  };
+
+  let nextFullAt = 0;
   while (!stopping) {
+    const full = !fastOn || Date.now() >= nextFullAt;
+    if (!full) {
+      try {
+        const tick = await runPaperCycle({
+          rulesPath: args.rules,
+          ledgerPath,
+          demo: args.demo,
+          limitPerPlatform: args.limit,
+          paperAll: args.paperAll,
+          emit: fastEmit,
+          wrapAdapters: fast!.wrap,
+          fastTick: true,
+        });
+        if (tick.copy) loop.copy = tick.copy;
+        loop.fast!.ticks += 1;
+        loop.fast!.lastTickAt = new Date().toISOString();
+      } catch (err) {
+        console.error(`Fast check failed: ${(err as Error).message}`);
+      }
+      loop.fast!.streams = streamStatus();
+      if (stopping) break;
+      await new Promise((r) => setTimeout(r, args.tickSec * 1000));
+      continue;
+    }
+    if (fastOn) for (const w of fast!.wrappers!.values()) w.refresh();
     loop.running = true;
     loop.nextRunAt = undefined;
     try {
@@ -127,6 +222,7 @@ async function main() {
         limitPerPlatform: args.limit,
         paperAll: args.paperAll,
         emit,
+        wrapAdapters: fastOn ? fast!.wrap : undefined,
       });
       const end = res.events.find((e) => e.type === "scan_end");
       loop.lastResult = {
@@ -138,6 +234,7 @@ async function main() {
       loop.arbOpportunities = res.arb?.opportunities;
       loop.trace = res.trace;
       loop.arbTrace = res.arbTrace;
+      loop.copy = res.copy;
       loop.unusualMoves = res.events
         .filter((e) => e.type === "entry_signal" && e.data?.unusual && e.market)
         .map((e) => ({
@@ -162,10 +259,15 @@ async function main() {
     }
     loop.running = false;
     loop.lastRunAt = new Date().toISOString();
+    if (loop.fast) loop.fast.streams = streamStatus();
     if (stopping) break;
     loop.nextRunAt = new Date(Date.now() + intervalSec * 1000).toISOString();
-    await new Promise((r) => setTimeout(r, intervalSec * 1000));
+    if (fastOn) {
+      nextFullAt = Date.now() + intervalSec * 1000;
+      await new Promise((r) => setTimeout(r, args.tickSec * 1000));
+    } else await new Promise((r) => setTimeout(r, intervalSec * 1000));
   }
+  if (fastOn) for (const st of fast!.streams!.values()) st.stop();
   server.close();
   process.exit(0);
 }

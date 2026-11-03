@@ -1,4 +1,4 @@
-import type { NormalizedMarket } from "../types.js";
+import type { NormalizedMarket, PlatformId } from "../types.js";
 
 /**
  * Find markets on Kalshi and Polymarket that ask the same question.
@@ -52,6 +52,12 @@ export interface MatchOptions {
   reviewFloor?: number;
   /** `${kalshiId}|${polymarketId}` pairs to ignore entirely (blocked pairs). */
   exclude?: Set<string>;
+  /**
+   * Platform of the first list (default kalshi). Polymarket US titles have the same
+   * "Question — Outcome" shape as Kalshi's, so they can take that role when the second
+   * list is global Polymarket (e.g. copying a global trader's bet onto Polymarket US).
+   */
+  leftPlatform?: PlatformId;
 }
 
 const MONTHS: Record<string, string> = {
@@ -320,9 +326,10 @@ export function findMatches(
   polyMarkets: NormalizedMarket[],
   opts: MatchOptions,
 ): MatchCandidate[] {
-  const ks = kalshiMarkets.filter((m) => m.platform === "kalshi" && openForMatching(m));
+  const left = opts.leftPlatform ?? "kalshi";
+  const ks = kalshiMarkets.filter((m) => m.platform === left && openForMatching(m));
   // Either Polymarket exchange; the caller passes one exchange's markets at a time.
-  const ps = polyMarkets.filter((m) => (m.platform === "polymarket" || m.platform === "polymarket_us") && openForMatching(m));
+  const ps = polyMarkets.filter((m) => m.platform !== left && (m.platform === "polymarket" || m.platform === "polymarket_us") && openForMatching(m));
   const fK = ks.map((m) => titleFeatures(m.title));
   const fP = ps.map((m) => titleFeatures(m.title));
 

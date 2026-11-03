@@ -76,6 +76,24 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 - Unusual-move signals are public-data heuristics. Keep the wording honest in UI and docs: the bot
   never claims to know who is trading.
 
+## Fast mode and API keys
+
+- `src/live-data/` streams prices only (Kalshi `ticker`, Polymarket US `MARKET_DATA_LITE`). Keys from `.env`
+  sign the handshake; never log them, never add order/account calls there. Order code still belongs in a
+  separate, gated module that paper / scan / watch never import.
+- `LiveQuoteAdapter` wraps an adapter: REST data cached until the next full check, bid/ask replaced by a
+  fresh streamed quote. Status, resolution, liquidity and volume always come from REST.
+- Fast ticks (`fastTick`) run exits + paper entries only; they don't write `lastPrices` or price history,
+  and don't run arbitrage discovery or alert-only rules.
+
+## Copy trading
+
+- `src/platforms/polymarket-data.ts` (global Polymarket Data API, public), `src/engine/copy.ts` (pure:
+  leaders, polling, matching, checks) and `src/engine/copy-runtime.ts` (paper session glue). Rule id
+  `copy-leaders` is reserved; positions carry `copiedFrom` and exit with `leader_sold` when the leader sells.
+- Matching is as conservative as arbitrage: exact game (teams + start time, side by team name) or the
+  strict title matcher, plus a price-agreement check. Never guess a twin from loose titles.
+
 ## Paper ledger
 
 - `src/ledger/paper.ts` is the only writer of `data/paper-ledger*.json` (gitignored). Bump `version` and add a migration if you change its shape; v1 → v2 already exists.

@@ -67,6 +67,7 @@ export interface UsMarket {
   feeCoefficient?: number;
   minimumTradeQty?: number;
   sportsMarketType?: string;
+  gameStartTime?: string;
   tags?: Array<{ slug?: string; label?: string }>;
 }
 
@@ -315,6 +316,24 @@ export class PolymarketUsAdapter implements PlatformAdapter {
     const { status, data } = await getJson<{ market?: UsMarket }>(`${this.base}/v1/market/id/${id}`, "Polymarket US");
     if (status === 404 || !data?.market) return null;
     return this.settle(data.market);
+  }
+
+  /** Markets by slug (open or not), e.g. a game found from a global Polymarket slug. */
+  async getMarketsBySlug(slugs: string[]): Promise<NormalizedMarket[]> {
+    const want = [...new Set(slugs.filter(Boolean))];
+    const out: NormalizedMarket[] = [];
+    for (let i = 0; i < want.length; i += 50) {
+      const chunk = want.slice(i, i + 50);
+      const url = new URL(`${this.base}/v1/markets`);
+      for (const s of chunk) url.searchParams.append("slug", s);
+      url.searchParams.set("limit", String(chunk.length));
+      const batch = (await getJson<{ markets?: UsMarket[] }>(url, "Polymarket US")).data?.markets ?? [];
+      for (const raw of batch) {
+        const m = normalizePolymarketUs(raw);
+        if (m) out.push(m);
+      }
+    }
+    return out;
   }
 
   async getMarkets(ids: string[]): Promise<NormalizedMarket[]> {
