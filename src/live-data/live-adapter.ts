@@ -65,7 +65,15 @@ export class LiveQuoteAdapter implements PlatformAdapter {
     const limit = opts.limit ?? 100;
     const l = this.listing;
     if (!l || this.stale(l.at) || l.limit < limit || l.query !== opts.query) {
-      const markets = await this.inner.listMarkets(opts);
+      let markets: NormalizedMarket[];
+      try {
+        markets = await this.inner.listMarkets(opts);
+      } catch (err) {
+        // Keep the last listing rather than hitting REST again on every quick check.
+        if (!l || l.query !== opts.query) throw err;
+        l.at = this.now();
+        return l.markets.slice(0, limit).map((m) => this.live(m));
+      }
       this.listing = { at: this.now(), limit, query: opts.query, markets };
       for (const m of markets) this.byId.set(m.id, { at: this.listing.at, market: m });
       this.opts.watch?.(markets, "listing");

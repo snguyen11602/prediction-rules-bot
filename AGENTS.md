@@ -82,7 +82,9 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
   sign the handshake; never log them, never add order/account calls there. Order code still belongs in a
   separate, gated module that paper / scan / watch never import.
 - `LiveQuoteAdapter` wraps an adapter: REST data cached until the next full check, bid/ask replaced by a
-  fresh streamed quote. Status, resolution, liquidity and volume always come from REST.
+  streamed quote. Streams drop their quotes whenever they disconnect, so a quote in the book is current.
+  Markets carrying `quotedAt` are the only ones quick checks may trade. Status, resolution, liquidity and
+  volume always come from REST.
 - Fast ticks (`fastTick`) run exits + paper entries only; they don't write `lastPrices` or price history,
   and don't run arbitrage discovery or alert-only rules.
 

@@ -43,10 +43,24 @@ export interface CopyDecision {
 export interface CopyState {
   version: 1;
   leaders?: { at: string; list: Leader[]; considered: number };
-  /** Newest fill timestamp seen per leader (epoch seconds). */
+  /** After a failed leaderboard read, don't try again before this (ISO). */
+  leadersRetryAt?: string;
+  /** Newest fill timestamp seen per wallet (epoch seconds). */
   lastSeen: Record<string, number>;
+  /** Fills already processed (polls overlap a little, so late-indexed fills aren't skipped). */
+  seen: string[];
+  /**
+   * The leader sold this bet: `${wallet}|${market}|${outcome}` → epoch seconds of their latest sell.
+   * Kept until it's old, so a copy still sells on a later check if it couldn't sell right away.
+   */
+  exits: Record<string, number>;
   lastPollAt?: string;
   recent: CopyDecision[];
+}
+
+/** Same key for a leader's bet and our copy of it. */
+export function betKey(wallet: string, market: string | undefined, outcome: string): string {
+  return `${wallet.toLowerCase()}|${market ?? ""}|${outcome}`;
 }
 
 export function copyStatePathFor(ledgerPath: string): string {
@@ -56,11 +70,19 @@ export function copyStatePathFor(ledgerPath: string): string {
 export async function loadCopyState(file: string): Promise<CopyState> {
   try {
     const s = JSON.parse(await readFile(file, "utf8")) as CopyState;
-    if (s?.version === 1) return { ...s, lastSeen: s.lastSeen ?? {}, recent: Array.isArray(s.recent) ? s.recent : [] };
+    if (s?.version === 1) {
+      return {
+        ...s,
+        lastSeen: s.lastSeen ?? {},
+        seen: Array.isArray(s.seen) ? s.seen : [],
+        exits: s.exits ?? {},
+        recent: Array.isArray(s.recent) ? s.recent : [],
+      };
+    }
   } catch {
     // missing or unreadable: start fresh (it's a cache)
   }
-  return { version: 1, lastSeen: {}, recent: [] };
+  return { version: 1, lastSeen: {}, seen: [], exits: {}, recent: [] };
 }
 
 export async function saveCopyState(file: string, s: CopyState): Promise<void> {
@@ -85,7 +107,7 @@ async function pool<T, R>(items: T[], n: number, fn: (t: T) => Promise<R>): Prom
 }
 
 /** Who to follow: profitable on the leaderboard, many markets, and a good recent win rate. */
-export async function pickLeaders(client: PolymarketDataClient, cfg: CopyTradingConfig): Promise<{ list: Leader[]; considered: number }> {
+export async function pickLeaders(client: PolymarketDataClient, cfg: CopyTradingConfig): Promise<{ list: Leader[]; considered: number; failed: number }> {
   const L = cfg.leaders;
   const exclude = new Set(L.exclude.map((w) => w.toLowerCase()));
   const rows = await client.leaderboard(L.time_period, L.candidates);
@@ -121,7 +143,7 @@ export async function pickLeaders(client: PolymarketDataClient, cfg: CopyTrading
     )
     .sort((a, b) => b.windowPnlUsd - a.windowPnlUsd)
     .slice(0, L.max_leaders);
-  return { list, considered: candidates.length };
+  return { list, considered: candidates.length, failed: scored.filter((l) => !l).length };
 }
 
 /** One leader bet: their fills on one market + outcome in this poll, combined. */
@@ -167,27 +189,53 @@ function combine(leader: Leader, trades: TraderTrade[]): LeaderBet[] {
   });
 }
 
-/** New fills from each leader since the last poll (the first poll only looks back max_trade_age_minutes). */
+/** Re-read this much before the last fill we saw: fills can be indexed late and out of order. */
+const OVERLAP_SEC = 180;
+const MAX_SEEN = 4000;
+const EXIT_TTL_SEC = 30 * 86_400;
+
+const fillId = (t: TraderTrade) => `${t.transaction_hash ?? t.timestamp}|${t.side}|${t.outcome}|${t.size}|${t.price}|${t.condition_id ?? t.slug}`;
+
+/**
+ * New fills since the last poll. `wallets` are the leaders plus anyone we still hold a copy from
+ * (so their sells are seen even after they drop off the leader list); `since` gives a start for a
+ * wallet we haven't polled before. Records every sell in `state.exits`. Buys are returned whatever
+ * their age; the caller only copies fresh ones.
+ */
 export async function pollLeaders(
   client: PolymarketDataClient,
-  leaders: Leader[],
+  wallets: Array<{ leader: Leader; since?: number }>,
   state: CopyState,
   cfg: CopyTradingConfig,
   now: Date,
 ): Promise<LeaderBet[]> {
-  const floor = Math.floor(now.getTime() / 1000) - cfg.copy.max_trade_age_minutes * 60;
+  const nowSec = Math.floor(now.getTime() / 1000);
+  const floor = nowSec - cfg.copy.max_trade_age_minutes * 60;
+  const seen = new Set(state.seen);
   const bets: LeaderBet[] = [];
-  await pool(leaders, 3, async (l) => {
-    const since = Math.max(state.lastSeen[l.wallet] != null ? state.lastSeen[l.wallet] + 1 : floor, floor);
+  await pool(wallets, 3, async ({ leader: l, since: start }) => {
+    const last = state.lastSeen[l.wallet];
+    const since = last != null ? last - OVERLAP_SEC : Math.min(start ?? floor, floor);
     try {
       const trades = await client.trades(l.wallet, since, 200);
-      const fresh = trades.filter((t) => t.timestamp >= since);
-      if (fresh.length) state.lastSeen[l.wallet] = Math.max(state.lastSeen[l.wallet] ?? 0, ...fresh.map((t) => t.timestamp));
+      const fresh = trades.filter((t) => t.timestamp >= since && !seen.has(fillId(t)));
+      for (const t of fresh) {
+        seen.add(fillId(t));
+        state.seen.push(fillId(t));
+      }
+      if (trades.length) state.lastSeen[l.wallet] = Math.max(last ?? 0, ...trades.map((t) => t.timestamp));
       bets.push(...combine(l, fresh));
     } catch {
       // try again next poll
     }
   });
+  for (const b of bets) {
+    if (b.side !== "SELL" || b.usd < cfg.copy.min_leader_trade_usd / 2) continue;
+    const k = betKey(b.leader.wallet, b.conditionId ?? b.slug, b.outcome);
+    state.exits[k] = Math.max(state.exits[k] ?? 0, b.at);
+  }
+  for (const [k, at] of Object.entries(state.exits)) if (at < nowSec - EXIT_TTL_SEC) delete state.exits[k];
+  if (state.seen.length > MAX_SEEN) state.seen.splice(0, state.seen.length - MAX_SEEN);
   return bets.sort((a, b) => b.at - a.at);
 }
 
@@ -234,11 +282,14 @@ export function matchGame(global: NormalizedMarket, us: NormalizedMarket[], boug
   if (gRaw?.sportsMarketType && gRaw.sportsMarketType !== "moneyline") return { reason: "only game-winner bets are copied (this is a spread / over-under / prop)" };
   if (gRaw?.sportsMarketType !== "moneyline" || global.outcomes?.length !== 2) return { reason: "not a two-team game" };
   const start = gRaw.gameStartTime ? Date.parse(gRaw.gameStartTime.replace(" ", "T").replace(/\+00$/, "Z")) : NaN;
+  // Teams can meet on consecutive days (a series), so both start times are required.
+  if (!Number.isFinite(start)) return { reason: "the leader's game has no start time" };
   for (const m of us) {
     const raw = m.raw as { sportsMarketType?: string; gameStartTime?: string; slug?: string } | undefined;
+    if ((m.status ?? "open") !== "open") continue;
     if (!raw?.sportsMarketType?.endsWith("_winner") || m.outcomes?.length !== 2) continue;
     const usStart = raw.gameStartTime ? Date.parse(raw.gameStartTime) : NaN;
-    if (Number.isFinite(start) && Number.isFinite(usStart) && Math.abs(start - usStart) > 3 * 3600_000) continue;
+    if (!Number.isFinite(usStart) || Math.abs(start - usStart) > 3 * 3600_000) continue;
     const [g0, g1] = global.outcomes;
     const [long, short] = m.outcomes;
     const straight = sameTeam(g0, long) && sameTeam(g1, short);
@@ -260,6 +311,8 @@ export function matchTitle(
   markets: NormalizedMarket[],
   outcome: string,
   cfg: CopyTradingConfig,
+  /** `${kalshiId}|${globalId}` pairs you blocked with arb:block. */
+  blocked?: Set<string>,
 ): CopyTarget | { reason: string } {
   if (!/^(yes|no)$/i.test(outcome)) return { reason: `bet is on "${outcome}", not Yes/No` };
   const found = findMatches(markets, [global], {
@@ -267,6 +320,7 @@ export function matchTitle(
     // Polymarket US close times are settlement deadlines, often weeks after the event.
     maxCloseGapHours: venue === "polymarket_us" ? 2400 : 168,
     leftPlatform: venue,
+    exclude: venue === "kalshi" ? blocked : undefined,
   });
   const best = found.find((c) => c.ok);
   if (!best) return { reason: `no matching question on ${platformName(venue)}` };

@@ -333,8 +333,11 @@ export const RulesFileSchema = z.object({
   copy_trading: CopyTradingSchema.optional(),
 }).superRefine((file, ctx) => {
   file.rules.forEach((r, i) => {
-    for (const [reserved, what] of [[ARB_RULE_ID, "the arbitrage strategy"], [COPY_RULE_ID, "copy trading"]] as const) {
-      if (r.id === reserved) {
+    for (const [reserved, what, used] of [
+      [ARB_RULE_ID, "the arbitrage strategy", !!file.arbitrage],
+      [COPY_RULE_ID, "copy trading", !!file.copy_trading],
+    ] as const) {
+      if (used && r.id === reserved) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["rules", i, "id"],

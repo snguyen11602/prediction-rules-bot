@@ -32,6 +32,11 @@ export class QuoteBook {
     for (const fn of this.listeners) fn(platform, id);
   }
 
+  /** Drop a platform's quotes (its stream disconnected, so they may no longer be current). */
+  clearPlatform(platform: PlatformId): void {
+    for (const k of [...this.quotes.keys()]) if (k.startsWith(`${platform}:`)) this.quotes.delete(k);
+  }
+
   get(platform: PlatformId, id: string): LiveQuote | undefined {
     return this.quotes.get(QuoteBook.key(platform, id));
   }
@@ -56,13 +61,17 @@ export function streamPrice(v: unknown): number | undefined {
 }
 
 /**
- * Overlay a fresh streamed quote on a market snapshot. Only open markets are touched; a stale or
- * missing quote leaves the snapshot as it was (the REST data stays the source of truth for status,
- * resolution, liquidity and volume).
+ * Overlay a streamed quote on a market snapshot. Quotes are dropped whenever their stream
+ * disconnects, so one in the book is current (streams send on every change); maxAgeMs is only a
+ * backstop. A streamed empty book stays empty (untradeable) rather than falling back to old REST
+ * prices. Only open markets are touched: status, resolution, liquidity and volume stay REST data.
+ * `quotedAt` marks a market whose bid/ask came from the stream; fast checks act only on those.
  */
 export function withLiveQuote(m: NormalizedMarket, q: LiveQuote | undefined, maxAgeMs: number, now = Date.now()): NormalizedMarket {
   if (!q || (m.status ?? "open") !== "open" || now - q.at > maxAgeMs) return m;
-  if (q.bid == null && q.ask == null) return m;
+  if (q.bid == null && q.ask == null) {
+    return { ...m, yesBid: undefined, yesAsk: undefined, quotedAt: new Date(q.at).toISOString() };
+  }
   const bid = q.bid;
   const ask = q.ask;
   const yes = bid != null && ask != null ? (bid + ask) / 2 : (q.last ?? bid ?? ask ?? m.yesPrice);

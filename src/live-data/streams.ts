@@ -65,7 +65,8 @@ abstract class MarketStream {
     const added = next.some((id) => !this.subscribed.has(id));
     this.wanted = next;
     this.status.markets = next.length;
-    if (this.stopped) return;
+    // While a retry is scheduled, let the backoff run; it picks up the new list.
+    if (this.stopped || this.timer) return;
     if (!this.ws) this.connect();
     else if (added) this.restart();
   }
@@ -78,27 +79,34 @@ abstract class MarketStream {
   stop(): void {
     this.stopped = true;
     clearTimeout(this.timer);
+    this.timer = undefined;
     clearTimeout(this.idle);
     kill(this.ws);
     this.ws = undefined;
+    this.quotes.clearPlatform(this.platform);
     this.status.state = "off";
   }
 
   private restart(): void {
-    kill(this.ws);
-    this.ws = undefined;
     this.connect();
   }
 
   private touch(): void {
     clearTimeout(this.idle);
     this.idle = setTimeout(() => {
-      this.opts.log?.(`${this.platform}: no data for ${Math.round((this.opts.idleMs ?? 45_000) / 1000)}s, reconnecting`);
+      this.opts.log?.(`${this.platform}: no data for ${Math.round((this.opts.idleMs ?? 90_000) / 1000)}s, reconnecting`);
       this.restart();
-    }, this.opts.idleMs ?? 45_000);
+    }, this.opts.idleMs ?? 90_000);
   }
 
   protected connect(): void {
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    clearTimeout(this.idle);
+    // One socket at a time; a quote is only trusted while the socket it came on is live.
+    kill(this.ws);
+    this.ws = undefined;
+    this.quotes.clearPlatform(this.platform);
     if (this.stopped || !this.wanted.length) return;
     this.status.state = this.retries ? "retrying" : "connecting";
     let ws: WebSocket;
@@ -112,7 +120,6 @@ abstract class MarketStream {
     this.ws = ws;
     const ids = [...this.wanted];
     ws.on("open", () => {
-      this.retries = 0;
       this.status.state = "live";
       this.status.error = undefined;
       this.subscribed = new Set(ids);
@@ -121,6 +128,8 @@ abstract class MarketStream {
     });
     ws.on("ping", () => this.touch()); // ws answers pings automatically
     ws.on("message", (data) => {
+      // Only a socket that actually delivers data resets the backoff (not one that opens and drops).
+      this.retries = 0;
       this.touch();
       this.status.lastMessageAt = new Date().toISOString();
       let msg: unknown;
@@ -142,6 +151,7 @@ abstract class MarketStream {
         this.stopped = true;
         kill(ws);
         this.ws = undefined;
+        this.quotes.clearPlatform(this.platform);
         return;
       }
       this.fail(`HTTP ${code}`);
@@ -155,13 +165,17 @@ abstract class MarketStream {
     kill(this.ws);
     this.ws = undefined;
     this.subscribed.clear();
+    this.quotes.clearPlatform(this.platform);
     clearTimeout(this.idle);
     this.retries += 1;
     this.status.state = "retrying";
     this.status.error = reason;
     const wait = Math.min(60_000, 1000 * 2 ** Math.min(this.retries, 6));
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.connect(), wait);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      this.connect();
+    }, wait);
   }
 
   protected bump(): void {

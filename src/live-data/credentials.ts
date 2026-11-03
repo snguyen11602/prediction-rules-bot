@@ -66,13 +66,28 @@ export function readStreamCreds(env: NodeJS.ProcessEnv = process.env): StreamCre
   const kId = env.KALSHI_API_KEY_ID?.trim();
   const kPath = env.KALSHI_PRIVATE_KEY_PATH?.trim();
   if (kId && kPath) {
-    try {
-      const key = createPrivateKey(readFileSync(expandHome(kPath), "utf8"));
-      const type = key.asymmetricKeyType;
-      if (type !== "rsa" && type !== "ed25519") throw new Error(`unsupported key type ${type}`);
-      out.kalshi = { keyId: kId, key };
-    } catch (err) {
-      problems.push(`Kalshi key file at KALSHI_PRIVATE_KEY_PATH couldn't be read (${(err as Error).message.split("\n")[0]})`);
+    if (/BEGIN|PRIVATE KEY|^MI[IG]/.test(kPath) || kPath.length > 1024) {
+      // Someone pasted the key itself; never echo it back.
+      problems.push("KALSHI_PRIVATE_KEY_PATH must be the path to your key file, not the key itself");
+    } else {
+      let pem: string | undefined;
+      try {
+        pem = readFileSync(expandHome(kPath), "utf8");
+      } catch (err) {
+        // Error code only: messages include the path, which could be anything the user typed.
+        const code = (err as NodeJS.ErrnoException).code ?? "unreadable";
+        problems.push(`Kalshi key file at KALSHI_PRIVATE_KEY_PATH couldn't be opened (${code === "ENOENT" ? "no file there" : code})`);
+      }
+      if (pem != null) {
+        try {
+          const key = createPrivateKey(pem);
+          const type = key.asymmetricKeyType;
+          if (type !== "rsa" && type !== "ed25519") throw new Error("unsupported");
+          out.kalshi = { keyId: kId, key };
+        } catch {
+          problems.push("The file at KALSHI_PRIVATE_KEY_PATH isn't a Kalshi private key (expected the .key / .pem file Kalshi gave you)");
+        }
+      }
     }
   } else if (kId || kPath) {
     problems.push("Kalshi needs both KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY_PATH in .env");
@@ -83,8 +98,8 @@ export function readStreamCreds(env: NodeJS.ProcessEnv = process.env): StreamCre
   if (pId && pSecret) {
     try {
       out.polymarketUs = { keyId: pId, key: ed25519FromBase64Seed(pSecret) };
-    } catch (err) {
-      problems.push(`POLYMARKET_SECRET_KEY isn't a valid Polymarket US secret key (${(err as Error).message})`);
+    } catch {
+      problems.push("POLYMARKET_SECRET_KEY isn't a valid Polymarket US secret key (expected the Secret Key shown once at polymarket.us/developer)");
     }
   } else if (pId || pSecret) {
     problems.push("Polymarket US needs both POLYMARKET_KEY_ID and POLYMARKET_SECRET_KEY in .env");

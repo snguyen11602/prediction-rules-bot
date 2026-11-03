@@ -65,6 +65,40 @@ test(".env loading and key problems never echo the secret", async () => {
   assert.ok(creds.problems.some((p) => /KALSHI_PRIVATE_KEY_PATH/.test(p)));
   assert.ok(creds.problems.every((p) => !p.includes("not-base64-secret")));
   assert.equal(loadDotEnv(path.join(dir, "missing.env"), {}), false);
+  // A key pasted where the path goes, or a mistyped path, is never echoed back.
+  const pasted = readStreamCreds({ KALSHI_API_KEY_ID: "k", KALSHI_PRIVATE_KEY_PATH: "-----BEGIN PRIVATE KEY-----\\nMIIEvSECRET" });
+  assert.ok(pasted.problems.length === 1 && !pasted.problems[0].includes("SECRET") && /not the key itself/.test(pasted.problems[0]));
+  const missing = readStreamCreds({ KALSHI_API_KEY_ID: "k", KALSHI_PRIVATE_KEY_PATH: "/tmp/does-not-exist/my-secret-folder/k.key" });
+  assert.ok(missing.problems.length === 1 && !missing.problems[0].includes("my-secret-folder"));
+});
+
+test("streams keep one socket, honour the backoff, and clear their quotes when they drop", async () => {
+  let connections = 0;
+  const { wss, port } = await server(() => true);
+  wss.on("connection", (ws) => {
+    connections += 1;
+    if (connections === 1) ws.send(JSON.stringify({ type: "ticker", msg: { market_ticker: "A", yes_bid_dollars: "0.40", yes_ask_dollars: "0.42" } }));
+    setTimeout(() => ws.close(), 50);
+  });
+  const ed = generateKeyPairSync("ed25519");
+  const quotes = new QuoteBook();
+  const s = new KalshiStream(quotes, { keyId: "k", key: ed.privateKey }, { url: `ws://127.0.0.1:${port}${KALSHI_WS_PATH}` });
+  s.setMarkets(["A"]);
+  s.start();
+  try {
+    await until(() => quotes.get("kalshi", "A") != null);
+    await until(() => s.status.state === "retrying");
+    assert.equal(quotes.get("kalshi", "A"), undefined, "quotes from a dropped socket aren't trusted");
+    s.setMarkets(["A", "B"]); // new markets while a retry is pending: no extra socket
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(connections, 1);
+    s.stop();
+    await new Promise((r) => setTimeout(r, 2300));
+    assert.equal(connections, 1, "stop() cancels the pending retry");
+  } finally {
+    s.stop();
+    wss.close();
+  }
 });
 
 test("Kalshi key file: PEM path from .env (with ~) loads", async () => {
@@ -176,6 +210,10 @@ test("live quotes replace bid/ask only while fresh, and only on open markets", (
   assert.ok(live.quotedAt);
   assert.equal(withLiveQuote(m, q, 5000, 10_000), m, "stale quote ignored");
   assert.equal(withLiveQuote({ ...m, status: "closed" }, q, 5000, 2000).yesBid, 0.49, "closed markets keep REST data");
+  const empty = withLiveQuote(m, { at: 1000 }, 5000, 2000);
+  assert.deepEqual([empty.yesBid, empty.yesAsk], [undefined, undefined], "a streamed empty book is untradeable, not the old REST quote");
+  assert.ok(empty.quotedAt);
+  assert.equal(withLiveQuote(m, q, 5000, 2000).quotedAt != null, true);
   const book = new QuoteBook();
   book.set("kalshi", "A", { bid: 0.4, ask: 0.42 });
   book.set("kalshi", "A", { last: 0.41 });
@@ -253,6 +291,12 @@ test("fast checks sell on a live quote without touching the prices that move-bas
   assert.equal(full.opened, 1);
   const before = JSON.parse(await readFile(ledgerPath, "utf8")) as PaperLedger;
   assert.equal(before.lastPrices["kalshi:K"]?.yesPrice, 0.5);
+
+  // A quick check doesn't trade on cached REST data, even when it would hit the target.
+  await writeFile(fixture, JSON.stringify([{ platform: "kalshi", id: "K", title: "K", yesPrice: 0.6, yesBid: 0.59, yesAsk: 0.61, closesInHours: 100 }]));
+  wrappers.get("kalshi")!.refresh();
+  await wrappers.get("kalshi")!.listMarkets({ limit: 400 });
+  assert.equal((await run(true)).closed, 0, "no live quote → wait for the full check");
 
   events.length = 0;
   quotes.set("kalshi", "K", { bid: 0.59, ask: 0.6 });

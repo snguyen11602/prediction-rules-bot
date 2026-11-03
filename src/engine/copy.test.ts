@@ -96,13 +96,26 @@ test("polling combines a leader's fills into one bet and never re-reads old ones
     proxy_wallet: w, side, outcome: "Pacers", outcome_index: 1, price, size, timestamp: ts, slug: "nba-atl-ind-2026-11-02", condition_id: "0xc", title: "Hawks vs. Pacers",
   });
   const trades = [fill(sec(T0) - 7200, 9999, 0.1), fill(sec(T0) - 300, 1000, 0.2), fill(sec(T0) - 200, 3000, 0.24)];
-  const state: CopyState = { version: 1, lastSeen: {}, recent: [] };
-  const bets = await pollLeaders(fakeData(trades) as never, [leader], state, cfg, T0);
+  const state: CopyState = { version: 1, lastSeen: {}, seen: [], exits: {}, recent: [] };
+  const bets = await pollLeaders(fakeData(trades) as never, [{ leader }], state, cfg, T0);
   assert.equal(bets.length, 1, "the 2-hour-old fill is too old to copy");
   assert.ok(Math.abs(bets[0].price - 0.23) < 1e-9, "size-weighted average price");
   assert.equal(bets[0].usd, 1000 * 0.2 + 3000 * 0.24);
   assert.equal(state.lastSeen[w], sec(T0) - 200);
-  assert.equal((await pollLeaders(fakeData(trades) as never, [leader], state, cfg, new Date(T0.getTime() + 60_000))).length, 0);
+  assert.equal((await pollLeaders(fakeData(trades) as never, [{ leader }], state, cfg, new Date(T0.getTime() + 60_000))).length, 0, "overlapping re-reads are de-duplicated");
+  // A late-indexed fill (older than the last one seen) is still picked up, once.
+  trades.push(fill(sec(T0) - 250, 500, 0.21));
+  const late = await pollLeaders(fakeData(trades) as never, [{ leader }], state, cfg, new Date(T0.getTime() + 120_000));
+  assert.deepEqual(late.map((b) => b.shares), [500]);
+  // Sells are remembered (no age limit), so a copy can still follow them later.
+  trades.push(fill(sec(T0) + 100, 3000, 0.3, "SELL"));
+  await pollLeaders(fakeData(trades) as never, [{ leader }], state, cfg, new Date(T0.getTime() + 180_000));
+  assert.equal(state.exits[`${w}|0xc|Pacers`], sec(T0) + 100);
+});
+
+test("closed games are never copy targets", () => {
+  assert.ok("reason" in matchGame(globalGame, [{ ...usGame(["Atlanta Hawks", "Indiana Pacers"]), status: "closed" }], "Pacers"));
+  assert.ok("reason" in matchGame({ ...globalGame, raw: { ...(globalGame.raw as object), gameStartTime: undefined } }, [usGame(["Atlanta Hawks", "Indiana Pacers"])], "Pacers"), "both start times are required");
 });
 
 test("paper copy: copies the leader's game bet onto Polymarket US, and sells when the leader sells", async () => {
@@ -153,4 +166,85 @@ copy_trading:
   ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as PaperLedger;
   assert.equal(ledger.positions[0].exitReason, "leader_sold");
   assert.match(ledger.positions[0].exitDetail ?? "", /sold Pacers/);
+});
+
+/** A two-game Polymarket US fixture and a leader whose trades the test controls. */
+async function copySetup(extraRules = "") {
+  const dir = await mkdtemp(path.join(tmpdir(), "prb-copy2-"));
+  const rules = path.join(dir, "rules.yaml");
+  await writeFile(
+    rules,
+    `rules:
+  - id: noop
+    name: noop
+    filters: { keywords_any: [zzzz] }
+copy_trading:
+  leaders: { min_markets: 50, min_win_rate: 0.6, min_decided: 30, min_profit_usd: 10000 }
+${extraRules}`,
+  );
+  const fixture = path.join(dir, "m.json");
+  const game2 = { ...usGame(["Boston Celtics", "Houston Rockets"]), id: "u2", title: "Celtics vs Rockets [YES = Boston Celtics]", raw: { slug: "aec-nba-bos-hou-2026-11-02", sportsMarketType: "basketball_team_full_game_winner", gameStartTime: "2026-11-03T01:30:00Z" } };
+  const writeMarkets = (u1: Partial<NormalizedMarket>) =>
+    writeFile(fixture, JSON.stringify([{ ...usGame(["Atlanta Hawks", "Indiana Pacers"]), ...u1, closesInHours: 3 }, { ...game2, closesInHours: 4 }]));
+  await writeMarkets({});
+  const w = "0x" + "a".repeat(40);
+  const trades: TraderTrade[] = [];
+  const g2: NormalizedMarket = { ...globalGame, id: "g2", title: "Celtics vs. Rockets", outcomes: ["Celtics", "Rockets"], yesPrice: 0.795, raw: { slug: "nba-bos-hou-2026-11-02", sportsMarketType: "moneyline", gameStartTime: "2026-11-03 01:30:00+00" } };
+  const deps: CopyDeps = {
+    data: fakeData(trades),
+    globalBySlug: async (slugs) => [globalGame, g2].filter((g) => slugs.includes(String((g.raw as { slug: string }).slug))),
+    usBySlug: async (slugs) => [usGame(["Atlanta Hawks", "Indiana Pacers"]), game2].filter((m) => slugs.includes(String((m.raw as { slug: string }).slug))),
+  };
+  const ledgerPath = path.join(dir, "ledger.json");
+  const run = (now: Date) =>
+    runPaperCycle({ rulesPath: rules, ledgerPath, demo: true, now, copyDeps: deps, emit: () => undefined, adapters: [new DemoAdapter("polymarket_us", { fixturePath: fixture, now: () => now })] });
+  const buy = (slug: string, outcome: string, at: number, side: "BUY" | "SELL" = "BUY", price = 0.2): TraderTrade => ({
+    proxy_wallet: w, side, outcome, outcome_index: 1, price, size: 5000, timestamp: at, slug, condition_id: `c-${slug}`, title: slug, transaction_hash: `${slug}-${side}-${at}`,
+  });
+  const ledger = async () => JSON.parse(await readFile(ledgerPath, "utf8")) as PaperLedger;
+  return { dir, trades, run, buy, writeMarkets, ledger, w, statePath: path.join(dir, "ledger.copy.json") };
+}
+
+test("a loss pause armed by this cycle's exits blocks copies in the same cycle", async () => {
+  const s = await copySetup();
+  // Tighten the copy risk: one loss pauses it.
+  const rulesFile = path.join(s.dir, "rules.yaml");
+  await writeFile(rulesFile, (await readFile(rulesFile, "utf8")) + "  risk: { position_size_fraction: 0.03, max_position_usd: 30, fire_after_n_losses: 1, pause_hours_after_losses: 24 }\n  exit: { stop_loss_pct: 0.3 }\n");
+  s.trades.push(s.buy("nba-atl-ind-2026-11-02", "Pacers", sec(T0) - 300));
+  assert.equal((await s.run(T0)).opened, 1);
+  // The Hawks run away with it (our NO collapses → stop loss) while the leader buys another game.
+  await s.writeMarkets({ yesPrice: 0.965, yesBid: 0.96, yesAsk: 0.97 });
+  const t1 = new Date(T0.getTime() + 600_000);
+  s.trades.push(s.buy("nba-bos-hou-2026-11-02", "Rockets", sec(t1) - 60));
+  const r = await s.run(t1);
+  assert.equal(r.closed, 1);
+  assert.equal(r.opened, 0, "the pause armed by the stop loss applies right away");
+  assert.match(r.copy?.recent[0].reason ?? "", /pause|paused/i);
+});
+
+test("a leader's sell is remembered until the copy can actually sell, even after they leave the leader list", async () => {
+  const s = await copySetup();
+  s.trades.push(s.buy("nba-atl-ind-2026-11-02", "Pacers", sec(T0) - 300));
+  assert.equal((await s.run(T0)).opened, 1);
+  // They sell while nobody is bidding for our NO (no YES ask) — we can't sell yet.
+  await s.writeMarkets({ yesAsk: undefined, yesBid: 0.79, yesPrice: 0.79 });
+  const t1 = new Date(T0.getTime() + 300_000);
+  s.trades.push(s.buy("nba-atl-ind-2026-11-02", "Pacers", sec(t1) - 30, "SELL", 0.25));
+  assert.equal((await s.run(t1)).closed, 0);
+  // They also drop off the leader list.
+  const st = JSON.parse(await readFile(s.statePath, "utf8"));
+  st.leaders.list = [];
+  await writeFile(s.statePath, JSON.stringify(st));
+  await s.writeMarkets({});
+  const r = await s.run(new Date(T0.getTime() + 900_000));
+  assert.equal(r.closed, 1);
+  assert.equal((await s.ledger()).positions[0].exitReason, "leader_sold");
+});
+
+test("a buy the leader already sold again isn't copied", async () => {
+  const s = await copySetup();
+  s.trades.push(s.buy("nba-atl-ind-2026-11-02", "Pacers", sec(T0) - 300), s.buy("nba-atl-ind-2026-11-02", "Pacers", sec(T0) - 100, "SELL"));
+  const r = await s.run(T0);
+  assert.equal(r.opened, 0);
+  assert.match(r.copy?.recent.find((d) => d.outcome === "Pacers")?.reason ?? "", /already sold/);
 });

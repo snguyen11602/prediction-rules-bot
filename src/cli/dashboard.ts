@@ -17,6 +17,7 @@ import { consoleSink, fileSink, webhookSink, type EventSink } from "../engine/ev
 import { defaultLedgerPath } from "../ledger/paper.js";
 import { createDashboardServer, type LoopState } from "../dashboard/server.js";
 import type { EngineEvent, NormalizedMarket, PlatformId } from "../types.js";
+import { COPY_RULE_ID } from "../rules/schema.js";
 import type { PlatformAdapter } from "../platforms/types.js";
 import { loadDotEnv, readStreamCreds } from "../live-data/credentials.js";
 import { QuoteBook } from "../live-data/quotes.js";
@@ -57,8 +58,9 @@ function setUpFastMode(args: ReturnType<typeof parseArgs>, intervalSec: number, 
       let w = wrappers.get(a.id);
       if (!w) {
         w = new LiveQuoteAdapter(a, quotes, {
-          refreshMs: intervalSec * 1000,
-          maxQuoteAgeMs: Math.max(120_000, args.tickSec * 4000),
+          // Full checks refresh explicitly; this is only a backstop so quick checks never hit REST.
+          refreshMs: intervalSec * 2000,
+          maxQuoteAgeMs: 15 * 60_000,
           watch: (ms, source) => watch(a.id, ms, source),
         });
         wrappers.set(a.id, w);
@@ -139,8 +141,9 @@ async function main() {
   if (!args.noOpen) openBrowser(url);
 
   let stopping = false;
+  let ticking = false; // a quick check holds the ledger lock too
   const shutdown = () => {
-    if (stopping || !loop.running) {
+    if (stopping || !(loop.running || ticking)) {
       server.close();
       process.exit(stopping ? 130 : 0);
     }
@@ -180,7 +183,8 @@ async function main() {
   // Fast checks print only trades and problems, and add them to the feed.
   const FAST_TYPES = new Set(["paper_fill", "paper_exit", "arb_close", "adapter_error"]);
   const fastEmit = async (e: EngineEvent) => {
-    if (!FAST_TYPES.has(e.type) && !(e.type === "risk_block" && /pause armed/i.test(e.message))) return;
+    const copyAlert = e.type === "entry_signal" && e.ruleId === COPY_RULE_ID;
+    if (!FAST_TYPES.has(e.type) && !copyAlert && !(e.type === "risk_block" && /pause armed/i.test(e.message))) return;
     await emit(e);
   };
 
@@ -188,6 +192,7 @@ async function main() {
   while (!stopping) {
     const full = !fastOn || Date.now() >= nextFullAt;
     if (!full) {
+      ticking = true;
       try {
         const tick = await runPaperCycle({
           rulesPath: args.rules,
@@ -205,6 +210,7 @@ async function main() {
       } catch (err) {
         console.error(`Fast check failed: ${(err as Error).message}`);
       }
+      ticking = false;
       loop.fast!.streams = streamStatus();
       if (stopping) break;
       await new Promise((r) => setTimeout(r, args.tickSec * 1000));

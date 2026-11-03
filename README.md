@@ -81,8 +81,12 @@ Configured in the `copy_trading:` block of `rules/example.yaml`. Paper by defaul
   Spreads, over/unders and props aren't copied yet. Bets with no clear twin are skipped, not guessed.
 - **Price.** A copy never pays more than 3¢ above the leader's price, and the two sites must agree on the
   price within 10¢ (otherwise it's probably not the same bet).
-- **Exits.** It sells when the leader sells (`follow_sells`), when the market resolves, or at the stop loss.
-  Sizing, caps and the losing-streak pause use the same risk block as every other strategy.
+- **Exits.** It sells when the leader sells (`follow_sells`; a sale worth at least half of
+  `min_leader_trade_usd` counts, so a partial trim closes the whole copy), when the market resolves, or at
+  the stop loss. A leader's sell is remembered, so a copy that can't sell right away (no bid) sells on a
+  later check, and anyone you still hold a copy from keeps being watched after they leave the leader list
+  or copy trading is switched off. Sizing, caps and the losing-streak pause use the same risk block as
+  every other strategy.
 - **Honest limits.** You see a trade only after it happens (a minute or more later), and a big trader's
   buy often moves the price first. High win rates often come from buying heavy favorites (small wins,
   rare big losses), and a monthly leaderboard is partly luck. The dashboard lists each copied and skipped
@@ -100,6 +104,9 @@ checks the leaders every minute. Still paper only.
   require a signed connection even for price streams. The keys are only used to sign that connection;
   `src/live-data/` has no order, cancel or account code. Key contents are never logged.
 - Without keys, `paper:fast` says so and runs normal checks.
+- Quick checks only act on markets with a live streamed price. Everything else (no stream, stream down,
+  a quiet market after a reconnect) waits for the next full check. A streamed empty book is treated as
+  untradeable, never as the last REST price. Arbitrage is managed on full checks only.
 - "Moved since the last check" rules still compare with the last **full** check, so a 5¢ drop since then
   is caught within seconds, not missed because the previous quick check was 5 seconds ago.
 - The status line on the dashboard shows each stream (✓ live, ✗ key rejected).
