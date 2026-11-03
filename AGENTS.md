@@ -101,6 +101,15 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
   `copy-leaders` is reserved; positions carry `copiedFrom` and exit with `leader_sold` when the leader sells.
 - Matching is as conservative as arbitrage: exact game (teams + start time, side by team name) or the
   strict title matcher, plus a price-agreement check. Never guess a twin from loose titles.
+- Kalshi leaders come from `src/platforms/kalshi-social.ts` (public social API: leaderboard, profile
+  metrics, public trades; requests are spaced out because they share Kalshi's rate limit with the paper
+  cycle). Their wallet key is `kalshi:<nickname>`; only taker fills are copied, on the same ticker. A
+  trade's `price_dollars` is the YES price whichever side was taken. Kalshi parlays (`KXMVE…` tickers,
+  legs in `mve_selected_legs`) are never copied as single bets.
+- Parlays (`src/engine/parlays.ts`, rule id `copy-parlays`, `ledger.parlays`) are paper only. Legs come
+  from bets copy trading already matched to a tradable market; one exchange and one leg per game per
+  parlay; settled leg by leg (a lost leg loses it, a void leg drops out). Keep the price honest: legs'
+  asks multiplied plus `combo_margin`, never better than the legs alone.
 
 ## Strategy league and backtests
 

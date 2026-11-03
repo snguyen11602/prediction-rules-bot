@@ -274,9 +274,11 @@ export const ArbPairsFileSchema = z.object({
 });
 
 export const COPY_RULE_ID = "copy-leaders";
+/** Paper parlays (built from leaders' big bets, or copied from a leader's own parlay). */
+export const PARLAY_RULE_ID = "copy-parlays";
 
 /**
- * Copy trading: follow global Polymarket's top traders (the only exchange that publishes other
+ * Copy trading: follow top traders on global Polymarket and Kalshi (the two that publish other
  * traders' accounts) and copy their new bets onto the same market on Polymarket US or Kalshi.
  */
 export const CopyTradingSchema = z.object({
@@ -305,6 +307,65 @@ export const CopyTradingSchema = z.object({
       exclude: z.array(z.string()).default([]),
     })
     .default({}),
+  /**
+   * Kalshi's public leaderboard, as a second source of leaders. Only traders who show their trades
+   * can be followed; their bets are copied onto the same Kalshi market. Kalshi doesn't publish a win
+   * rate, so "has won before" means profit in the window AND over their whole account.
+   */
+  kalshi_leaders: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** Who's hot this week; the lifetime-profit check below keeps one lucky week out. */
+      time_period: z.enum(["day", "week", "month", "year", "all"]).default("week"),
+      /** How many of the top accounts to check (most keep their trades private: ~1 in 6 show them). */
+      candidates: z.number().int().min(1).max(100).default(100),
+      min_markets: z.number().int().nonnegative().default(100),
+      /** Profit in the window, USD. */
+      min_profit_usd: z.number().nonnegative().default(10_000),
+      /** Profit over their whole Kalshi history, USD (so a lucky week isn't enough). */
+      min_lifetime_profit_usd: z.number().default(10_000),
+      max_leaders: z.number().int().positive().max(50).default(10),
+      /** Kalshi nicknames to always follow / never follow. */
+      include: z.array(z.string()).default([]),
+      exclude: z.array(z.string()).default([]),
+    })
+    .default({}),
+  /**
+   * Parlays (paper only): 70%+ legs that leaders put big money on, combined on one exchange from
+   * different games; and copies of Kalshi leaders' own parlays when they bet big and have won
+   * parlays before. Real parlays are priced by market makers, so the paper price is the legs'
+   * asks multiplied plus `combo_margin` — usually a little worse than the legs alone.
+   */
+  parlays: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** alert = suggest parlays only; paper = also take them in the paper ledger. */
+      action: z.enum(["alert", "paper"]).default("paper"),
+      /** Legs per parlay the bot builds. */
+      legs: z.number().int().min(2).max(10).default(4),
+      /** Every leg must be at least this likely (its price) … */
+      min_leg_price: z.number().min(0.5).max(0.99).default(0.7),
+      /** … and at most this (a 97¢ leg adds almost nothing to the payout). */
+      max_leg_price: z.number().min(0.5).max(0.99).default(0.95),
+      /** "A lot of money on it": leaders' USD on that exact outcome (one big bet, or several leaders). */
+      min_leg_backing_usd: z.number().nonnegative().default(1000),
+      /** A leg stays a candidate this long after the leaders bought it. */
+      max_leg_age_hours: z.number().positive().default(12),
+      /** Build parlays here (one exchange per parlay; a real parlay can't mix them). */
+      venues: z.array(z.enum(["kalshi", "polymarket_us"])).min(1).default(["kalshi", "polymarket_us"]),
+      /** Copy a Kalshi leader's own parlay (a combo) when they put at least this much on it … */
+      copy_leader_parlays: z.boolean().default(true),
+      min_leader_parlay_usd: z.number().nonnegative().default(250),
+      /** … and at least this many of their recent parlays won. */
+      min_leader_parlay_wins: z.number().int().nonnegative().default(1),
+      /** Pay at most this much more than the leader's parlay price, relative (0.15 = 15% dearer). */
+      max_chase_pct: z.number().min(0).max(2).default(0.15),
+      /** Market makers' cut on a parlay, relative to the legs multiplied (0.05 = 5%). */
+      combo_margin: z.number().min(0).max(0.5).default(0.05),
+      stake_usd: z.number().positive().default(10),
+      max_open: z.number().int().positive().default(5),
+    })
+    .default({}),
   copy: z
     .object({
       venues: z.array(z.enum(["polymarket_us", "kalshi"])).min(1).default(["polymarket_us", "kalshi"]),
@@ -314,6 +375,8 @@ export const CopyTradingSchema = z.object({
       max_trade_age_minutes: z.number().positive().default(30),
       /** Pay at most this much more than the leader did (0.03 = 3¢). */
       max_chase: z.number().min(0).max(0.5).default(0.03),
+      /** Never pay more than this for a copy (a 97¢ bet risks 97¢ to make 3¢). */
+      max_buy_price: z.number().min(0.5).max(1).default(0.95),
       /** The copy's price must be within this of the leader's market, or it's probably not the same bet. */
       max_price_gap: z.number().min(0).max(1).default(0.1),
       /** Title-match score needed when there's no exact game match. */
@@ -392,6 +455,7 @@ export const RulesFileSchema = z.object({
     for (const [reserved, what, used] of [
       [ARB_RULE_ID, "the arbitrage strategy", !!file.arbitrage],
       [COPY_RULE_ID, "copy trading", !!file.copy_trading],
+      [PARLAY_RULE_ID, "parlays", !!file.copy_trading],
     ] as const) {
       if (used && r.id === reserved) {
         ctx.addIssue({
@@ -446,6 +510,7 @@ export function copyAsRule(cfg: CopyTradingConfig): Rule {
     name: cfg.name,
     enabled: cfg.enabled,
     action: cfg.action,
+    entry: { max_buy_price: cfg.copy.max_buy_price < 1 ? cfg.copy.max_buy_price : undefined },
     exit: cfg.exit,
     risk: cfg.risk,
     paper: cfg.paper,

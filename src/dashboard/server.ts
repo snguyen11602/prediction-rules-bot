@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadRulesFile } from "../rules/loader.js";
 import { loadLedger, summarizeLedger, type ArbGroupRecord, type PaperLedger, type PaperPosition } from "../ledger/paper.js";
-import { ARB_RULE_ID, COPY_RULE_ID } from "../rules/schema.js";
+import { ARB_RULE_ID, COPY_RULE_ID, PARLAY_RULE_ID } from "../rules/schema.js";
 import { kindLabel } from "../engine/arb.js";
 import type { ArbOpportunity, ArbTrace } from "../engine/arb-runtime.js";
 import type { ScanTrace } from "../engine/trace.js";
@@ -174,6 +174,8 @@ export async function buildState(opts: DashboardOptions) {
     }
     if (file.copy_trading) {
       ruleMeta.set(COPY_RULE_ID, { name: file.copy_trading.name, action: file.copy_trading.action, enabled: file.copy_trading.enabled });
+      const pc = file.copy_trading.parlays;
+      ruleMeta.set(PARLAY_RULE_ID, { name: "Parlays (leaders' 70%+ picks)", action: pc.action, enabled: file.copy_trading.enabled && pc.enabled });
     }
   } catch (err) {
     rulesError = (err as Error).message;
@@ -209,6 +211,8 @@ export async function buildState(opts: DashboardOptions) {
     .sort((a, b) => Number(b.ruleId === ARB_RULE_ID) - Number(a.ruleId === ARB_RULE_ID) || a.name.localeCompare(b.name));
 
   const groups = Object.values(ledger.arbGroups ?? {});
+  const parlayList = Object.values(ledger.parlays ?? {});
+  const parlayTitle = (p: (typeof parlayList)[number]) => `${p.legs.length}-leg parlay${p.leader ? ` (copied from ${p.leader.name})` : ""}: ${p.legs.map((l) => l.title).join(" + ")}`;
   const groupedIds = new Set(groups.flatMap((g) => g.legIds));
   const open = ledger.positions
     .filter((p) => p.status === "open" && !p.groupId)
@@ -224,6 +228,9 @@ export async function buildState(opts: DashboardOptions) {
     ...groups
       .filter((g) => g.status === "closed" && g.closedAt)
       .map((g) => ({ at: g.closedAt!, pnlUsd: g.realizedPnlUsd ?? 0, title: g.title, ruleId: g.ruleId })),
+    ...parlayList
+      .filter((p) => p.status !== "open" && p.closedAt)
+      .map((p) => ({ at: p.closedAt!, pnlUsd: p.realizedPnlUsd ?? 0, title: parlayTitle(p), ruleId: p.ruleId })),
   ].sort((a, b) => a.at.localeCompare(b.at));
   let cum = 0;
   const pnlSeries = closes.map((c) => {
@@ -249,6 +256,10 @@ export async function buildState(opts: DashboardOptions) {
     ...groups
       .filter((g) => g.closedAt)
       .map((g) => ({ at: g.closedAt!, kind: "arb_close", ruleId: g.ruleId, title: g.title, sizeUsd: g.costUsd, pnlUsd: g.realizedPnlUsd, side: undefined, price: undefined, reason: g.closeReason })),
+    ...parlayList.map((p) => ({ at: p.openedAt, kind: "parlay_open", ruleId: p.ruleId, title: parlayTitle(p), sizeUsd: p.stakeUsd, pnlUsd: undefined as number | undefined, side: undefined, price: p.price as number | undefined, reason: undefined })),
+    ...parlayList
+      .filter((p) => p.closedAt)
+      .map((p) => ({ at: p.closedAt!, kind: "parlay_close", ruleId: p.ruleId, title: parlayTitle(p), sizeUsd: p.stakeUsd, pnlUsd: p.realizedPnlUsd, side: undefined, price: undefined, reason: p.status as string | undefined })),
   ]
     .sort((a, b) => b.at.localeCompare(a.at))
     .slice(0, 60);
@@ -297,10 +308,23 @@ export async function buildState(opts: DashboardOptions) {
     pnlSeries,
     journal,
     arbs,
+    parlays: {
+      open: parlayList.filter((p) => p.status === "open").sort((a, b) => b.openedAt.localeCompare(a.openedAt)).map(slimParlay),
+      closed: parlayList
+        .filter((p) => p.status !== "open")
+        .sort((a, b) => (b.closedAt ?? "").localeCompare(a.closedAt ?? ""))
+        .slice(0, 30)
+        .map(slimParlay),
+    },
     league: { ...leagueView(league, ledger, file), error: leagueError },
     loop: opts.getLoop?.() ?? { enabled: false, running: false },
     events: (opts.getEvents?.() ?? []).slice(-80).reverse(),
   };
+}
+
+function slimParlay(p: import("../ledger/paper.js").ParlayRecord) {
+  const { entryTrace: _t, ...rest } = p;
+  return rest;
 }
 
 function safeDescribe(rule: Parameters<typeof toBody>[0]): string[] {

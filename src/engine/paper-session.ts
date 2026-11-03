@@ -35,7 +35,7 @@ import {
 import { dayKeyLA } from "./clock.js";
 import { cents, type ScanTrace } from "./trace.js";
 import { loadSeries, saveSeries, seriesPathFor } from "./series.js";
-import { ArbitrageSchema, arbitrageAsRule, copyAsRule, COPY_RULE_ID } from "../rules/schema.js";
+import { ArbitrageSchema, arbitrageAsRule, copyAsRule, COPY_RULE_ID, PARLAY_RULE_ID } from "../rules/schema.js";
 import { checkEntryRisk } from "./risk.js";
 import type { Check } from "./trace.js";
 import {
@@ -44,6 +44,7 @@ import {
   enterCopies,
   leaderSold,
   pollCopy,
+  runParlays,
   saveCopy,
   type CopyCtx,
   type CopyDeps,
@@ -52,6 +53,7 @@ import {
 } from "./copy-runtime.js";
 import { loadPairsFile, pairsFilePath } from "./arb.js";
 import { copyStatePathFor } from "./copy.js";
+import { settleParlays } from "./parlays.js";
 import { houseNames, leaguePathFor, leagueRules, loadLeague, MEMBER_PREFIX, upgradeLeague } from "../league/league.js";
 import {
   arbConfig,
@@ -122,6 +124,8 @@ export interface PaperCycleResult {
   arbTrace?: import("./arb-runtime.js").ArbTrace;
   /** Copy trading: who's followed and what happened to their latest bets. */
   copy?: CopyView;
+  /** Paper parlays made / settled this cycle. */
+  parlays?: { opened: number; closed: number; realizedPnlUsd: number };
 }
 
 /**
@@ -207,6 +211,8 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       platforms.add(arbCfg.cross_platform.with);
     }
     for (const p of openPositions(ledger)) platforms.add(p.platform);
+    // Open parlays are settled leg by leg, so their legs' exchanges are needed too.
+    for (const p of Object.values(ledger.parlays ?? {})) if (p.status === "open") for (const l of p.legs) platforms.add(l.platform);
     // Copies need their venues' adapters for fees and contract steps.
     if (copyCfg?.enabled && (!demo || opts.copyDeps)) for (const v of copyCfg.copy.venues) platforms.add(v);
 
@@ -438,6 +444,14 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       }
     }
 
+    // Parlays settle leg by leg (full checks only: legs may be on a platform without a live stream).
+    const parlays = { opened: 0, closed: 0, realizedPnlUsd: 0 };
+    if (!opts.fastTick && Object.values(ledger.parlays ?? {}).some((p) => p.status === "open")) {
+      const s = await settleParlays(ledger, getMarket, now, push);
+      parlays.closed = s.closed;
+      parlays.realizedPnlUsd = s.realizedPnlUsd;
+    }
+
     // Arbitrage groups whose legs have all settled are scored once, as one trade.
     if (arbCtx && !opts.fastTick) {
       const f = await finalizeArbGroups(arbCtx);
@@ -528,6 +542,11 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
           await enterCopies(copyCtx, copyPoll);
         } catch (err) {
           await push({ at: now.toISOString(), type: "adapter_error", ruleId: COPY_RULE_ID, message: `Copy trading: ${(err as Error).message}` });
+        }
+        try {
+          parlays.opened += await runParlays(copyCtx, copyPoll);
+        } catch (err) {
+          await push({ at: now.toISOString(), type: "adapter_error", ruleId: PARLAY_RULE_ID, message: `Parlays: ${(err as Error).message}` });
         }
       }
       copyView = buildCopyView(copyCfg!, copyPoll);
@@ -634,6 +653,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
             (arbCfg
               ? ` Arbitrage: ${arb.opportunities.length} found, ${arb.opened} opened, ${arb.closed} closed (${money(arb.realizedPnlUsd)}).`
               : "") +
+            (parlays.opened || parlays.closed ? ` Parlays: ${parlays.opened} made, ${parlays.closed} settled (${money(parlays.realizedPnlUsd)}).` : "") +
             (Object.keys(skipReasons).length
               ? ` Skipped: ${Object.entries(skipReasons).map(([k, v]) => `${v} ${k}`).join(", ")}.`
               : ""),
@@ -649,7 +669,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     });
 
     arb.realizedPnlUsd = Math.round(arb.realizedPnlUsd * 100) / 100;
-    return { events, opened, closed, realizedPnlUsd: Math.round(realized * 100) / 100, arb, trace, arbTrace, copy: copyView };
+    return { events, opened, closed, realizedPnlUsd: Math.round(realized * 100) / 100, arb, trace, arbTrace, copy: copyView, parlays };
   });
 }
 

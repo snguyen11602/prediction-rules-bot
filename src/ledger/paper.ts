@@ -102,6 +102,54 @@ export interface ArbGroupRecord {
   realizedPnlUsd?: number;
 }
 
+/** One leg of a paper parlay. */
+export interface ParlayLegRecord {
+  platform: PlatformId;
+  marketId: string;
+  side: SignalSide;
+  title: string;
+  url?: string;
+  /** Game the leg belongs to (legs of one game never share a parlay). */
+  game?: string;
+  /** What the leg cost when the parlay was made (1 = it had already won). */
+  entryPrice: number;
+  status: "open" | "won" | "lost" | "void";
+  /** Latest sell price of the leg, for "worth now". */
+  lastPrice?: number;
+  settledAt?: string;
+  /** Who backed it, and with how much (built parlays). */
+  backing?: { usd: number; leaders: string[] };
+}
+
+/**
+ * A paper parlay: every leg must win. Priced as the legs multiplied plus the market makers' cut,
+ * on one exchange; a void leg drops out and the payout shrinks to match.
+ */
+export interface ParlayRecord {
+  id: string;
+  ruleId: string;
+  /** built = combined by the bot from leaders' big bets; leader = a copy of a leader's own parlay. */
+  source: "built" | "leader";
+  /** The exchange the parlay would be placed on. */
+  platform: PlatformId;
+  leader?: { name: string; wallet: string; ticker: string; price: number; usd: number; at: string };
+  status: "open" | "won" | "lost" | "void";
+  openedAt: string;
+  legs: ParlayLegRecord[];
+  /** Combined price per $1 of payout. */
+  price: number;
+  stakeUsd: number;
+  feeUsd: number;
+  /** stake / price: paid if every leg wins. */
+  payoutUsd: number;
+  /** What the legs are worth now (a parlay usually can't be sold early). */
+  markValueUsd?: number;
+  closedAt?: string;
+  realizedPnlUsd?: number;
+  entryTrace?: Check[];
+  hypothetical: true;
+}
+
 export interface RulePaperState {
   consecutiveLosses: number;
   pausedUntil?: string;
@@ -120,6 +168,8 @@ export interface PaperLedger {
   migratedFromV1?: { at: string; legacyFills: number };
   /** Arbitrage groups by id (optional; added with the arbitrage strategy). */
   arbGroups?: Record<string, ArbGroupRecord>;
+  /** Paper parlays by id (optional; added with parlays). */
+  parlays?: Record<string, ParlayRecord>;
 }
 
 interface PaperLedgerV1 {
@@ -538,6 +588,23 @@ export function summarizeLedger(ledger: PaperLedger): { rules: RuleSummary[]; to
     }
   }
   for (const [ruleId, set] of openGroups) by.get(ruleId)!.open += set.size;
+  // A parlay is one trade, however many legs.
+  for (const p of Object.values(ledger.parlays ?? {})) {
+    const s = by.get(p.ruleId) ?? blank(p.ruleId);
+    by.set(p.ruleId, s);
+    s.feesUsd += p.feeUsd;
+    if (p.status === "open") {
+      s.open += 1;
+      s.exposureUsd += p.stakeUsd;
+      s.unrealizedPnlUsd += (p.markValueUsd ?? p.stakeUsd) - p.stakeUsd - p.feeUsd;
+    } else {
+      const pnl = p.realizedPnlUsd ?? 0;
+      s.realizedPnlUsd += pnl;
+      s.closed += 1;
+      if (pnl > 0) s.wins += 1;
+      else if (pnl < 0) s.losses += 1;
+    }
+  }
   for (const g of Object.values(ledger.arbGroups ?? {})) {
     if (g.status !== "closed") continue;
     const s = by.get(g.ruleId) ?? blank(g.ruleId);
