@@ -4,7 +4,7 @@ import { LeagueSchema, RuleSchema, type LeagueConfig, type Rule } from "../rules
 import type { StrategyStats } from "./metrics.js";
 import type { Diagnosis } from "./diagnose.js";
 import type { FamilyId, RuleBody } from "./genome.js";
-import type { Traits } from "./personas.js";
+import { cloneName, hashSeed, housePersonas, legacyHouseName, NAMES, rookieName, type Traits } from "./personas.js";
 
 /** A strategy the league made (or one of your rules, seen as a "house" player). */
 export interface Member {
@@ -57,8 +57,57 @@ export interface LeagueFile {
   nextRoundAt?: string;
   /** Member id counter (only goes up). */
   seq?: number;
-  /** Names of members dropped from the file, so they aren't reused. */
+  /** Names of members dropped from the file recently, so they aren't reused right away. */
   pastNames?: string[];
+  /** 2 = one-word names ("Blaze", "Blaze II"). Older files used first + last names. */
+  nameStyle?: number;
+}
+
+/** Your own paper rules seen as league players (alert-only rules, arbitrage and copy trading aren't). */
+export function houseContestantRules(file: { rules: Rule[] }): Rule[] {
+  return file.rules.filter((r) => r.enabled && r.action === "paper");
+}
+
+/** League names for your own rules (stable per rule id). */
+export function houseNames(file: { rules: Rule[] } | undefined): Map<string, string> {
+  const personas = housePersonas((file ? houseContestantRules(file) : []).map((r) => r.id));
+  return new Map([...personas].map(([id, p]) => [id, p.name]));
+}
+
+/**
+ * One-time switch from "First Last" names to one-word names, in memory (a round saves it).
+ * Deterministic, so every reader shows the same names before then. Ids don't change, so trades,
+ * cool-downs and history stay attached. Clones become "<parent's name> II", "III"…
+ */
+export function migrateNames(l: LeagueFile, house: Map<string, string>): void {
+  if (l.nameStyle === 2) return;
+  l.nameStyle = 2;
+  if (!l.members.length) return;
+  const taken = new Set<string>(house.values());
+  const renamed = new Map<string, string>(); // id → new name
+  const order = [...l.members].sort(
+    (a, b) => String(a.bornAt ?? "").localeCompare(String(b.bornAt ?? "")) || (a.generation ?? 0) - (b.generation ?? 0) || String(a.id).localeCompare(String(b.id)),
+  );
+  for (const m of order) {
+    const parent = m.parentId ? renamed.get(m.parentId) ?? house.get(m.parentId) : undefined;
+    let name: string;
+    if (parent) name = cloneName(parent, taken);
+    else {
+      let i = hashSeed(`name:${String(m.id)}`) % NAMES.length;
+      for (let k = 0; k < NAMES.length && taken.has(NAMES[i]); k++) i = (i + 1) % NAMES.length;
+      name = taken.has(NAMES[i]) ? rookieName(() => 0.5, taken) : NAMES[i];
+    }
+    taken.add(name);
+    renamed.set(m.id, name);
+  }
+  const swaps = l.members
+    .map((m) => [typeof m.name === "string" ? m.name : "", renamed.get(m.id)!] as const)
+    .concat([...house].map(([id, name]) => [legacyHouseName(id), name] as const))
+    .filter(([from]) => from.length > 0)
+    .sort((a, b) => b[0].length - a[0].length);
+  for (const m of l.members) m.name = renamed.get(m.id)!;
+  for (const e of l.events) if (typeof e?.text === "string") for (const [from, to] of swaps) e.text = e.text.split(from).join(to);
+  l.pastNames = [];
 }
 
 /** data/paper-ledger.json → data/paper-ledger.league.json */

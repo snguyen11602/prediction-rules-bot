@@ -451,7 +451,7 @@
         <ul class="plain">
           <li>The bot invents strategies, gives each a name and a personality, and paper-trades them next to your own rules.</li>
           <li>Every day it backtests them all on the last two weeks of real prices, then ranks them.</li>
-          <li>The best get <b>clones</b>: same idea, slightly different numbers, similar personality. They keep the family surname.</li>
+          <li>The best get <b>clones</b>: same idea, slightly different numbers, similar personality. A clone of Blaze is Blaze II, then Blaze III.</li>
           <li>The worst get a <b>diagnosis</b> (why it didn't work) and retire. Rookies take their place.</li>
           <li><b>Work ethic</b> = how busy it is. <b>Creativity</b> = how different its clones are. <b>Knowledge</b> = how many safety checks it uses.</li>
         </ul>
@@ -1267,7 +1267,12 @@
   const ui = { src: pref.get("src", "backtest"), sort: pref.get("sort", "score"), retired: pref.get("retired", "0") === "1", chartSrc: "backtest", tradeSrc: "backtest" };
   const STATUS_LABEL = { champion: "🏆 Champion", rookie: "Rookie", retired: "Retired", house: "Your rule", active: "" };
   const EVENT_ICON = { born: "✦", cloned: "⧉", retired: "✕", champion: "🏆", round: "↻" };
-  function initials(name) { return String(name || "?").split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase(); }
+  const ROMAN_N = { II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10 };
+  /** "Blaze" → "B", "Blaze III" → "B3". */
+  function initials(name) {
+    const [w, num] = String(name || "?").split(/\s+/);
+    return (w[0] || "?").toUpperCase() + (num ? String(ROMAN_N[num] || num) : "");
+  }
   function avatar(p, big) { return el("span", { class: `av f-${p.family}${p.status === "retired" ? " retired" : ""}${big ? " big" : ""}`, "aria-hidden": "true", text: initials(p.name) }); }
   function statusTag(p) { const t = STATUS_LABEL[p.status]; return t ? el("span", { class: `st ${p.status}`, text: t }) : null; }
   function players() { return (state.league && state.league.players) || []; }
@@ -1430,10 +1435,11 @@
     const fam = $("sFamily");
     fam.replaceChildren();
     const kids = p.children || [];
-    const sameName = players().filter((x) => !x.house && x.id !== p.id && p.name.split(" ").slice(1).join(" ") && x.name.endsWith(" " + p.name.split(" ").slice(1).join(" ")));
+    const base = (n) => String(n).replace(/ (?:[IVX]+|\d+)$/, "");
+    const sameName = players().filter((x) => x.id !== p.id && base(x.name) === base(p.name));
     if (!p.parentId && !kids.length) fam.append(el("p", { class: "meta", text: p.house ? "No clones yet. Your rules get cloned when they finish near the top." : "No parent or clones yet. Clones are made from the strategies at the top of the leaderboard." }));
     if (kids.length) fam.append(el("div", { class: "sub-h", style: "margin-top:0", text: "Clones" }), el("ul", { class: "plain" }, ...kids.map((k) => el("li", null, el("a", { href: `#/s/${encodeURIComponent(k.id)}`, text: k.name }), k.status === "retired" ? " (retired)" : ""))));
-    if (sameName.length && !p.house) fam.append(el("div", { class: "meta", text: `Same family name: ${sameName.map((x) => x.name).join(", ")}` }));
+    if (sameName.length) fam.append(el("div", { class: "meta", text: `Same family: ${sameName.map((x) => x.name).join(", ")}` }));
 
     // Chart + trades come from /api/strategy.
     const sd = strat && strat.id === id ? strat.data : null;

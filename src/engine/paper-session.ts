@@ -52,7 +52,7 @@ import {
 } from "./copy-runtime.js";
 import { loadPairsFile, pairsFilePath } from "./arb.js";
 import { copyStatePathFor } from "./copy.js";
-import { leaguePathFor, leagueRules, loadLeague } from "../league/league.js";
+import { houseNames, leaguePathFor, leagueRules, loadLeague, migrateNames } from "../league/league.js";
 import {
   arbConfig,
   arbScanLimit,
@@ -161,7 +161,9 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
   const leagueProblems: string[] = [];
   let leagueList: Rule[] = [];
   try {
-    leagueList = leagueRules(await loadLeague(leaguePathFor(opts.ledgerPath)), file.league, (m, err) =>
+    const league = await loadLeague(leaguePathFor(opts.ledgerPath));
+    migrateNames(league, houseNames(file));
+    leagueList = leagueRules(league, file.league, (m, err) =>
       leagueProblems.push(`League strategy ${m.name ?? m.id} skipped: ${err.message.slice(0, 160)}`),
     );
   } catch (err) {

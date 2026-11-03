@@ -4,9 +4,9 @@ import { RuleSchema } from "../rules/schema.js";
 import { LeagueSchema } from "../rules/schema.js";
 import { diagnose } from "./diagnose.js";
 import { describeRule, mutate, rookieRule, type FamilyId } from "./genome.js";
-import { leagueRules, memberRule, scoreOf, type LeagueFile, type Member } from "./league.js";
+import { leagueRules, memberRule, migrateNames, scoreOf, type LeagueFile, type Member } from "./league.js";
 import { statsFromTrades, tradesByRule, type TradeResult } from "./metrics.js";
-import { hashSeed, housePersona, inheritTraits, personName, randomTraits, rng, surnameOf } from "./personas.js";
+import { baseName, cloneName, hashSeed, housePersonas, inheritTraits, NAMES, randomTraits, rng, rookieName } from "./personas.js";
 import { makeClone, makeRookie, type Contestant } from "./evolve.js";
 import type { PaperLedger } from "../ledger/paper.js";
 
@@ -19,8 +19,10 @@ test("personas are deterministic, unique and bounded", () => {
   const r = rng(hashSeed("x"));
   const taken = new Set<string>();
   for (let i = 0; i < 40; i++) {
-    const n = personName(r, undefined, taken);
+    const n = rookieName(r, taken);
     assert.ok(!taken.has(n), `duplicate name ${n}`);
+    assert.match(n, /^[A-Z][a-z]+$/, "one short word");
+    assert.ok(n.length <= 8);
     taken.add(n);
   }
   const t = randomTraits(r);
@@ -29,8 +31,18 @@ test("personas are deterministic, unique and bounded", () => {
     for (const v of Object.values(c)) assert.ok(v >= 0.05 && v <= 0.95);
   }
   assert.ok(t.hustle >= 0.2 && t.hustle <= 0.8);
-  assert.equal(surnameOf("Ava Sterling"), "Sterling");
-  assert.deepEqual(housePersona("my-rule"), housePersona("my-rule"), "your rules always get the same persona");
+  assert.equal(baseName("Blaze III"), "Blaze");
+  assert.equal(cloneName("Blaze", new Set(["Blaze"])), "Blaze II");
+  assert.equal(cloneName("Blaze II", new Set(["Blaze", "Blaze II"])), "Blaze III");
+  // Every word taken: still a unique name.
+  const all = new Set(NAMES);
+  const extra = rookieName(r, all);
+  assert.ok(!all.has(extra) && / II$/.test(extra));
+  const a1 = housePersonas(["my-rule", "other"]);
+  const a2 = housePersonas(["other", "my-rule", "third"]);
+  assert.equal(a1.get("my-rule")!.name, housePersonas(["my-rule", "other"]).get("my-rule")!.name, "your rules always get the same name");
+  assert.notEqual(a2.get("my-rule")!.name, a2.get("other")!.name);
+  assert.ok(NAMES.includes(a1.get("my-rule")!.name));
 });
 
 test("every rookie family makes a valid rule, and clones stay valid", () => {
@@ -173,7 +185,7 @@ test("league members become normal paper rules; retired ones only manage exits",
   assert.equal(memberRule(member()).id, "lg-ava-sterling-1");
 });
 
-test("rookies cycle through families; clones keep the surname and a similar personality", () => {
+test("rookies cycle through families; clones carry the family name and a similar personality", () => {
   const cfg = LeagueSchema.parse({});
   const l: LeagueFile = { version: 1, round: 0, members: [], events: [] };
   const r = rng(11);
@@ -190,8 +202,8 @@ test("rookies cycle through families; clones keep the surname and a similar pers
     diagnosis: { at: "", headline: "", findings: [], suggestion: "" },
   };
   const kid = makeClone(l, c, r, new Date("2026-10-02T00:00:00Z"));
-  assert.equal(surnameOf(kid.name), surnameOf(parent.name));
-  assert.notEqual(kid.name, parent.name);
+  assert.equal(kid.name, `${parent.name} II`);
+  assert.equal(makeClone(l, c, r, new Date("2026-10-02T00:00:00Z")).name, `${parent.name} II`, "names are only taken once added");
   assert.equal(kid.parentId, parent.id);
   assert.equal(kid.generation, 2);
   assert.equal(kid.family, parent.family);
@@ -229,4 +241,36 @@ test("open trades count in profit and the worst drop, not in the trade count", (
   assert.equal(s.openPnlUsd, -100);
   assert.equal(s.maxDrawdownUsd, 100);
   assert.equal(s.steadyScore, -16);
+});
+
+test("an old league switches to one-word names once, keeping ids, families and history", () => {
+  const traits = { hustle: 0.5, creativity: 0.5, knowledge: 0.5 };
+  const rule = rookieRule("dip_buyer", traits, rng(1));
+  const l: LeagueFile = {
+    version: 1,
+    round: 2,
+    members: [
+      { id: "lg-ava-sterling-1", name: "Ava Sterling", style: "The Dip Hunter", family: "dip_buyer", traits, rule, generation: 1, bornAt: "2026-10-01T00:00:00Z", status: "active" },
+      { id: "lg-milo-sterling-2", name: "Milo Sterling", style: "The Dip Hunter", family: "dip_buyer", traits, rule, generation: 2, parentId: "lg-ava-sterling-1", bornAt: "2026-10-02T00:00:00Z", status: "rookie" },
+      { id: "lg-otis-vance-3", name: "Otis Vance", style: "The Original", family: "custom", traits, rule, generation: 1, parentId: "fav", bornAt: "2026-10-02T00:00:00Z", status: "rookie" },
+    ],
+    events: [{ at: "2026-10-02T00:00:00Z", kind: "cloned", memberId: "lg-milo-sterling-2", text: "Milo Sterling was cloned from Ava Sterling (generation 2)." }],
+    pastNames: ["Finn Tanaka"],
+  };
+  const house = new Map([["fav", "Blaze"]]);
+  const copy = JSON.parse(JSON.stringify(l)) as LeagueFile;
+  migrateNames(l, house);
+  migrateNames(copy, house);
+  assert.deepEqual(l.members.map((m) => m.name), copy.members.map((m) => m.name), "same names every time");
+  const [ava, milo, otis] = l.members;
+  assert.match(ava.name, /^[A-Z][a-z]+$/);
+  assert.notEqual(ava.name, "Blaze", "your rules' names stay theirs");
+  assert.equal(milo.name, `${ava.name} II`);
+  assert.equal(otis.name, "Blaze II", "a clone of your rule carries its name");
+  assert.equal(ava.id, "lg-ava-sterling-1");
+  assert.equal(l.events[0].text, `${milo.name} was cloned from ${ava.name} (generation 2).`);
+  assert.equal(l.nameStyle, 2);
+  const before = l.members.map((m) => m.name);
+  migrateNames(l, new Map());
+  assert.deepEqual(l.members.map((m) => m.name), before, "only once");
 });

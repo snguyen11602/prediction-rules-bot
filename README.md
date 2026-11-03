@@ -141,7 +141,7 @@ News, big traders and thin order books cause the same pattern, so treat it as a 
 
 ## Strategy league (the bot makes its own strategies)
 
-The bot invents strategies, names them like traders on a leaderboard ("Leo Valdez — The Trend Rider"),
+The bot invents strategies and gives each a short name, like players on a leaderboard ("Blaze — The Trend Rider"),
 and paper-trades them next to your own rules. Each one has a personality:
 
 | Trait | What it changes |
@@ -166,7 +166,7 @@ or now with `npm run league`:
    worst drop in %. Trades still open count at what they'd sell for, so holding losers doesn't help. Once a
    strategy has 10 paper trades, its paper score counts half.
 3. **Clone the best.** The top 3 each get a clone with the same idea, nudged numbers and a similar
-   personality. Clones keep the family surname. To count, a winner must also make money on at least 2 trades
+   personality. A clone of Blaze is Blaze II, then Blaze III. To count, a winner must also make money on at least 2 trades
    in the last 30% of the window (held out), so early luck doesn't get cloned.
 4. **Diagnose and retire the worst** (up to 3): losing once ranked, or never trading. The diagnosis says why in
    plain words, for example *"Fees ate the edge: $60 in fees on top of $37 lost before fees"* or
