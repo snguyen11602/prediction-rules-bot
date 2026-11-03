@@ -171,6 +171,12 @@
   .scan-reason { color: var(--ink-2); font-size: 12.5px; min-height: 18px; }
   .btn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
   .btn:hover { background: var(--hover); }
+  .btn.ctl { white-space: nowrap; }
+  .btn.ctl.go { background: color-mix(in srgb, var(--good) 22%, var(--surface)); }
+  .btn.ctl:disabled { opacity: .55; cursor: wait; }
+  @media (max-width: 560px) { #rulesBody .btn.ctl .word { display: none; } #rulesBody .btn.ctl { padding: 4px 8px; } }
+  .badge.stopped { background: var(--warn); color: #0b0b0b; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .why { font-size: 12px; padding: 2px 8px; }
   .outcome { display: inline-block; font-size: 11px; font-weight: 650; padding: 1px 7px; border-radius: 4px; white-space: nowrap; }
   .outcome.ok { background: color-mix(in srgb, var(--good) 22%, transparent); }
@@ -275,6 +281,8 @@
     <h1>Paper Trading</h1>
     <span class="badge">Pretend money only</span>
     <span class="badge demo" id="demoBadge" hidden>Demo data</span>
+    <span class="badge stopped" id="stoppedBadge" hidden>All bots stopped</span>
+    <button class="btn ctl" type="button" id="allCtl" hidden></button>
     <div class="status" aria-live="polite"><span class="dot" id="statusDot"></span><span id="statusText">Loading…</span></div>
   </header>
 
@@ -407,8 +415,9 @@
     </section>
     <section class="card">
       <h2>Strategies <a href="#/leaderboard" class="meta" style="font-weight:400;margin-left:6px">Leaderboard →</a></h2>
+      <div class="meta" id="ctlNote" style="margin-bottom:6px"></div>
       <div class="tablewrap"><table>
-        <thead><tr><th>Strategy</th><th class="num">Open</th><th class="num">W / L</th><th class="num">P/L</th></tr></thead>
+        <thead><tr><th>Strategy</th><th class="num">Open</th><th class="num">W / L</th><th class="num">P/L</th><th><span class="sr-only">Start / stop</span></th></tr></thead>
         <tbody id="rulesBody"></tbody>
       </table></div>
     </section>
@@ -827,24 +836,73 @@
   function emptyRow(cols, text) {
     return el("tr", null, el("td", { colspan: cols, class: "empty", text }));
   }
+  // ---------- start / stop ----------
+  async function sendControl(body, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch("/api/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      await poll();
+    } catch (err) {
+      const b = $("banner");
+      b.replaceChildren(el("strong", { text: "⚠ Couldn't change that bot:" }), String(err.message || err));
+      b.classList.add("show");
+      if (btn) btn.disabled = false;
+    }
+  }
+  function ctlButton(r) {
+    const paused = r.pausedUntil && new Date(r.pausedUntil).getTime() > nowMs();
+    const start = r.stopped || paused;
+    const b = el("button", {
+      class: `btn ctl${start ? " go" : ""}`,
+      type: "button",
+      title: start ? (paused && !r.stopped ? "Lift the loss pause and trade again" : "Trade again") : "No new trades (open ones are still managed)",
+    }, start ? "▶" : "⏹", el("span", { class: "word", text: start ? " Start" : " Stop" }));
+    b.setAttribute("aria-label", `${start ? "Start" : "Stop"} ${r.name}`);
+    b.addEventListener("click", () => sendControl({ action: start ? "start" : "stop", id: r.ruleId }, b));
+    return b;
+  }
+  function renderControls() {
+    const c = state.controls || { allStopped: false, stopped: {} };
+    const bots = state.rules.filter((r) => r.action !== "alert" && r.enabled);
+    const nStopped = bots.filter((r) => r.stopped).length;
+    const nPaused = bots.filter((r) => !r.stopped && r.pausedUntil && new Date(r.pausedUntil).getTime() > nowMs()).length;
+    $("stoppedBadge").hidden = !c.allStopped;
+    const all = $("allCtl");
+    all.hidden = !bots.length;
+    all.disabled = false;
+    all.className = `btn ctl${c.allStopped ? " go" : ""}`;
+    all.textContent = c.allStopped ? "▶ Start all" : "⏹ Stop all";
+    all.title = c.allStopped ? "Every bot trades again (loss pauses lifted)" : "No new trades anywhere (open trades are still managed)";
+    all.onclick = () => sendControl({ action: c.allStopped ? "start" : "stop", all: true }, all);
+    $("ctlNote").textContent = c.allStopped
+      ? `All bots stopped ${c.allStoppedAt ? ago(c.allStoppedAt) : ""}: no new trades. Open trades still sell at their exits and settle.`
+      : nStopped || nPaused
+        ? `${bots.length - nStopped - nPaused} of ${bots.length} trading · ${nStopped} stopped · ${nPaused} paused after losses. Stop = no new trades (open ones are still managed); Start lifts a pause.`
+        : `All ${bots.length} trading.`;
+  }
+
   function renderRules(rulesById) {
     const body = $("rulesBody");
     body.replaceChildren();
-    if (!state.rules.length) { body.append(emptyRow(4, "No paper strategies in the rules file.")); return; }
+    renderControls();
+    if (!state.rules.length) { body.append(emptyRow(5, "No paper strategies in the rules file.")); return; }
     for (const r of state.rules.filter((r) => r.action !== "alert")) {
       const paused = r.pausedUntil && new Date(r.pausedUntil).getTime() > nowMs();
       const lp = state.league && playerById(r.ruleId);
       const name = el("td", null, lp
         ? el("div", null, el("a", { href: `#/s/${encodeURIComponent(r.ruleId)}`, style: "color:inherit", text: lp.house ? r.name : `${lp.name}` }), lp.house ? null : el("span", { class: "meta", text: ` ${lp.style}` }))
         : el("div", { text: r.name }));
-      if (paused) name.append(el("div", { class: "meta", text: `⏸ Paused after losses until ${new Date(r.pausedUntil).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }));
-      else if (r.action === "alert") name.append(el("div", { class: "meta", text: "alerts only" }));
-      else if (!r.enabled) name.append(el("div", { class: "meta", text: "turned off" }));
+      if (!r.enabled) name.append(el("div", { class: "meta", text: "turned off in the rules file" }));
+      else if (r.stopped) name.append(el("div", { class: "meta", text: "⏹ Stopped: no new trades" }));
+      else if (paused) name.append(el("div", { class: "meta", text: `⏸ Paused after losses until ${new Date(r.pausedUntil).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }));
       body.append(el("tr", null,
         name,
         el("td", { class: "num", text: String(r.open) }),
         el("td", { class: "num", text: `${r.wins} / ${r.losses}` }),
         el("td", { class: "num" }, pnlNode(r.realizedPnlUsd + r.unrealizedPnlUsd)),
+        el("td", { class: "num" }, r.enabled ? ctlButton(r) : ""),
       ));
     }
   }

@@ -35,7 +35,7 @@ import {
 import { dayKeyLA } from "./clock.js";
 import { cents, type ScanTrace } from "./trace.js";
 import { loadSeries, saveSeries, seriesPathFor } from "./series.js";
-import { ArbitrageSchema, arbitrageAsRule, copyAsRule, COPY_RULE_ID, PARLAY_RULE_ID } from "../rules/schema.js";
+import { ARB_RULE_ID, ArbitrageSchema, arbitrageAsRule, copyAsRule, COPY_RULE_ID, PARLAY_RULE_ID } from "../rules/schema.js";
 import { checkEntryRisk } from "./risk.js";
 import type { Check } from "./trace.js";
 import {
@@ -54,6 +54,7 @@ import {
 import { loadPairsFile, pairsFilePath } from "./arb.js";
 import { copyStatePathFor } from "./copy.js";
 import { settleParlays } from "./parlays.js";
+import { controlsPathFor, isStopped, loadControls } from "./controls.js";
 import { houseNames, leaguePathFor, leagueRules, loadLeague, MEMBER_PREFIX, upgradeLeague } from "../league/league.js";
 import {
   arbConfig,
@@ -129,13 +130,25 @@ export interface PaperCycleResult {
 }
 
 /**
- * The same market, or another market in the same event (Kalshi tickers are `<event>-<outcome>`,
- * so "PSG by 3.5" and "PSG by 4.5" are one game).
+ * The same market, another market in the same event (Kalshi tickers are `<event>-<outcome>`, so
+ * "PSG by 3.5" and "PSG by 4.5" are one game), or another Kalshi market on the same match (a spread,
+ * a total and a team total of one game).
  */
 export function sameGame(p: Pick<PaperPosition, "platform" | "marketId">, m: Pick<NormalizedMarket, "platform" | "id" | "eventId">): boolean {
   if (p.platform !== m.platform) return false;
   if (p.marketId === m.id) return true;
-  return m.platform === "kalshi" && !!m.eventId && p.marketId.startsWith(`${m.eventId}-`);
+  if (m.platform !== "kalshi") return false;
+  if (m.eventId && p.marketId.startsWith(`${m.eventId}-`)) return true;
+  // One match, many market types: KXUCLSPREAD-26NOV03VILPSG-…, KXUCLTOTAL-26NOV03VILPSG-…,
+  // KXUCLTEAMTOTAL-26NOV03VILPSG-… all share the match code (date + teams).
+  const a = kalshiMatchCode(p.marketId);
+  return !!a && a === kalshiMatchCode(m.id);
+}
+
+/** The date + teams part of a Kalshi sports ticker ("26NOV03VILPSG"), or undefined. */
+export function kalshiMatchCode(ticker: string): string | undefined {
+  const code = ticker.split("-")[1];
+  return code && /^\d{2}[A-Z]{3}\d{2}(\d{4})?[A-Z]{4,}$/.test(code) ? code : undefined;
 }
 
 function money(n: number): string {
@@ -184,9 +197,13 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     leagueProblems.push(`League strategies skipped: ${(err as Error).message}`);
   }
   for (const r of leagueList) if (!allRules.has(r.id)) allRules.set(r.id, r);
-  const rules = [...enabledRules(file), ...leagueList.filter((r) => r.enabled && !file.rules.some((x) => x.id === r.id))];
+  // Start / stop switches from the dashboard: a stopped bot makes no new trades (its open ones are
+  // still managed below).
+  const controls = await loadControls(controlsPathFor(opts.ledgerPath));
+  const stopped = (id: string) => isStopped(controls, id);
+  const rules = [...enabledRules(file), ...leagueList.filter((r) => r.enabled && !file.rules.some((x) => x.id === r.id))].filter((r) => !stopped(r.id));
   // arbCfg gates finding / opening new arbs; open arbs are always managed (see arbCtx).
-  const arbCfg = arbConfig(file);
+  const arbCfg = stopped(ARB_RULE_ID) ? undefined : arbConfig(file);
   const arbManageCfg = file.arbitrage ?? ArbitrageSchema.parse({ enabled: false });
   const arbRule = arbitrageAsRule(arbManageCfg);
 
@@ -198,10 +215,28 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     const arb = { opportunities: [] as ArbOpportunity[], opened: 0, closed: 0, realizedPnlUsd: 0 };
 
     for (const message of leagueProblems) await push({ at: now.toISOString(), type: "adapter_error", message });
+
+    // Start pressed on the dashboard: lift that bot's loss pause (once per press).
+    for (const [id, at] of Object.entries(controls.resumed)) {
+      const rs = ledger.ruleState[id];
+      if (!rs || (rs.resumedAt && rs.resumedAt >= at)) continue;
+      const wasPaused = !!rs.pausedUntil && Date.parse(rs.pausedUntil) > now.getTime();
+      ledger.ruleState[id] = { consecutiveLosses: 0, resumedAt: at };
+      if (wasPaused) {
+        await push({ at: now.toISOString(), type: "info", ruleId: id, message: `${allRules.get(id)?.name ?? id}: started from the dashboard, loss pause lifted` });
+      }
+    }
+    // A bot set to never pause (fire_after_n_losses: 0) drops a pause left over from older settings.
+    for (const r of allRules.values()) {
+      const rs = ledger.ruleState[r.id];
+      if (r.risk.fire_after_n_losses === 0 && rs?.pausedUntil) delete rs.pausedUntil;
+    }
     await push({
       at: now.toISOString(),
       type: "scan_start",
-      message: `Paper cycle: ${rules.length} rule(s)${arbCfg ? " + arbitrage" : ""}, ${openPositions(ledger).length} open position(s)${demo ? " [DEMO]" : ""}`,
+      message:
+        `Paper cycle: ${rules.length} rule(s)${arbCfg ? " + arbitrage" : ""}, ${openPositions(ledger).length} open position(s)${demo ? " [DEMO]" : ""}` +
+        (controls.allStopped ? " — ALL BOTS STOPPED from the dashboard: managing open trades only" : ""),
       data: { rulesPath: opts.rulesPath, ledger: opts.ledgerPath, demo },
     });
 
@@ -277,6 +312,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         now,
         push,
         statePath: copyStatePathFor(opts.ledgerPath),
+        stopped: stopped(COPY_RULE_ID),
         deps: opts.copyDeps ?? defaultCopyDeps(),
         venueMarkets: () => [...fetched, ...(universeMarkets ?? [])],
         skipMarket: (rule, market, side) => skipMarket(rule, market, side),
@@ -437,6 +473,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         };
         const { state: after, events: riskEvents } = applyOutcome(rule, before, pnl, now);
         ledger.ruleState[rule.id] = {
+          ...rs,
           consecutiveLosses: after.consecutiveLosses,
           pausedUntil: after.pausedUntil,
         };
@@ -544,7 +581,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
           await push({ at: now.toISOString(), type: "adapter_error", ruleId: COPY_RULE_ID, message: `Copy trading: ${(err as Error).message}` });
         }
         try {
-          parlays.opened += await runParlays(copyCtx, copyPoll);
+          if (!stopped(PARLAY_RULE_ID)) parlays.opened += await runParlays(copyCtx, copyPoll);
         } catch (err) {
           await push({ at: now.toISOString(), type: "adapter_error", ruleId: PARLAY_RULE_ID, message: `Parlays: ${(err as Error).message}` });
         }

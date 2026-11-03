@@ -574,7 +574,7 @@ export async function finalizeArbGroups(ctx: PaperCtx): Promise<{ closed: number
       openPositions: 1,
     };
     const { state: after, events } = applyOutcome(ctx.rule, before, pnl, ctx.now);
-    ctx.ledger.ruleState[ctx.rule.id] = { consecutiveLosses: after.consecutiveLosses, pausedUntil: after.pausedUntil };
+    ctx.ledger.ruleState[ctx.rule.id] = { ...rs, consecutiveLosses: after.consecutiveLosses, pausedUntil: after.pausedUntil };
     for (const e of events) await ctx.push(e);
   }
   return { closed, realizedPnlUsd: Math.round(realized * 100) / 100 };
