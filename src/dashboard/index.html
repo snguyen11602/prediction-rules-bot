@@ -176,7 +176,7 @@
   .outcome.no { background: color-mix(in srgb, var(--down) 18%, transparent); }
   .outcome.info { background: var(--badge); color: var(--ink-2); }
   .decisions { list-style: none; margin: 0; padding: 0; }
-  #decisionList { max-height: 560px; overflow-y: auto; }
+  #decisionList, #copyBets { max-height: 560px; overflow-y: auto; }
   .decisions li.empty, #arbNear li { cursor: default; }
   .decisions li.empty:hover, #arbNear li:hover { background: none; }
   #funnelBody td:first-child { min-width: 170px; }
@@ -283,6 +283,26 @@
       <thead><tr><th>Market</th><th class="num">Move</th><th class="num">vs normal</th><th class="num">Volume</th><th>Bot's call</th></tr></thead>
       <tbody id="unusualBody"></tbody>
     </table></div>
+  </section>
+
+  <section class="card section" id="copySection" hidden>
+    <div class="arb-head">
+      <h2>Copy trading</h2>
+      <span class="arb-note" id="copyNote">Top global-Polymarket traders, copied onto the same market where you can trade (Polymarket US / Kalshi). A leaderboard is partly luck.</span>
+    </div>
+    <div class="grid2" style="margin-bottom:0">
+      <div>
+        <div class="sub-h" style="margin-top:0">Following</div>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Trader</th><th class="num">Win rate</th><th class="num">Markets</th><th class="num">Profit</th></tr></thead>
+          <tbody id="leadersBody"></tbody>
+        </table></div>
+      </div>
+      <div>
+        <div class="sub-h" style="margin-top:0">Their latest bets</div>
+        <ul class="decisions" id="copyBets"></ul>
+      </div>
+    </div>
   </section>
 
   <div class="grid2">
@@ -395,6 +415,7 @@
     manual: "Closed by hand",
     arb_unwind: "Sold early",
     trailing_stop: "Sold near the high (trailing stop)",
+    leader_sold: "The trader we copied sold",
     mixed: "Partly sold, partly settled",
   };
   const MATCHED = { auto: "auto-matched", confirmed: "confirmed pair", platform: "" };
@@ -415,9 +436,13 @@
       dot.classList.add("live");
       const secs = loop.nextRunAt ? Math.max(0, Math.round((new Date(loop.nextRunAt).getTime() - nowMs()) / 1000)) : null;
       const last = loop.lastRunAt ? `last check ${ago(loop.lastRunAt)}` : "";
+      const f = loop.fast;
+      const live = f && f.streams && f.streams.length
+        ? `Live prices: ${f.streams.map((s) => `${platformLabel(s.platform)} ${s.state === "live" ? "✓" : s.state === "auth_failed" ? "✗ key rejected" : "…"}`).join(" · ")} · quick check every ${f.tickSec}s · `
+        : "";
       text.textContent = secs == null
-        ? `Running · ${last}`
-        : `Running · next check in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}${last ? ` · ${last}` : ""}`;
+        ? `${live}Running · ${last}`
+        : `${live}Running · next full check in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}${last ? ` · ${last}` : ""}`;
       return;
     }
     const updated = state.ledger.updatedAt;
@@ -772,6 +797,45 @@
     }
   }
 
+  function compactUsd(n) {
+    const v = Math.abs(Number(n) || 0);
+    const s = v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e4 ? `$${Math.round(v / 1e3)}k` : `$${Math.round(v).toLocaleString()}`;
+    return (n < 0 ? MINUS : n > 0 ? "+" : "") + s;
+  }
+  function renderCopy() {
+    const c = state.loop && state.loop.copy;
+    const sec = $("copySection");
+    sec.hidden = !c;
+    if (!c) return;
+    $("copyNote").textContent = `${c.action === "paper" ? "Paper-copies" : "Alerts on"} new bets from top global-Polymarket traders onto the same market on Polymarket US / Kalshi. ` +
+      `Following ${c.leaders.length} of the top ${c.considered}${c.leadersAt ? ` (picked ${ago(c.leadersAt)})` : ""}. A leaderboard is partly luck.`;
+    const lb = $("leadersBody");
+    lb.replaceChildren();
+    if (!c.leaders.length) lb.append(emptyRow(4, "No trader passes the filters right now."));
+    for (const l of c.leaders) {
+      lb.append(el("tr", null,
+        el("td", null, el("div", { text: l.name }), el("div", { class: "meta", text: `${l.wallet.slice(0, 6)}…${l.wallet.slice(-4)}` })),
+        el("td", { class: "num" }, `${Math.round(l.winRate * 100)}%`, el("div", { class: "meta", text: `of ${l.decided}` })),
+        el("td", { class: "num", text: l.markets.toLocaleString() }),
+        el("td", { class: `num ${cls(l.windowPnlUsd)}`, text: compactUsd(l.windowPnlUsd) })));
+    }
+    const ul = $("copyBets");
+    ul.replaceChildren();
+    if (!c.recent.length) ul.append(el("li", { class: "empty", text: "No new bets from them yet." }));
+    const BADGE = { copied: ["ok", "Copied"], alerted: ["info", "Alert"], skipped: ["info", "Skipped"] };
+    for (const d of c.recent.slice(0, 20)) {
+      const [k, label] = BADGE[d.result] || ["info", d.result];
+      const detail = d.result === "skipped"
+        ? d.reason || ""
+        : d.target ? `→ ${d.target.side.toUpperCase()} on ${platformLabel(d.target.platform)}${d.target.price != null ? ` at ${cents(d.target.price)}` : ""}` : "";
+      ul.append(el("li", { style: "cursor:default" },
+        el("span", { class: `outcome ${k}`, text: label }),
+        el("div", null,
+          el("div", { text: `${d.leader} bought ${d.outcome} · ${d.title}` }),
+          el("div", { class: "meta", text: `${cents(d.price)} · ${compactUsd(d.usd).replace("+", "")} · ${ago(d.at)}${detail ? ` — ${detail}` : ""}` }))));
+    }
+  }
+
   function renderUnusual(rulesById) {
     const loop = state.loop || {};
     const h = state.history || { hours: 0, markets: 0 };
@@ -1019,6 +1083,7 @@
     renderDecide(rulesById);
     renderArbs();
     renderUnusual(rulesById);
+    renderCopy();
     renderChart();
     renderRules(rulesById);
     renderOpen(rulesById);

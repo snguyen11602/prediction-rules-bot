@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadRulesFile } from "../rules/loader.js";
 import { loadLedger, summarizeLedger, type ArbGroupRecord, type PaperLedger, type PaperPosition } from "../ledger/paper.js";
-import { ARB_RULE_ID } from "../rules/schema.js";
+import { ARB_RULE_ID, COPY_RULE_ID } from "../rules/schema.js";
 import { kindLabel } from "../engine/arb.js";
 import type { ArbOpportunity, ArbTrace } from "../engine/arb-runtime.js";
 import type { ScanTrace } from "../engine/trace.js";
@@ -38,6 +38,17 @@ export interface LoopState {
   /** The latest check's decision trace (funnel, decisions, replay sample). */
   trace?: ScanTrace;
   arbTrace?: ArbTrace;
+  /** Copy trading: followed traders and what happened to their latest bets. */
+  copy?: import("../engine/copy-runtime.js").CopyView;
+  /** Fast mode: live streamed prices and quick checks between the full ones. */
+  fast?: {
+    tickSec: number;
+    ticks: number;
+    lastTickAt?: string;
+    streams: Array<{ platform: string; state: string; markets: number; updates: number; lastMessageAt?: string; error?: string }>;
+    /** Why fast mode isn't streaming (no keys, demo data…). */
+    note?: string;
+  };
   /** Unusual moves flagged on the latest check. */
   unusualMoves?: Array<{
     ruleId?: string;
@@ -145,6 +156,9 @@ export async function buildState(opts: DashboardOptions) {
     if (file.arbitrage) {
       arbEnabled = file.arbitrage.enabled;
       ruleMeta.set(ARB_RULE_ID, { name: file.arbitrage.name, action: file.arbitrage.action, enabled: file.arbitrage.enabled });
+    }
+    if (file.copy_trading) {
+      ruleMeta.set(COPY_RULE_ID, { name: file.copy_trading.name, action: file.copy_trading.action, enabled: file.copy_trading.enabled });
     }
   } catch (err) {
     rulesError = (err as Error).message;

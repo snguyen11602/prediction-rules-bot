@@ -35,6 +35,10 @@ export interface CliArgs {
   all: boolean;
   /** Bare words after the command (e.g. the number for arb:confirm). */
   positional: string[];
+  /** paper:watch — stream live prices (needs API keys in .env) and check every --tick seconds. */
+  fast: boolean;
+  /** Seconds between fast checks (default 5). */
+  tickSec: number;
 }
 
 function intArg(name: string, raw: string | undefined, min: number): number {
@@ -64,6 +68,8 @@ export function parseArgs(argv: string[]): CliArgs {
     invert: false,
     all: false,
     positional: [],
+    fast: false,
+    tickSec: 5,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -78,6 +84,8 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (a === "--port") out.port = intArg("--port", args[++i], 1);
     else if (a === "--paper") out.paper = true;
     else if (a === "--no-open") out.noOpen = true;
+    else if (a === "--fast") out.fast = true;
+    else if (a === "--tick") out.tickSec = intArg("--tick", args[++i], 2);
     else if (a === "--invert") out.invert = true;
     else if (a === "--all") out.all = true;
     else if (a === "--log-file" && args[i + 1]) out.logFile = path.resolve(args[++i]);
@@ -106,6 +114,7 @@ export function parseArgs(argv: string[]): CliArgs {
   npm run paper:report -- [--demo] [--ledger path] [--json]
   npm run paper:close -- --id <position id> --price <0-1> [--demo] [--ledger path]
   npm run paper:watch -- [--demo] [--interval sec] [--port N] [--no-open]   # paper loop + dashboard
+  npm run paper:fast -- [--tick sec] [--interval sec]   # live streamed prices, checks every few seconds (keys in .env)
   npm run dashboard -- [--demo] [--ledger path] [--port N] [--no-open]      # dashboard only (read-only)
   npm run arb:find -- [--demo] [--all]          # likely Kalshi ↔ Polymarket pairs + current edge
   npm run arb:confirm -- <n> [--invert]         # trade pair #n from the last arb:find

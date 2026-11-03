@@ -70,6 +70,8 @@ export interface NormalizedMarket {
   eventId?: string;
   /** Taker fee rate for fee = contracts × rate × p × (1 − p), when the platform publishes it per market. */
   takerFeeRate?: number;
+  /** Set when yesBid / yesAsk come from a live WebSocket stream (ISO time of that quote). */
+  quotedAt?: string;
   /** Free-form tags / categories from the platform. */
   tags?: string[];
   url?: string;
@@ -113,7 +115,9 @@ export type PaperExitReason =
   | "resolved"
   | "manual"
   | "arb_unwind"
-  | "trailing_stop";
+  | "trailing_stop"
+  /** Copy trading: the trader we copied sold the bet. */
+  | "leader_sold";
 
 /**
  * Append-only journal row in the paper ledger. v1 ledgers only had opening

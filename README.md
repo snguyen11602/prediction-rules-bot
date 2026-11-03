@@ -65,6 +65,54 @@ after the bid/ask spread, slippage and fees.
   which is why it's the default (`arbitrage.cross_platform.with`). Opportunities only need public data,
   so `npm run scan` and `npm run watch` report them as alerts.
 
+## Copy trading (follow top traders)
+
+Configured in the `copy_trading:` block of `rules/example.yaml`. Paper by default.
+
+- **Who to follow.** Global Polymarket is the only exchange that publishes other traders' accounts, so
+  leaders come from its public leaderboard (`data-api.polymarket.com`): the top 50 by profit this
+  month, kept only if they've traded at least 50 markets and won at least 55% of their last ~200
+  closed positions (30+ results). The best 10 by profit are followed; the list refreshes every 6 hours.
+  `include` / `exclude` take wallets to always / never follow.
+- **What gets copied.** Their new buys of $500+ from the last 30 minutes, on the same market where you
+  can trade it:
+  - sports: the exact game on Polymarket US (same teams and start time; the side is chosen by team name),
+  - everything else: the strict Yes/No title match used for arbitrage, on Polymarket US, then Kalshi.
+  Spreads, over/unders and props aren't copied yet. Bets with no clear twin are skipped, not guessed.
+- **Price.** A copy never pays more than 3¢ above the leader's price, and the two sites must agree on the
+  price within 10¢ (otherwise it's probably not the same bet).
+- **Exits.** It sells when the leader sells (`follow_sells`; a sale worth at least half of
+  `min_leader_trade_usd` counts, so a partial trim closes the whole copy), when the market resolves, or at
+  the stop loss. A leader's sell is remembered, so a copy that can't sell right away (no bid) sells on a
+  later check, and anyone you still hold a copy from keeps being watched after they leave the leader list
+  or copy trading is switched off. Sizing, caps and the losing-streak pause use the same risk block as
+  every other strategy.
+- **Honest limits.** You see a trade only after it happens (a minute or more later), and a big trader's
+  buy often moves the price first. High win rates often come from buying heavy favorites (small wins,
+  rare big losses), and a monthly leaderboard is partly luck. The dashboard lists each copied and skipped
+  bet with the reason; every copied trade's **Why?** shows the leader, their bet and the price checks.
+
+## Fast mode (live prices)
+
+`npm run paper:fast` streams live prices over the exchanges' WebSockets and checks for paper entries and
+exits every 5 seconds (`--tick`), between the normal full checks (`--interval`, default 5 minutes).
+Stop-losses, take-profits and trailing stops then react within seconds instead of minutes, and copy trading
+checks the leaders every minute. Still paper only.
+
+- It needs your API keys in a local `.env` (Kalshi: `KALSHI_API_KEY_ID` + `KALSHI_PRIVATE_KEY_PATH`;
+  Polymarket US: `POLYMARKET_KEY_ID` + `POLYMARKET_SECRET_KEY`). Either one is enough. Both exchanges
+  require a signed connection even for price streams. The keys are only used to sign that connection;
+  `src/live-data/` has no order, cancel or account code. Key contents are never logged.
+- Without keys, `paper:fast` says so and runs normal checks.
+- Quick checks only act on markets with a live streamed price. Everything else (no stream, stream down,
+  a quiet market after a reconnect) waits for the next full check. A streamed empty book is treated as
+  untradeable, never as the last REST price. Arbitrage is managed on full checks only.
+- "Moved since the last check" rules still compare with the last **full** check, so a 5¢ drop since then
+  is caught within seconds, not missed because the previous quick check was 5 seconds ago.
+- The status line on the dashboard shows each stream (✓ live, ✗ key rejected).
+- `quick-flip-paper` in the example rules is made for this mode. Round-trip fees are about 3¢ at mid
+  prices, so quick flips only pay on bigger bounces; check `npm run paper:report` before trusting it.
+
 ## Unusual moves (possible informed trading)
 
 The bot can't know who is trading or why. What it can spot in public prices is the footprint informed
@@ -216,6 +264,8 @@ Optional:
 - `WEBHOOK_URL` / `EVENT_LOG_FILE` — extra event sinks
 - `KALSHI_API_BASE` / `POLYMARKET_US_BASE` / `POLYMARKET_GAMMA_BASE` — override public bases
 - `POLYMARKET_US_BOOKS` — Polymarket US order books read per scan for liquidity (default 100)
+- `KALSHI_API_KEY_ID`, `KALSHI_PRIVATE_KEY_PATH`, `POLYMARKET_KEY_ID`, `POLYMARKET_SECRET_KEY` — only for
+  `npm run paper:fast` (read-only price streams); keep them in `.env`, never in git
 
 ## Layout
 
