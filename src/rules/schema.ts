@@ -81,6 +81,12 @@ export const EntryConditionsSchema = z.object({
    * with_move = buy YES after a rise, NO after a drop; against_move = the opposite (buy the dip).
    */
   side: z.enum(["yes", "no", "with_move", "against_move"]).default("yes"),
+  /**
+   * Never pay more than this for the contract you'd hold (YES or NO, incl. slippage; league
+   * strategies use 0.95). A 98¢
+   * contract risks 98¢ to make 2¢, so one loss wipes out dozens of wins.
+   */
+  max_buy_price: z.number().gt(0).lt(1).optional(),
 });
 
 /**

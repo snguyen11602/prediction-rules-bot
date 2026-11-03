@@ -123,7 +123,8 @@ league:
   # dip_buyer and scalper are off: they lost in every backtest version (add them back to try again)
   families: [momentum, favorite, longshot_fade]
   min_trades: 5              # finished trades before a strategy is ranked
-  # Every league strategy aims to win at least 2× what it risks and gets at least 48h per trade.
+  # Every league strategy aims to win at least 2× what it risks, gets at least 48h per trade, never pays
+  # more than 95¢ for a contract, and only one league strategy at a time may bet on a given game.
   winners: 3                 # each round the top 3 get a clone…
   clones_per_winner: 1
   retire: 3                  # …and up to 3 of the worst retire (with a diagnosis)

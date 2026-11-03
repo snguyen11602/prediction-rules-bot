@@ -28,14 +28,23 @@ export type RuleBody = Omit<Rule, "id" | "name">;
  */
 export const MIN_REWARD_RISK = 2;
 export const MIN_HOLD_HOURS = 48;
+/** League strategies never pay more than this for a contract (risking 98¢ to make 2¢ isn't worth it). */
+export const MAX_BUY_PRICE = 0.95;
 
-/** Apply the profit-target and time-limit floors (used for rookies, clones and existing members). */
-export function withRewardRisk<T extends Pick<RuleBody, "exit">>(b: T): T {
-  if (!b.exit) return b;
-  const x = { ...b.exit };
-  if (x.stop_loss_pct != null) x.take_profit_pct = Math.max(x.take_profit_pct ?? 0, Math.round(MIN_REWARD_RISK * x.stop_loss_pct * 100) / 100);
-  if (x.max_hold_hours != null) x.max_hold_hours = Math.max(x.max_hold_hours, MIN_HOLD_HOURS);
-  return { ...b, exit: x };
+/**
+ * Apply the league's guard rails (used for rookies, clones and existing members): profit target at
+ * least 2x the stop, at least 48h per trade, and never pay more than 95¢ for a contract.
+ */
+export function withRewardRisk<T extends Partial<Pick<RuleBody, "exit" | "entry">>>(b: T): T {
+  const out = { ...b };
+  if (b.exit) {
+    const x = { ...b.exit };
+    if (x.stop_loss_pct != null) x.take_profit_pct = Math.max(x.take_profit_pct ?? 0, Math.round(MIN_REWARD_RISK * x.stop_loss_pct * 100) / 100);
+    if (x.max_hold_hours != null) x.max_hold_hours = Math.max(x.max_hold_hours, MIN_HOLD_HOURS);
+    out.exit = x;
+  }
+  if (b.entry) out.entry = { ...b.entry, max_buy_price: Math.min(b.entry.max_buy_price ?? MAX_BUY_PRICE, MAX_BUY_PRICE) };
+  return out;
 }
 
 const round = (v: number, step: number) => Math.round(v / step) * step;
@@ -211,6 +220,7 @@ export function describeRule(b: RuleBody): string[] {
   if (x.trailing_stop != null) exits.push(`${c(x.trailing_stop)} off its high`);
   if (x.max_hold_hours != null) exits.push(`${x.max_hold_hours}h held`);
   out.push(exits.length ? `Sells at ${exits.join(", ")}, or when the market resolves.` : "Holds until the market resolves.");
+  if (e.max_buy_price != null) out.push(`Never pays more than ${c(e.max_buy_price)} for a contract.`);
   out.push(`Up to ${b.risk.max_open_positions} trades at once, ${Math.round(b.risk.position_size_fraction * 100)}% of its $${b.risk.bankroll_usd.toLocaleString("en-US")} each (max $${b.risk.max_position_usd ?? "—"}).`);
   return out;
 }

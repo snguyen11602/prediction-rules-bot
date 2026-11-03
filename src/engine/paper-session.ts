@@ -52,7 +52,7 @@ import {
 } from "./copy-runtime.js";
 import { loadPairsFile, pairsFilePath } from "./arb.js";
 import { copyStatePathFor } from "./copy.js";
-import { houseNames, leaguePathFor, leagueRules, loadLeague, upgradeLeague } from "../league/league.js";
+import { houseNames, leaguePathFor, leagueRules, loadLeague, MEMBER_PREFIX, upgradeLeague } from "../league/league.js";
 import {
   arbConfig,
   arbScanLimit,
@@ -122,6 +122,16 @@ export interface PaperCycleResult {
   arbTrace?: import("./arb-runtime.js").ArbTrace;
   /** Copy trading: who's followed and what happened to their latest bets. */
   copy?: CopyView;
+}
+
+/**
+ * The same market, or another market in the same event (Kalshi tickers are `<event>-<outcome>`,
+ * so "PSG by 3.5" and "PSG by 4.5" are one game).
+ */
+export function sameGame(p: Pick<PaperPosition, "platform" | "marketId">, m: Pick<NormalizedMarket, "platform" | "id" | "eventId">): boolean {
+  if (p.platform !== m.platform) return false;
+  if (p.marketId === m.id) return true;
+  return m.platform === "kalshi" && !!m.eventId && p.marketId.startsWith(`${m.eventId}-`);
 }
 
 function money(n: number): string {
@@ -465,6 +475,15 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       if (!canTrade(market, side, "buy")) return "no ask";
       const price = buyPrice(market, side, rule.paper.slippage);
       if (!(price > 0 && price < 1)) return "no executable price";
+      if (rule.entry.max_buy_price != null && price > rule.entry.max_buy_price + 1e-9) {
+        return `price ${cents(price)} is above its ${cents(rule.entry.max_buy_price)} limit`;
+      }
+      // No stacking: one league strategy per game. Many league strategies think alike, so
+      // several of them on one game is really one big bet.
+      if (rule.id.startsWith(MEMBER_PREFIX)) {
+        const holder = openPositions(ledger).find((p) => p.ruleId.startsWith(MEMBER_PREFIX) && sameGame(p, market));
+        if (holder) return holder.ruleId === rule.id ? "already holding this game" : "another league strategy already holds this game";
+      }
       return null;
     };
 

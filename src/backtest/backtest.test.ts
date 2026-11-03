@@ -275,3 +275,32 @@ test("a round retires strategies whose type is switched off", async () => {
   assert.ok(activeMembers(league).every((m) => ["momentum", "favorite", "longshot_fade", "custom"].includes(m.family)));
   assert.equal(activeMembers(league).length, 3, "replaced by rookies of the types still on");
 });
+
+test("league strategies don't stack on one game and never pay more than 95¢", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "prb-stack-"));
+  const rulesPath = path.join(dir, "rules.yaml");
+  const ledgerPath = path.join(dir, "data", "paper-ledger.json");
+  await mkdir(path.dirname(ledgerPath), { recursive: true });
+  // Your own rule (not a league strategy) still buys freely.
+  await writeFile(rulesPath, stringify({ version: 1, rules: [{ ...FAVORITE, id: "mine", filters: { min_price: 0.5, max_price: 0.99 } }], league: { families: ["favorite"] } }));
+  const { saveLeague } = await import("../league/league.js");
+  const { withRewardRisk } = await import("../league/genome.js");
+  const body = withRewardRisk({ ...FAVORITE, filters: { min_price: 0.5, max_price: 0.99 } });
+  const member = (id: string, name: string) => ({ id, name, style: "The Closer", family: "favorite" as const, traits: { hustle: 0.5, creativity: 0.5, knowledge: 0.5 }, rule: body, generation: 1, bornAt: NOW.toISOString(), status: "active" as const });
+  await saveLeague(leaguePathFor(ledgerPath), { version: 1, round: 1, members: [member("lg-a-1", "Ace"), member("lg-b-2", "Bolt"), member("lg-c-3", "Cash")], events: [], nameStyle: 2, ruleStyle: 3 });
+  // Two markets in one event, plus one at 97¢.
+  const ev = (id: string, price: number) => ({ ...market(id, 10, -100, () => price), market: { ...market(id, 10, -100, () => price).market, id: `KXGAME-26NOV03XY-${id}`, eventId: "KXGAME-26NOV03XY" } });
+  const hist = [ev("A", 0.6), ev("B", 0.62), { ...market("HI", 10, -100, () => 0.97) }];
+  const t = new Date(NOW.getTime() - 5 * 3600_000);
+  const res = await runPaperCycle({ rulesPath, ledgerPath, now: t, adapters: [new ReplayAdapter("kalshi", hist, () => t)], emit: async () => undefined });
+  const { loadLedger } = await import("../ledger/paper.js");
+  const ledger = await loadLedger(ledgerPath, { demo: false });
+  const league = ledger.positions.filter((p) => p.ruleId.startsWith("lg-"));
+  assert.equal(league.length, 1, `one league bet on the game, not ${league.length}`);
+  assert.ok(league[0].entryPrice <= 0.95);
+  assert.ok(!league.some((p) => p.marketId === "HI"), "nothing bought at 97¢");
+  assert.equal(ledger.positions.filter((p) => p.ruleId === "mine").length, 3, "your own rules aren't limited");
+  const reasons = res.trace!.decisions.flatMap((d) => d.checks.filter((c) => c.name === "Position" && !c.ok).map((c) => c.detail));
+  assert.ok(reasons.some((r) => /another league strategy already holds this game/.test(r)));
+  assert.ok(reasons.some((r) => /above its 95¢ limit/.test(r)));
+});

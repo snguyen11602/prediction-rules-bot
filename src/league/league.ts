@@ -61,7 +61,7 @@ export interface LeagueFile {
   pastNames?: string[];
   /** 2 = one-word names ("Blaze", "Blaze II"). Older files used first + last names. */
   nameStyle?: number;
-  /** 2 = rules follow the profit-target / time-limit floors (withRewardRisk). */
+  /** Rules follow the league guard rails (withRewardRisk): 2 = targets/time limits, 3 = + max buy price. */
   ruleStyle?: number;
 }
 
@@ -84,11 +84,11 @@ export function houseNames(file: { rules: Rule[] } | undefined): Map<string, str
 /** Bring an older league file up to date, in memory (the next round saves it). */
 export function upgradeLeague(l: LeagueFile, house: Map<string, string>): void {
   migrateNames(l, house);
-  if (l.ruleStyle !== 2) {
-    l.ruleStyle = 2;
+  if ((l.ruleStyle ?? 0) < 3) {
+    l.ruleStyle = 3;
     for (const m of l.members) {
       try {
-        if (m.rule?.exit) m.rule = withRewardRisk(m.rule);
+        if (m.rule?.exit || m.rule?.entry) m.rule = withRewardRisk(m.rule);
       } catch {
         // a broken member is skipped later, with a warning
       }
