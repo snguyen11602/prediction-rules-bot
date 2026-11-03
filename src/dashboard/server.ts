@@ -10,6 +10,12 @@ import type { ArbOpportunity, ArbTrace } from "../engine/arb-runtime.js";
 import type { ScanTrace } from "../engine/trace.js";
 import { loadSeries, seriesPathFor } from "../engine/series.js";
 import type { EngineEvent } from "../types.js";
+import type { RulesFile } from "../rules/schema.js";
+import { FAMILIES, describeRule, toBody } from "../league/genome.js";
+import { backtestDirs, leagueConfig, leaguePathFor, loadLeague, scoreOf, type LeagueFile } from "../league/league.js";
+import { openByRule, statsFromTrades, tradesByRule } from "../league/metrics.js";
+import { housePersona } from "../league/personas.js";
+import { houseContestantRules } from "../league/evolve.js";
 
 /**
  * Local, read-only paper-trading dashboard. Serves one page plus a JSON
@@ -49,6 +55,8 @@ export interface LoopState {
     /** Why fast mode isn't streaming (no keys, demo data…). */
     note?: string;
   };
+  /** League rounds (backtest + evolution) started by paper:watch. */
+  league?: { running: boolean; startedAt?: string; finishedAt?: string; lastError?: string; lastLine?: string };
   /** Unusual moves flagged on the latest check. */
   unusualMoves?: Array<{
     ruleId?: string;
@@ -150,8 +158,10 @@ export async function buildState(opts: DashboardOptions) {
   let ruleMeta = new Map<string, { name: string; action: string; enabled: boolean }>();
   let rulesError: string | undefined;
   let arbEnabled = false;
+  let file: RulesFile | undefined;
+  const league = await loadLeague(leaguePathFor(opts.ledgerPath));
   try {
-    const file = await loadRulesFile(opts.rulesPath);
+    file = await loadRulesFile(opts.rulesPath);
     ruleMeta = new Map(file.rules.map((r) => [r.id, { name: r.name, action: r.action, enabled: r.enabled }]));
     if (file.arbitrage) {
       arbEnabled = file.arbitrage.enabled;
@@ -162,6 +172,11 @@ export async function buildState(opts: DashboardOptions) {
     }
   } catch (err) {
     rulesError = (err as Error).message;
+  }
+  // League strategies trade under their own names.
+  const leagueOn = file ? leagueConfig(file).enabled : true;
+  for (const m of league.members) {
+    if (!ruleMeta.has(m.id)) ruleMeta.set(m.id, { name: `${m.name} — ${m.style}`, action: "paper", enabled: leagueOn && m.status !== "retired" });
   }
 
   // Every paper rule appears, even before its first trade.
@@ -276,8 +291,126 @@ export async function buildState(opts: DashboardOptions) {
     pnlSeries,
     journal,
     arbs,
+    league: leagueView(league, ledger, file),
     loop: opts.getLoop?.() ?? { enabled: false, running: false },
     events: (opts.getEvents?.() ?? []).slice(-80).reverse(),
+  };
+}
+
+/** The leaderboard: every league strategy plus your own rules, with backtest and paper results. */
+function leagueView(l: LeagueFile, ledger: PaperLedger, file: RulesFile | undefined) {
+  const cfg = file ? leagueConfig(file) : undefined;
+  const minTrades = cfg?.min_trades ?? 5;
+  const trades = tradesByRule(ledger);
+  const open = openByRule(ledger);
+  const paper = (id: string, bankrollUsd: number) =>
+    statsFromTrades(trades.get(id) ?? [], { bankrollUsd, minTrades, open: open.get(id)?.open, openPnlUsd: open.get(id)?.pnl });
+  const houseRules = file ? houseContestantRules(file) : [];
+  const names = new Map<string, string>([
+    ...l.members.map((m) => [m.id, m.name] as [string, string]),
+    ...houseRules.map((r) => [r.id, `${housePersona(r.id).name} (your rule)`] as [string, string]),
+  ]);
+  const members = l.members.map((m) => {
+    const p = paper(m.id, m.rule.risk.bankroll_usd);
+    const { score, ranked } = scoreOf(m.backtest, p);
+    return {
+      id: m.id,
+      name: m.name,
+      style: m.style,
+      family: m.family,
+      idea: FAMILIES[m.family]?.idea,
+      traits: m.traits,
+      generation: m.generation,
+      parentId: m.parentId,
+      parentName: m.parentId ? names.get(m.parentId) ?? m.parentId : undefined,
+      children: l.members.filter((c) => c.parentId === m.id).map((c) => ({ id: c.id, name: c.name, status: c.status })),
+      bornAt: m.bornAt,
+      status: m.status,
+      retiredAt: m.retiredAt,
+      house: false,
+      describe: describeRule(m.rule),
+      diagnosis: m.diagnosis,
+      backtest: m.backtest,
+      paper: p,
+      score,
+      ranked,
+    };
+  });
+  const house = houseRules.map((r) => {
+    const persona = housePersona(r.id);
+    const bt = l.lastRun?.house[r.id];
+    const p = paper(r.id, r.risk.bankroll_usd);
+    const { score, ranked } = scoreOf(bt, p);
+    let describe: string[] = [];
+    try {
+      describe = describeRule(toBody({ ...r }));
+    } catch {
+      // a rule the league can't describe still shows up
+    }
+    return {
+      id: r.id,
+      name: persona.name,
+      style: FAMILIES.custom.style,
+      ruleName: r.name,
+      family: "custom" as const,
+      idea: FAMILIES.custom.idea,
+      traits: persona.traits,
+      generation: 0,
+      parentId: undefined,
+      parentName: undefined,
+      children: l.members.filter((c) => c.parentId === r.id).map((c) => ({ id: c.id, name: c.name, status: c.status })),
+      bornAt: undefined,
+      status: "house" as const,
+      retiredAt: undefined,
+      house: true,
+      describe,
+      diagnosis: bt?.diagnosis,
+      backtest: bt ? { all: bt.all, test: bt.test, at: l.lastRun!.at } : undefined,
+      paper: p,
+      score,
+      ranked,
+    };
+  });
+  return {
+    enabled: cfg?.enabled ?? true,
+    round: l.round,
+    nextRoundAt: l.nextRoundAt,
+    lastRun: l.lastRun ? { ...l.lastRun, house: undefined } : undefined,
+    minTrades,
+    rosterSize: cfg?.roster_size ?? 12,
+    players: [...members, ...house],
+    events: l.events.slice(-120).reverse(),
+  };
+}
+
+/** One strategy's trades: paper (the real ledger) and the latest backtest. */
+export async function buildStrategy(opts: DashboardOptions, id: string) {
+  const pick = (l: PaperLedger) => {
+    const mine = l.positions.filter((p) => p.ruleId === id && !p.groupId);
+    const closed = mine.filter((p) => p.status === "closed" && p.exitAt).sort((a, b) => a.exitAt!.localeCompare(b.exitAt!));
+    let cum = 0;
+    const series = closed.map((p) => {
+      cum += p.realizedPnlUsd ?? 0;
+      return { at: p.exitAt!, pnlUsd: p.realizedPnlUsd ?? 0, cumPnlUsd: Math.round(cum * 100) / 100, title: p.title };
+    });
+    return {
+      createdAt: l.createdAt,
+      open: mine.filter((p) => p.status === "open").sort((a, b) => b.entryAt.localeCompare(a.entryAt)).map(slimPosition),
+      closed: closed.slice(-200).reverse().map(slimPosition),
+      series,
+    };
+  };
+  const ledger = await loadLedger(opts.ledgerPath, { demo: opts.demo });
+  const btPath = path.join(backtestDirs(opts.ledgerPath).workDir, "ledger.json");
+  const bt = await stat(btPath)
+    .then(() => loadLedger(btPath, { demo: false }))
+    .catch(() => undefined);
+  const league = await loadLeague(leaguePathFor(opts.ledgerPath));
+  return {
+    ok: true as const,
+    id,
+    paper: pick(ledger),
+    backtest: bt ? { ...pick(bt), from: league.lastRun?.from, to: league.lastRun?.to, testFrom: league.lastRun?.testFrom } : undefined,
   };
 }
 
@@ -335,6 +468,26 @@ export function createDashboardServer(opts: DashboardOptions): http.Server {
         } catch (err) {
           status = 500;
           body = { ok: false, error: (err as Error).message, loop: opts.getLoop?.() };
+        }
+        res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8" });
+        res.end(req.method === "HEAD" ? undefined : JSON.stringify(body));
+        return;
+      }
+      if (url.pathname === "/api/strategy") {
+        const id = url.searchParams.get("id") ?? "";
+        let body: unknown;
+        let status = 200;
+        // Only ever compared with rule ids, never used in a path.
+        if (id.length < 1 || id.length > 200) {
+          status = 400;
+          body = { ok: false, error: "bad strategy id" };
+        } else {
+          try {
+            body = await buildStrategy(opts, id);
+          } catch (err) {
+            status = 500;
+            body = { ok: false, error: (err as Error).message };
+          }
         }
         res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8" });
         res.end(req.method === "HEAD" ? undefined : JSON.stringify(body));

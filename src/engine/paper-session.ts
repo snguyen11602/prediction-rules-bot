@@ -52,6 +52,7 @@ import {
 } from "./copy-runtime.js";
 import { loadPairsFile, pairsFilePath } from "./arb.js";
 import { copyStatePathFor } from "./copy.js";
+import { leaguePathFor, leagueRules, loadLeague } from "../league/league.js";
 import {
   arbConfig,
   arbScanLimit,
@@ -154,7 +155,11 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
   const copyCfg = file.copy_trading;
   const copyRule = copyCfg ? copyAsRule(copyCfg) : undefined;
   if (copyRule) allRules.set(copyRule.id, copyRule);
-  const rules = enabledRules(file);
+  // League strategies (bot-made, named like traders) paper-trade next to your own rules.
+  // Retired members stay in allRules (disabled) so their open trades are still managed.
+  const leagueList = leagueRules(await loadLeague(leaguePathFor(opts.ledgerPath)), file.league);
+  for (const r of leagueList) if (!allRules.has(r.id)) allRules.set(r.id, r);
+  const rules = [...enabledRules(file), ...leagueList.filter((r) => r.enabled && !file.rules.some((x) => x.id === r.id))];
   // arbCfg gates finding / opening new arbs; open arbs are always managed (see arbCtx).
   const arbCfg = arbConfig(file);
   const arbManageCfg = file.arbitrage ?? ArbitrageSchema.parse({ enabled: false });

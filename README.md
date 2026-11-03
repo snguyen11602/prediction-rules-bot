@@ -139,6 +139,52 @@ The rules that use it:
 It needs at least 3 hours of snapshots (12 for a full baseline) before it can judge what's normal, so leave `npm run paper:watch` running. Until then, the dip rule stays out rather than guess.
 News, big traders and thin order books cause the same pattern, so treat it as a lead, not proof.
 
+## Strategy league (the bot makes its own strategies)
+
+The bot invents strategies, names them like traders on a leaderboard ("Leo Valdez — The Trend Rider"),
+and paper-trades them next to your own rules. Each one has a personality:
+
+| Trait | What it changes |
+|-------|-----------------|
+| **Work ethic** | how busy it is: more trades at once, shorter breaks before re-entering a market |
+| **Creativity** | how different its clones are from it |
+| **Knowledge** | how many safety checks it uses: tighter spreads, timing, skipping parlays and the like |
+
+Rookies come from five ideas: buy sharp drops (The Dip Hunter), ride sharp moves (The Trend Rider), buy
+heavy favorites near the finish (The Closer), bet against long shots (The Skeptic) and flip small moves in
+tight markets (The Scalper).
+
+Once a day (`evolve_every_hours`) a **round** runs in the background while `npm run paper:watch` is running,
+or now with `npm run league`:
+
+1. **Backtest.** Everyone, including your paper rules, is replayed hour by hour over the last 14 days of real
+   prices (Kalshi candlesticks and Polymarket US price history, public data, cached in `data/backtest/`). It
+   uses the same engine, checks and fees as paper trading, and settles finished markets with their real result.
+2. **Rank** by *steady score*: profit as a % of the $1,000 bankroll minus the worst drop in %. Once a strategy
+   has 10 paper trades, its paper score counts half.
+3. **Clone the best.** The top 3 each get a clone with the same idea, nudged numbers and a similar
+   personality. Clones keep the family surname. To count, a winner must also have made money in the last 30%
+   of the window (held out), so early luck doesn't get cloned.
+4. **Diagnose and retire the worst** (up to 3): losing once ranked, or never trading. The diagnosis says why in
+   plain words, for example *"Fees ate the edge: $60 in fees on top of $37 lost before fees"* or
+   *"Never found a trade: 'Price band' ruled out 96% of the market checks"*. Rookies take their place.
+
+The dashboard's **Leaderboard** tab ranks everyone and can sort by steady score, profit, win rate or trades,
+using backtest or paper results. Click a name for its own page: personality, how it trades, its P/L chart, its
+trades (backtest and paper, each with **Why?**), the coach's notes and its family. The **Backtests** tab shows
+the last run and the evolution log. **Live money** is a placeholder: live trading stays off.
+
+```bash
+npm run league                 # run a round now (a few minutes)
+npm run league -- --show       # print the roster
+npm run league -- --days 7 --markets 40   # a quicker, smaller backtest
+```
+
+Settings are in the `league:` block of the rules file (no block = these defaults); `enabled: false` stops new
+league trades (open ones are still managed). Honest limits: prices are hourly, so quick flips are only roughly
+tested; Polymarket US history has no order-book depth, so liquidity filters only pass on Kalshi in a backtest;
+and two weeks of games is a small sample — a winner is a hypothesis, not a proven edge.
+
 ## Paper trading
 
 Each `npm run paper` is one cycle against the ledger:
@@ -188,7 +234,8 @@ npm run dashboard            # just the dashboard (read-only), if paper runs els
 npm run paper:watch -- --demo --fixture fixtures/markets.later.json   # try it on demo data
 ```
 
-The page refreshes every 5 seconds. It shows total, closed-trade and open-trade profit/loss, win rate,
+Tabs: **Paper trading** (below), **Leaderboard** and **Backtests** (see Strategy league), and **Live
+money** (off). The page refreshes every 5 seconds. It shows total, closed-trade and open-trade profit/loss, win rate,
 a chart of closed-trade profit/loss over time, each strategy (including loss-streak pauses), open and
 closed trades, and new alerts. It only listens on `127.0.0.1`, is read-only, and warns you when paper
 trading has stopped. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C finishes the current check
@@ -280,7 +327,9 @@ src/rules/             Shared Zod schema + loader
 src/platforms/         Kalshi, Polymarket US and global Polymarket adapters (+ demo)
 src/engine/            Evaluate, exits, pricing, risk, runner, paper session, events
 src/ledger/            Paper ledger: positions, fills journal, PnL (JSON)
-src/cli/               scan | watch | paper | paper-report | live
+src/league/            Strategy league: personas, strategy DNA, scoring, diagnosis, evolution
+src/backtest/          Price history (cached), replay adapter, backtest runner
+src/cli/               scan | watch | paper | paper-report | league | live
 AGENTS.md              How to extend without breaking the schema
 ```
 

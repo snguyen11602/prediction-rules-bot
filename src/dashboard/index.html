@@ -59,6 +59,7 @@
   }
 
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     margin: 0;
     background: var(--page);
@@ -200,6 +201,67 @@
   .chk .n { color: var(--ink-2); }
   @media (prefers-reduced-motion: reduce) { .stage-box .bar > i, .scan-dot { transition: none; } }
 
+  /* Tabs and league pages */
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: -6px 0 18px; border-bottom: 1px solid var(--grid); }
+  .tabs a { padding: 8px 12px; color: var(--ink-2); text-decoration: none; font-weight: 550; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tabs a:hover { color: var(--ink); }
+  .tabs a.on { color: var(--ink); border-bottom-color: var(--series-1); }
+  .tabs a.off { color: var(--muted); }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 12px; color: var(--ink-2); font-size: 13px; }
+  .controls select { font: inherit; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { font: inherit; font-size: 12.5px; padding: 4px 12px; border: 0; background: var(--surface); color: var(--ink-2); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.on { background: var(--badge); color: var(--ink); font-weight: 600; }
+  .board tbody tr { cursor: pointer; }
+  .board td.rank { width: 36px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .board tr.first td.rank { color: var(--ink); font-weight: 700; }
+  .who { display: flex; align-items: center; gap: 10px; min-width: 220px; }
+  .av { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 12.5px; color: #fff; background: var(--fam, var(--muted)); }
+  .av.big { width: 56px; height: 56px; font-size: 19px; }
+  .av.retired { filter: grayscale(1); opacity: .55; }
+  .f-dip_buyer { --fam: #2a78d6; } .f-momentum { --fam: #c2410c; } .f-favorite { --fam: #0f8a5f; }
+  .f-longshot_fade { --fam: #7c3aed; } .f-scalper { --fam: #b4236b; } .f-custom { --fam: #52514e; }
+  .who .nm { font-weight: 600; }
+  .st { display: inline-block; font-size: 11px; font-weight: 650; padding: 1px 7px; border-radius: 4px; margin-left: 6px; background: var(--badge); color: var(--ink-2); white-space: nowrap; vertical-align: 1px; }
+  .st.champion { background: color-mix(in srgb, var(--warn) 45%, transparent); color: var(--ink); }
+  .st.rookie { background: color-mix(in srgb, var(--series-1) 18%, transparent); color: var(--ink); }
+  .st.retired { background: var(--badge); color: var(--muted); }
+  .st.house { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--ink); }
+  .traits { display: grid; grid-template-columns: repeat(3, 34px); gap: 4px; align-items: center; }
+  .trait { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+  .trait > i { display: block; height: 100%; background: var(--series-1); }
+  .trait-row { display: grid; grid-template-columns: 96px 1fr 44px; gap: 10px; align-items: center; margin: 10px 0 2px; }
+  .trait-row .trait { height: 8px; }
+  .trait-row .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+  .trait-help { color: var(--muted); font-size: 12px; margin: 0 0 6px 106px; }
+  @media (max-width: 560px) { .trait-help { margin-left: 0; } }
+  .profile { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 16px; }
+  .profile h2 { font-size: 20px; margin: 0; }
+  .profile .meta a { color: var(--ink-2); }
+  .back { display: inline-block; margin-bottom: 12px; color: var(--ink-2); text-decoration: none; }
+  .back:hover { color: var(--ink); }
+  .plain { margin: 0; padding-left: 18px; }
+  .plain li { margin: 4px 0; }
+  .diag h3 { font-size: 15px; margin: 0 0 6px; }
+  .diag .fix { margin-top: 10px; font-weight: 600; }
+  .chartbox { position: relative; height: 220px; }
+  .chartbox svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .ev { display: inline-block; width: 18px; text-align: center; }
+  .feed a.evl { color: inherit; text-decoration: none; }
+  .feed a.evl:hover { text-decoration: underline; }
+  .short { display: none; }
+  @media (max-width: 560px) {
+    .board .opt { display: none; }
+    .board td, .board th { padding: 8px 5px; }
+    .who { min-width: 0; gap: 8px; }
+    .who .av { width: 28px; height: 28px; font-size: 11px; }
+    .who .meta { max-width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .board td.rank { width: 18px; }
+    .long { display: none; }
+    .short { display: inline; }
+  }
+
   footer { color: var(--muted); font-size: 12px; margin-top: 24px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
@@ -213,8 +275,16 @@
     <div class="status" aria-live="polite"><span class="dot" id="statusDot"></span><span id="statusText">Loading…</span></div>
   </header>
 
+  <nav class="tabs" aria-label="Pages">
+    <a href="#/" data-view="paper">Paper trading</a>
+    <a href="#/leaderboard" data-view="league">Leaderboard</a>
+    <a href="#/backtest" data-view="backtest">Backtests</a>
+    <a href="#/live" data-view="live" class="off">Live money · off</a>
+  </nav>
+
   <div class="banner" id="banner" role="status"></div>
 
+  <main id="viewPaper">
   <section class="kpis" aria-label="Totals">
     <div class="card kpi"><div class="label">Total profit / loss</div><div class="value" id="kTotal">—</div><div class="sub">closed + still open</div></div>
     <div class="card kpi"><div class="label">From closed trades</div><div class="value" id="kRealized">—</div><div class="sub" id="kRealizedSub"></div></div>
@@ -312,7 +382,7 @@
       <div class="tip" id="tip"></div>
     </section>
     <section class="card">
-      <h2>Strategies</h2>
+      <h2>Strategies <a href="#/leaderboard" class="meta" style="font-weight:400;margin-left:6px">Leaderboard →</a></h2>
       <div class="tablewrap"><table>
         <thead><tr><th>Strategy</th><th class="num">Open</th><th class="num">W / L</th><th class="num">P/L</th></tr></thead>
         <tbody id="rulesBody"></tbody>
@@ -341,6 +411,116 @@
       <ul class="feed" id="feed"></ul>
     </section>
   </div>
+
+  </main>
+
+  <main id="viewLeague" hidden>
+    <section class="card section">
+      <div class="arb-head">
+        <h2>Strategy leaderboard</h2>
+        <span class="arb-note" id="lgNote"></span>
+      </div>
+      <div class="controls">
+        <span>Results from</span>
+        <div class="seg" id="lgSrc" role="group" aria-label="Results from">
+          <button type="button" data-v="backtest">Backtest</button><button type="button" data-v="paper">Paper</button>
+        </div>
+        <label>Rank by
+          <select id="lgSort">
+            <option value="score">Steady score</option>
+            <option value="profit">Profit</option>
+            <option value="win">Win rate</option>
+            <option value="trades">Most trades</option>
+          </select>
+        </label>
+        <label><input type="checkbox" id="lgRetired"> Show retired</label>
+      </div>
+      <div class="tablewrap"><table class="board">
+        <thead><tr><th class="num">#</th><th>Strategy</th><th class="num"><span class="long">Steady score</span><span class="short">Score</span></th><th class="num">Profit</th><th class="num opt">Win rate</th><th class="num opt">Trades</th><th class="num opt">Worst drop</th><th class="opt" title="Work ethic · Creativity · Knowledge">Work · Create · Know</th></tr></thead>
+        <tbody id="lgBody"></tbody>
+      </table></div>
+      <p class="meta" id="lgFoot"></p>
+    </section>
+    <div class="grid2">
+      <section class="card">
+        <h2>Latest from the league</h2>
+        <ul class="feed" id="lgEvents"></ul>
+      </section>
+      <section class="card">
+        <h2>How the league works</h2>
+        <ul class="plain">
+          <li>The bot invents strategies, gives each a name and a personality, and paper-trades them next to your own rules.</li>
+          <li>Every day it backtests them all on the last two weeks of real prices, then ranks them.</li>
+          <li>The best get <b>clones</b>: same idea, slightly different numbers, similar personality. They keep the family surname.</li>
+          <li>The worst get a <b>diagnosis</b> (why it didn't work) and retire. Rookies take their place.</li>
+          <li><b>Work ethic</b> = how busy it is. <b>Creativity</b> = how different its clones are. <b>Knowledge</b> = how many safety checks it uses.</li>
+        </ul>
+      </section>
+    </div>
+  </main>
+
+  <main id="viewStrategy" hidden>
+    <a href="#/leaderboard" class="back">← Leaderboard</a>
+    <div class="profile" id="sProfile"></div>
+    <section class="kpis" id="sKpis" aria-label="Results"></section>
+    <div class="grid2">
+      <section class="card">
+        <div class="arb-head"><h2>Profit / loss over time</h2>
+          <div class="seg" id="sChartSrc" role="group" aria-label="Chart data" style="margin-left:auto"><button type="button" data-v="backtest">Backtest</button><button type="button" data-v="paper">Paper</button></div>
+        </div>
+        <div class="chartbox" id="sChart"></div>
+        <div class="tip" id="sTip"></div>
+        <p class="meta" id="sChartNote"></p>
+      </section>
+      <section class="card">
+        <h2>Personality</h2>
+        <div id="sTraits"></div>
+        <h2 style="margin-top:18px">How it trades</h2>
+        <ul class="plain" id="sRule"></ul>
+      </section>
+    </div>
+    <section class="card section diag" id="sDiag"></section>
+    <section class="card section">
+      <div class="arb-head"><h2>Trades</h2>
+        <div class="seg" id="sTradeSrc" role="group" aria-label="Trades from" style="margin-left:auto"><button type="button" data-v="backtest">Backtest</button><button type="button" data-v="paper">Paper</button></div>
+      </div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Market</th><th>Result</th><th class="num">Bought → sold</th><th class="num">P/L</th><th class="num">When</th><th></th></tr></thead>
+        <tbody id="sTrades"></tbody>
+      </table></div>
+    </section>
+    <section class="card section">
+      <h2>Family</h2>
+      <div id="sFamily"></div>
+    </section>
+  </main>
+
+  <main id="viewBacktest" hidden>
+    <section class="card section">
+      <div class="arb-head"><h2>Last backtest</h2><span class="arb-note">Real past prices, replayed hour by hour through the same rules, checks and fees. Pretend money.</span></div>
+      <div id="btSummary"></div>
+    </section>
+    <section class="card section">
+      <h2>Every strategy on past prices</h2>
+      <div class="tablewrap"><table class="board">
+        <thead><tr><th>Strategy</th><th class="num">Profit (whole window)</th><th class="num opt">Trades</th><th class="num opt">Win rate</th><th class="num opt">Steady score</th><th class="num">Profit (recent part)</th><th class="opt">Verdict</th></tr></thead>
+        <tbody id="btBody"></tbody>
+      </table></div>
+      <p class="meta">"Recent part" is the last stretch of the window. A strategy only counts as a winner if it also made money there — otherwise its early gains may have been luck.</p>
+    </section>
+    <section class="card section">
+      <h2>Evolution log</h2>
+      <ul class="feed" id="btEvents" style="max-height:520px"></ul>
+    </section>
+  </main>
+
+  <main id="viewLive" hidden>
+    <section class="card section">
+      <h2>Live money</h2>
+      <p>Live trading is <b>off</b>. Nothing in this bot places real orders.</p>
+      <p class="meta">This tab will show real-money trades side by side with paper and backtest results once you ask to turn live trading on. Until then every number on this dashboard is pretend money.</p>
+    </section>
+  </main>
 
   <footer>
     <span>Nothing here places real orders. Prices come from public Kalshi and Polymarket US data.</span>
@@ -529,20 +709,22 @@
     return (v < 0 ? MINUS : "") + body;
   }
   function renderChart() {
-    const box = $("chart"), tip = $("tip");
+    drawPnl($("chart"), $("tip"), state.pnlSeries || [], state.ledger.createdAt, nowMs(), "No closed trades yet. This line starts once the first trade closes.");
+  }
+  /** Step line of cumulative P/L from closed trades, with a hover tip. */
+  function drawPnl(box, tip, series, startIso, endMs, emptyText) {
     box.replaceChildren();
     tip.style.display = "none";
-    const series = state.pnlSeries || [];
     if (!series.length) {
-      box.append(el("div", { class: "empty", text: "No closed trades yet. This line starts once the first trade closes." }));
+      box.append(el("div", { class: "empty", text: emptyText }));
       box.style.height = "auto";
       return;
     }
     box.style.height = "";
     const W = box.clientWidth || 600, H = box.clientHeight || 240;
     const m = { l: 52, r: 14, t: 10, b: 26 };
-    const t0 = Math.min(new Date(state.ledger.createdAt || series[0].at).getTime(), new Date(series[0].at).getTime());
-    const t1 = Math.max(nowMs(), new Date(series[series.length - 1].at).getTime() + 1);
+    const t0 = Math.min(new Date(startIso || series[0].at).getTime(), new Date(series[0].at).getTime());
+    const t1 = Math.max(endMs, new Date(series[series.length - 1].at).getTime() + 1);
     const pts = [{ t: t0, v: 0, p: null }].concat(series.map((d) => ({ t: new Date(d.at).getTime(), v: d.cumPnlUsd, p: d })));
     const vs = pts.map((p) => p.v);
     const ticks = niceTicks(Math.min(0, ...vs), Math.max(0, ...vs), 4);
@@ -627,7 +809,10 @@
     if (!state.rules.length) { body.append(emptyRow(4, "No paper strategies in the rules file.")); return; }
     for (const r of state.rules.filter((r) => r.action !== "alert")) {
       const paused = r.pausedUntil && new Date(r.pausedUntil).getTime() > nowMs();
-      const name = el("td", null, el("div", { text: r.name }));
+      const lp = state.league && playerById(r.ruleId);
+      const name = el("td", null, lp
+        ? el("div", null, el("a", { href: `#/s/${encodeURIComponent(r.ruleId)}`, style: "color:inherit", text: lp.house ? r.name : `${lp.name}` }), lp.house ? null : el("span", { class: "meta", text: ` ${lp.style}` }))
+        : el("div", { text: r.name }));
       if (paused) name.append(el("div", { class: "meta", text: `⏸ Paused after losses until ${new Date(r.pausedUntil).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }));
       else if (r.action === "alert") name.append(el("div", { class: "meta", text: "alerts only" }));
       else if (!r.enabled) name.append(el("div", { class: "meta", text: "turned off" }));
@@ -1074,8 +1259,286 @@
     }
   }
 
+  // ---------- league ----------
+  const pref = {
+    get(k, d) { try { return localStorage.getItem("pb." + k) || d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem("pb." + k, v); } catch { /* private window */ } },
+  };
+  const ui = { src: pref.get("src", "backtest"), sort: pref.get("sort", "score"), retired: pref.get("retired", "0") === "1", chartSrc: "backtest", tradeSrc: "backtest" };
+  const STATUS_LABEL = { champion: "🏆 Champion", rookie: "Rookie", retired: "Retired", house: "Your rule", active: "" };
+  const EVENT_ICON = { born: "✦", cloned: "⧉", retired: "✕", champion: "🏆", round: "↻" };
+  function initials(name) { return String(name || "?").split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase(); }
+  function avatar(p, big) { return el("span", { class: `av f-${p.family}${p.status === "retired" ? " retired" : ""}${big ? " big" : ""}`, "aria-hidden": "true", text: initials(p.name) }); }
+  function statusTag(p) { const t = STATUS_LABEL[p.status]; return t ? el("span", { class: `st ${p.status}`, text: t }) : null; }
+  function players() { return (state.league && state.league.players) || []; }
+  function playerById(id) { return players().find((p) => p.id === id); }
+  function statsFor(p, src) { return src === "paper" ? p.paper : p.backtest && p.backtest.all; }
+  function pct(n) { return `${Math.round((n || 0) * 100)}%`; }
+  function score(n) { return (n > 0 ? "+" : n < 0 ? MINUS : "") + Math.abs(n).toFixed(1); }
+  function setSeg(id, value, onPick) {
+    const seg = $(id);
+    for (const b of seg.querySelectorAll("button")) {
+      b.classList.toggle("on", b.dataset.v === value);
+      b.onclick = () => onPick(b.dataset.v);
+    }
+  }
+  function traitBars(t) {
+    const row = el("div", { class: "traits", title: `Work ethic ${pct(t.hustle)} · Creativity ${pct(t.creativity)} · Knowledge ${pct(t.knowledge)}` });
+    for (const v of [t.hustle, t.creativity, t.knowledge]) row.append(el("div", { class: "trait" }, el("i", { style: `width:${Math.round(v * 100)}%` })));
+    return row;
+  }
+  function whoCell(p) {
+    const sub = p.house ? `${p.ruleName}` : `${p.style}${p.generation > 1 ? ` · gen ${p.generation}` : ""}${p.parentName ? ` · child of ${p.parentName}` : ""}`;
+    return el("td", null, el("div", { class: "who" }, avatar(p), el("div", null, el("div", null, el("span", { class: "nm", text: p.name }), statusTag(p)), el("div", { class: "meta", text: sub }))));
+  }
+  function rankList(src, sort, withRetired) {
+    const list = players().filter((p) => withRetired || p.status !== "retired");
+    const minT = state.league.minTrades || 5;
+    const key = (p) => {
+      const s = statsFor(p, src);
+      if (!s) return -Infinity;
+      if (sort === "profit") return s.pnlUsd;
+      if (sort === "win") return s.wins + s.losses ? s.winRate : -1;
+      if (sort === "trades") return s.trades;
+      return s.steadyScore;
+    };
+    const ranked = (p) => { const s = statsFor(p, src); return !!s && (sort === "trades" || s.trades >= minT); };
+    return list.sort((a, b) => Number(ranked(b)) - Number(ranked(a)) || key(b) - key(a) || a.name.localeCompare(b.name)).map((p) => ({ p, ranked: ranked(p) }));
+  }
+  function renderLeague() {
+    const lg = state.league;
+    const body = $("lgBody");
+    body.replaceChildren();
+    setSeg("lgSrc", ui.src, (v) => { ui.src = v; pref.set("src", v); renderLeague(); });
+    $("lgSort").value = ui.sort;
+    $("lgRetired").checked = ui.retired;
+    const lr = lg.lastRun;
+    const next = lg.nextRoundAt ? new Date(lg.nextRoundAt).getTime() - nowMs() : null;
+    const loopL = state.loop && state.loop.league;
+    $("lgNote").textContent = !lg.enabled
+      ? "The league is turned off in your rules file (league: enabled: false)."
+      : loopL && loopL.running
+        ? `Round ${lg.round + 1} is running now (backtest + evolution)… ${loopL.lastLine || ""}`
+        : lg.round
+          ? `Round ${lg.round}${lr ? ` · backtested ${ago(lr.at)}` : ""}${next != null ? ` · next round ${next > 0 ? `in ${Math.max(1, Math.round(next / 3600000))}h` : "soon"}` : ""}`
+          : "No rounds yet. The first one starts with npm run paper:watch (or run npm run league).";
+    const rows = rankList(ui.src, ui.sort, ui.retired);
+    if (!rows.length) body.append(emptyRow(8, "No strategies yet."));
+    let n = 0;
+    for (const { p, ranked } of rows) {
+      const st = statsFor(p, ui.src);
+      const rank = ranked ? String(++n) : "—";
+      const tr = el("tr", { class: rank === "1" ? "first" : null, tabindex: "0" },
+        el("td", { class: "num rank", text: rank }),
+        whoCell(p),
+        el("td", { class: "num" }, st && ranked ? el("span", { class: cls(st.steadyScore), text: score(st.steadyScore) }) : el("span", { class: "meta", text: st ? `${st.trades}/${lg.minTrades}` : "—", title: st ? `${st.trades} of the ${lg.minTrades} finished trades needed to rank` : "not tested yet" })),
+        el("td", { class: "num" }, st ? pnlNode(st.pnlUsd) : "—", st && st.open ? el("div", { class: "meta opt", text: `${st.open} open ${usd(st.openPnlUsd, true)}` }) : null),
+        el("td", { class: "num opt", text: st && st.wins + st.losses ? pct(st.winRate) : "—" }),
+        el("td", { class: "num opt", text: st ? String(st.trades) : "—" }),
+        el("td", { class: "num opt", text: st && st.maxDrawdownUsd ? usd(-st.maxDrawdownUsd) : "—" }),
+        el("td", { class: "opt" }, traitBars(p.traits)),
+      );
+      const go = () => { location.hash = `#/s/${encodeURIComponent(p.id)}`; };
+      tr.addEventListener("click", go);
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+      body.append(tr);
+    }
+    $("lgFoot").textContent = `Steady score = profit as a % of its $1,000 bankroll, minus its worst drop in %. Strategies need ${lg.minTrades} finished trades to be ranked. ${ui.src === "paper" ? "Paper = trades made since it joined, on live prices." : "Backtest = the last two weeks of real prices, replayed."}`;
+    const ev = $("lgEvents");
+    ev.replaceChildren();
+    if (!lg.events.length) ev.append(el("li", { class: "empty", text: "Nothing yet." }));
+    for (const e of lg.events.slice(0, 40)) ev.append(eventItem(e));
+  }
+  function eventItem(e) {
+    const msg = el("div", { class: "msg" }, el("span", { class: "ev", text: EVENT_ICON[e.kind] || "•" }), " ");
+    const p = e.memberId && playerById(e.memberId);
+    if (p) {
+      msg.append(el("a", { class: "evl", href: `#/s/${encodeURIComponent(p.id)}`, text: e.text }));
+    } else msg.append(e.text);
+    return el("li", null, el("div", { class: "when", text: ago(e.at) }), msg);
+  }
+
+  let strat = null; // { id, data, at }
+  async function loadStrategy(id, force) {
+    if (!force && strat && strat.id === id && Date.now() - strat.at < 30000) return;
+    try {
+      const res = await fetch(`/api/strategy?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      strat = { id, data, at: Date.now() };
+      if (route().view === "strategy" && route().id === id) renderStrategy();
+    } catch (err) {
+      $("sTrades").replaceChildren(emptyRow(6, `Couldn't load trades: ${err.message || err}`));
+    }
+  }
+  function kpi(label, valueNode, sub) {
+    return el("div", { class: "card kpi" }, el("div", { class: "label", text: label }), el("div", { class: "value" }, valueNode), el("div", { class: "sub", text: sub || "" }));
+  }
+  function renderStrategy() {
+    const id = route().id;
+    const p = playerById(id);
+    const prof = $("sProfile");
+    if (!p) {
+      prof.replaceChildren(el("div", { class: "empty", text: "This strategy isn't in the league (any more)." }));
+      for (const k of ["sKpis", "sTraits", "sRule", "sDiag", "sFamily", "sTrades"]) $(k).replaceChildren();
+      return;
+    }
+    loadStrategy(id);
+    const life = p.house
+      ? `Your rule "${p.ruleName}"`
+      : `${p.style} — ${p.idea}. Generation ${p.generation}${p.bornAt ? ` · joined ${ago(p.bornAt)}` : ""}${p.retiredAt ? ` · retired ${ago(p.retiredAt)}` : ""}`;
+    const parent = p.parentId ? el("div", { class: "meta" }, "Cloned from ", el("a", { href: `#/s/${encodeURIComponent(p.parentId)}`, text: p.parentName || p.parentId })) : null;
+    prof.replaceChildren(avatar(p, true), el("div", null, el("h2", null, p.name, statusTag(p)), el("div", { class: "meta", text: life }), parent));
+
+    const bt = p.backtest && p.backtest.all, test = p.backtest && p.backtest.test, pa = p.paper;
+    $("sKpis").replaceChildren(
+      kpi("Steady score", el("span", { class: p.ranked ? cls(p.score) : "", text: p.ranked ? score(p.score) : "—" }), p.ranked ? "used for its rank" : `needs ${state.league.minTrades} finished trades`),
+      kpi("Backtest profit", bt ? pnlNode(bt.pnlUsd) : el("span", { text: "—" }), bt ? `${bt.trades} trades · ${bt.wins + bt.losses ? pct(bt.winRate) : "—"} won` : "not tested yet"),
+      kpi("Recent part of backtest", test ? pnlNode(test.pnlUsd) : el("span", { text: "—" }), test ? `${test.trades} trades (held-out test)` : ""),
+      kpi("Paper profit", pnlNode(pa.pnlUsd + pa.openPnlUsd), `${pa.trades} closed · ${pa.open} open`),
+      kpi("Fees paid", el("span", { text: usd((bt ? bt.feesUsd : 0) + pa.feesUsd) }), "backtest + paper"),
+    );
+
+    const tr = $("sTraits");
+    tr.replaceChildren();
+    for (const [label, v, help] of [
+      ["Work ethic", p.traits.hustle, "How busy it is: more trades at once, shorter breaks before re-entering a market."],
+      ["Creativity", p.traits.creativity, "How different its clones are from it."],
+      ["Knowledge", p.traits.knowledge, "How many safety checks it uses (tight spreads, timing, skipping risky market types)."],
+    ]) {
+      tr.append(el("div", { class: "trait-row" }, el("span", { text: label }), el("div", { class: "trait" }, el("i", { style: `width:${Math.round(v * 100)}%` })), el("span", { class: "v", text: pct(v) })), el("p", { class: "trait-help", text: help }));
+    }
+    $("sRule").replaceChildren(...(p.describe || []).map((t) => el("li", { text: t })));
+
+    const d = p.diagnosis;
+    const diag = $("sDiag");
+    diag.replaceChildren(el("h2", { text: p.status === "retired" ? "Why it retired" : "Coach's notes" }));
+    if (!d) diag.append(el("p", { class: "meta", text: "No diagnosis yet — it appears after this strategy's first backtest." }));
+    else {
+      diag.append(el("h3", { text: d.headline }));
+      if (d.findings.length > 1) diag.append(el("ul", { class: "plain" }, ...d.findings.slice(1).map((f) => el("li", { text: f }))));
+      diag.append(el("div", { class: "fix", text: d.suggestion }), el("div", { class: "meta", text: `From the backtest ${ago(d.at)}` }));
+    }
+
+    const fam = $("sFamily");
+    fam.replaceChildren();
+    const kids = p.children || [];
+    const sameName = players().filter((x) => !x.house && x.id !== p.id && p.name.split(" ").slice(1).join(" ") && x.name.endsWith(" " + p.name.split(" ").slice(1).join(" ")));
+    if (!p.parentId && !kids.length) fam.append(el("p", { class: "meta", text: p.house ? "No clones yet. Your rules get cloned when they finish near the top." : "No parent or clones yet. Clones are made from the strategies at the top of the leaderboard." }));
+    if (kids.length) fam.append(el("div", { class: "sub-h", style: "margin-top:0", text: "Clones" }), el("ul", { class: "plain" }, ...kids.map((k) => el("li", null, el("a", { href: `#/s/${encodeURIComponent(k.id)}`, text: k.name }), k.status === "retired" ? " (retired)" : ""))));
+    if (sameName.length && !p.house) fam.append(el("div", { class: "meta", text: `Same family name: ${sameName.map((x) => x.name).join(", ")}` }));
+
+    // Chart + trades come from /api/strategy.
+    const sd = strat && strat.id === id ? strat.data : null;
+    setSeg("sChartSrc", ui.chartSrc, (v) => { ui.chartSrc = v; renderStrategy(); });
+    setSeg("sTradeSrc", ui.tradeSrc, (v) => { ui.tradeSrc = v; renderStrategy(); });
+    const chartData = sd && (ui.chartSrc === "paper" ? sd.paper : sd.backtest);
+    if (chartData) {
+      const end = ui.chartSrc === "paper" ? nowMs() : new Date(sd.backtest.to || Date.now()).getTime();
+      drawPnl($("sChart"), $("sTip"), chartData.series, ui.chartSrc === "paper" ? (p.bornAt || chartData.createdAt) : sd.backtest.from, end, ui.chartSrc === "paper" ? "No closed paper trades yet." : "No closed trades in the backtest.");
+      $("sChartNote").textContent = ui.chartSrc === "paper" ? "Paper trades on live prices." : sd.backtest.testFrom ? `Backtest window; the recent part starts ${new Date(sd.backtest.testFrom).toLocaleDateString([], { month: "short", day: "numeric" })}.` : "";
+    } else {
+      $("sChart").replaceChildren(el("div", { class: "empty", text: sd ? "No backtest yet." : "Loading…" }));
+      $("sChartNote").textContent = "";
+    }
+    const tb = $("sTrades");
+    tb.replaceChildren();
+    const td = sd && (ui.tradeSrc === "paper" ? sd.paper : sd.backtest);
+    const list = td ? [...td.open, ...td.closed] : [];
+    if (!list.length) tb.append(emptyRow(6, sd ? (td ? "No trades." : "No backtest yet.") : "Loading…"));
+    const names = { [p.id]: { name: p.house ? p.ruleName : `${p.name} — ${p.style}` } };
+    for (const t of list.slice(0, 120)) {
+      const open = t.status === "open";
+      const pnl = open ? t.unrealizedPnlUsd || 0 : t.realizedPnlUsd || 0;
+      tb.append(el("tr", null,
+        el("td", { class: "title" }, safeUrl(t.url) ? el("a", { href: safeUrl(t.url), target: "_blank", rel: "noopener noreferrer", text: t.title }) : el("span", { text: t.title }), el("div", { class: "meta" }, el("span", { class: "side", text: t.side.toUpperCase() }), ` ${platformLabel(t.platform)}`)),
+        el("td", { text: open ? "Still open" : REASONS[t.exitReason] || t.exitReason || "—" }),
+        el("td", { class: "num", text: `${cents(t.entryPrice)} → ${cents(open ? t.lastMarkPrice : t.exitPrice)}` }),
+        el("td", { class: "num" }, pnlNode(pnl)),
+        el("td", { class: "num", text: new Date(open ? t.entryAt : t.exitAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) }),
+        el("td", null, whyBtn(() => positionStory(t, names))),
+      ));
+    }
+  }
+
+  function renderBacktest() {
+    const lg = state.league;
+    const lr = lg.lastRun;
+    const sum = $("btSummary");
+    sum.replaceChildren();
+    if (!lr) sum.append(el("p", { class: "meta" }, "No backtest yet. It runs automatically once a day while ", el("code", { text: "npm run paper:watch" }), " is running, or run ", el("code", { text: "npm run league" }), " now."));
+    else {
+      const day = (iso) => new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+      const mk = Object.entries(lr.markets || {}).map(([k, v]) => `${v} ${platformLabel(k)}`).join(" + ");
+      sum.append(el("div", { class: "kpis", style: "margin-bottom:8px" },
+        kpi("Window", el("span", { text: `${day(lr.from)} – ${day(lr.to)}` }), `recent part from ${day(lr.testFrom)}`),
+        kpi("Markets replayed", el("span", { text: String(Object.values(lr.markets || {}).reduce((a, b) => a + b, 0)) }), mk),
+        kpi("Price checks", el("span", { text: String(lr.steps) }), `every ${lr.stepMinutes} min`),
+        kpi("Ran", el("span", { text: ago(lr.at) }), `took ${Math.round(lr.seconds / 60) || "<1"} min`),
+      ));
+      if (lr.note) sum.append(el("p", { class: "meta", text: lr.note }));
+    }
+    const body = $("btBody");
+    body.replaceChildren();
+    // Strategies that traded first (best steady score on top), then the ones that never found a trade.
+    const rows = players()
+      .filter((p) => p.backtest && p.status !== "retired")
+      .sort((a, b) => Number(b.backtest.all.trades > 0) - Number(a.backtest.all.trades > 0) || b.backtest.all.steadyScore - a.backtest.all.steadyScore);
+    if (!rows.length) body.append(emptyRow(7, "Nothing backtested yet."));
+    for (const p of rows) {
+      const a = p.backtest.all, t = p.backtest.test;
+      const verdict = a.trades < lg.minTrades ? "Too few trades" : a.pnlUsd > 0 && t.pnlUsd >= 0 ? "✓ Winner material" : a.pnlUsd > 0 ? "Lucky start?" : "Losing";
+      const tr = el("tr", { tabindex: "0" },
+        whoCell(p),
+        el("td", { class: "num" }, pnlNode(a.pnlUsd)),
+        el("td", { class: "num opt", text: String(a.trades) }),
+        el("td", { class: "num opt", text: a.wins + a.losses ? pct(a.winRate) : "—" }),
+        el("td", { class: "num opt" }, el("span", { class: cls(a.steadyScore), text: score(a.steadyScore) })),
+        el("td", { class: "num" }, pnlNode(t.pnlUsd), el("div", { class: "meta", text: `${t.trades} trades` })),
+        el("td", { class: "opt", text: verdict }),
+      );
+      tr.addEventListener("click", () => { location.hash = `#/s/${encodeURIComponent(p.id)}`; });
+      body.append(tr);
+    }
+    const ev = $("btEvents");
+    ev.replaceChildren();
+    if (!lg.events.length) ev.append(el("li", { class: "empty", text: "Nothing yet." }));
+    for (const e of lg.events) ev.append(eventItem(e));
+  }
+
+  // ---------- pages ----------
+  function route() {
+    const h = location.hash.replace(/^#\/?/, "");
+    if (h.startsWith("s/")) return { view: "strategy", id: decodeURIComponent(h.slice(2)) };
+    if (h === "leaderboard") return { view: "league" };
+    if (h === "backtest") return { view: "backtest" };
+    if (h === "live") return { view: "live" };
+    return { view: "paper" };
+  }
+  const VIEWS = { paper: "viewPaper", league: "viewLeague", strategy: "viewStrategy", backtest: "viewBacktest", live: "viewLive" };
+  function showView() {
+    const r = route();
+    for (const [k, id] of Object.entries(VIEWS)) $(id).hidden = k !== r.view;
+    for (const a of document.querySelectorAll(".tabs a")) a.classList.toggle("on", a.dataset.view === (r.view === "strategy" ? "league" : r.view));
+  }
+  window.addEventListener("hashchange", () => {
+    showView();
+    if (route().view === "strategy") { ui.chartSrc = "backtest"; ui.tradeSrc = "backtest"; window.scrollTo(0, 0); }
+    render();
+  });
+  $("lgSort").addEventListener("change", (e) => { ui.sort = e.target.value; pref.set("sort", ui.sort); renderLeague(); });
+  $("lgRetired").addEventListener("change", (e) => { ui.retired = e.target.checked; pref.set("retired", ui.retired ? "1" : "0"); renderLeague(); });
+
   function render() {
     if (!state || !state.ok) return;
+    showView();
+    const v = route().view;
+    if (state.league) {
+      if (v === "league") renderLeague();
+      else if (v === "strategy") renderStrategy();
+      else if (v === "backtest") renderBacktest();
+    }
+    if (v !== "paper") { $("demoBadge").hidden = !state.ledger.demo; renderBanner(); renderStatus(); return; }
     const rulesById = Object.fromEntries(state.rules.map((r) => [r.ruleId, r]));
     $("demoBadge").hidden = !state.ledger.demo;
     $("ledgerPath").textContent = `Trade file: ${state.ledger.path}`;
@@ -1114,7 +1577,7 @@
     if (t) playReplay(t.sample, Object.fromEntries(state.rules.map((r) => [r.ruleId, r])));
   });
   let resizeTimer;
-  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => state && renderChart(), 150); });
+  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => state && render(), 150); });
   poll();
   setInterval(poll, POLL_MS);
 })();

@@ -113,6 +113,25 @@ copy_trading:
     slippage: 0.005
     include_fees: true
 
+# ── Strategy league ─────────────────────────────────────────────────────────
+# The bot invents its own strategies, names them like traders, and paper-trades them next to your
+# rules. Once a day (while npm run paper:watch runs, or with npm run league) it backtests everyone on
+# the last two weeks of real prices, ranks them, clones the best and retires the worst with a
+# diagnosis. Paper only. Leaderboard: the dashboard's Leaderboard tab.
+league:
+  enabled: true
+  roster_size: 12            # bot-made strategies trading at once
+  families: [dip_buyer, momentum, favorite, longshot_fade, scalper]
+  min_trades: 5              # finished trades before a strategy is ranked
+  winners: 3                 # each round the top 3 get a clone…
+  clones_per_winner: 1
+  retire: 3                  # …and up to 3 of the worst retire (with a diagnosis)
+  clone_house_rules: true    # your own rules can be cloned too (never retired)
+  backtest_days: 14
+  test_share: 0.3            # the last 30% is held out: winners must make money there too
+  markets_per_platform: 120  # markets with price history to replay per platform
+  evolve_every_hours: 24
+
 rules:
   # ── Alerts ────────────────────────────────────────────────────────────────
   - id: mid-prob-politics-alert

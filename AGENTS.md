@@ -96,6 +96,21 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 - Matching is as conservative as arbitrage: exact game (teams + start time, side by team name) or the
   strict title matcher, plus a price-agreement check. Never guess a twin from loose titles.
 
+## Strategy league and backtests
+
+- `src/league/`: `personas.ts` (names + traits, seeded), `genome.ts` (rookie rules per family, `mutate`,
+  `describeRule`), `metrics.ts` (stats + steady score), `diagnose.ts` (plain-English findings),
+  `league.ts` (league file `*.league.json` next to the ledger), `evolve.ts` (one round).
+- League members are ordinary `Rule`s with ids `lg-…`, loaded by the paper session each cycle. Retired
+  members stay in the file (disabled) while they have open positions so their exits keep running.
+- `src/backtest/`: `history.ts` (public price history, cached under `data/backtest/cache`), `replay.ts`
+  (`ReplayAdapter`: read-only, never returns a price later than the replay time, settles at the close with
+  the real result), `run.ts` (steps `runPaperCycle` over the window with a temp ledger).
+- A backtest must go through the same paper engine. Don't add a second simulator; fix the engine or the
+  replay adapter instead. Keep "no look-ahead" tests passing.
+- Rounds run in a child process (`npm run league`) started by `paper:watch`, guarded by
+  `data/backtest/round.lock`. Paper only, like everything else.
+
 ## Paper ledger
 
 - `src/ledger/paper.ts` is the only writer of `data/paper-ledger*.json` (gitignored). Bump `version` and add a migration if you change its shape; v1 → v2 already exists.

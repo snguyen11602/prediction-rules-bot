@@ -10,7 +10,9 @@
  * Hypothetical only: the paper loop uses public market data and the local ledger.
  * Nothing here imports or calls order-placement code.
  */
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "./args.js";
 import { runPaperCycle } from "../engine/paper-session.js";
 import { consoleSink, fileSink, webhookSink, type EventSink } from "../engine/events.js";
@@ -23,6 +25,62 @@ import { loadDotEnv, readStreamCreds } from "../live-data/credentials.js";
 import { QuoteBook } from "../live-data/quotes.js";
 import { KalshiStream, PolymarketUsStream, type AnyStream } from "../live-data/streams.js";
 import { LiveQuoteAdapter } from "../live-data/live-adapter.js";
+import { loadRulesFile } from "../rules/loader.js";
+import { leagueConfig, leaguePathFor, loadLeague } from "../league/league.js";
+
+/**
+ * League rounds (backtest + evolution) take a few minutes, so they run in a child process
+ * (`npm run league`) once a day while paper trading carries on. Paper only.
+ */
+function leagueScheduler(args: ReturnType<typeof parseArgs>, ledgerPath: string, loop: LoopState, log: (m: string) => void) {
+  let child: ChildProcess | undefined;
+  let retryAt = 0;
+  const self = fileURLToPath(import.meta.url);
+  const cli = path.join(path.dirname(self), `league${path.extname(self)}`);
+  const SHOW = /^(Champion|Cloned|Retired|New):/;
+  async function maybeStart() {
+    if (child || Date.now() < retryAt) return;
+    try {
+      if (!leagueConfig(await loadRulesFile(args.rules)).enabled) return;
+      const l = await loadLeague(leaguePathFor(ledgerPath));
+      if (l.nextRoundAt && Date.parse(l.nextRoundAt) > Date.now()) return;
+      log(`League round ${l.round + 1} starting in the background (backtest + evolution, a few minutes)…`);
+    } catch {
+      return;
+    }
+    loop.league = { running: true, startedAt: new Date().toISOString() };
+    const argv = [...process.execArgv, cli, "--rules", args.rules, "--ledger", ledgerPath, ...(args.demo ? ["--demo"] : [])];
+    const proc = spawn(process.execPath, argv, { stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    child = proc;
+    const summary: string[] = [];
+    let tail = "";
+    const onData = (buf: Buffer) => {
+      for (const raw of String(buf).split("\n")) {
+        const line = raw.trim();
+        if (!line || /ExperimentalWarning|EHPA|trace-warnings/.test(line)) continue;
+        tail = line;
+        if (loop.league) loop.league.lastLine = line.slice(0, 160);
+        if (SHOW.test(line)) summary.push(line);
+      }
+    };
+    proc.stdout?.on("data", onData);
+    proc.stderr?.on("data", onData);
+    const done = (ok: boolean, why?: string) => {
+      if (child !== proc) return;
+      child = undefined;
+      loop.league = { ...loop.league!, running: false, finishedAt: new Date().toISOString(), lastError: ok ? undefined : why };
+      if (ok) {
+        log(`League round finished. ${summary.join(" | ") || tail}`);
+      } else {
+        retryAt = Date.now() + 3600_000; // try again in an hour
+        log(`League round failed: ${why}. Will retry in an hour.`);
+      }
+    };
+    proc.on("exit", (code) => done(code === 0, code === 0 ? undefined : tail || `exit code ${code}`));
+    proc.on("error", (err) => done(false, err.message));
+  }
+  return { maybeStart, stop: () => child?.kill() };
+}
 
 /** Fast mode plumbing: one quote book, one stream per platform with keys, one cached adapter per platform. */
 function setUpFastMode(args: ReturnType<typeof parseArgs>, intervalSec: number, log: (m: string) => void) {
@@ -142,7 +200,9 @@ async function main() {
 
   let stopping = false;
   let ticking = false; // a quick check holds the ledger lock too
+  let stopLeague = () => {};
   const shutdown = () => {
+    stopLeague();
     if (stopping || !(loop.running || ticking)) {
       server.close();
       process.exit(stopping ? 130 : 0);
@@ -155,6 +215,10 @@ async function main() {
 
   if (!args.paper) return; // server keeps the process alive
 
+  const league = leagueScheduler(args, ledgerPath, loop, (m) => console.log(m));
+  stopLeague = () => {
+    league.stop();
+  };
   const fast = args.fast ? setUpFastMode(args, intervalSec, (m) => console.error(m)) : undefined;
   const fastOn = !!fast && "wrap" in fast;
   if (fast) {
@@ -267,6 +331,7 @@ async function main() {
     loop.lastRunAt = new Date().toISOString();
     if (loop.fast) loop.fast.streams = streamStatus();
     if (stopping) break;
+    await league.maybeStart();
     loop.nextRunAt = new Date(Date.now() + intervalSec * 1000).toISOString();
     if (fastOn) {
       nextFullAt = Date.now() + intervalSec * 1000;
@@ -274,6 +339,7 @@ async function main() {
     } else await new Promise((r) => setTimeout(r, intervalSec * 1000));
   }
   if (fastOn) for (const st of fast!.streams!.values()) st.stop();
+  league.stop();
   server.close();
   process.exit(0);
 }

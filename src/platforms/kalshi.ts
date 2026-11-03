@@ -16,6 +16,7 @@ const DEFAULT_BASE =
 
 interface KalshiMarket {
   ticker: string;
+  open_time?: string;
   title?: string;
   /** The specific outcome, e.g. "Cut 25bps" under "Fed decision in December?". */
   yes_sub_title?: string;
@@ -105,6 +106,11 @@ function mapStatus(
   if (!status || status === "active") return { status: "open" };
   // Paused, closed, disputed, amended, or final without a usable result.
   return { status: "closed" };
+}
+
+export type { KalshiMarket };
+export function normalizeKalshi(m: KalshiMarket): NormalizedMarket | null {
+  return normalize(m);
 }
 
 function normalize(m: KalshiMarket): NormalizedMarket | null {
