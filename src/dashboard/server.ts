@@ -17,11 +17,13 @@ import { openTradesByRule, statsFromTrades, tradesByRule } from "../league/metri
 import { housePersonas } from "../league/personas.js";
 import { houseContestantRules } from "../league/evolve.js";
 import { testTradesNeeded } from "../backtest/run.js";
+import { applyControl, controlsPathFor, isStopped, loadControls, saveControls, type ControlAction } from "../engine/controls.js";
 
 /**
- * Local, read-only paper-trading dashboard. Serves one page plus a JSON
- * snapshot of the paper ledger. Binds to 127.0.0.1 only; never places orders
- * and never writes the ledger (the optional paper loop lives in the CLI).
+ * Local paper-trading dashboard. Serves one page plus a JSON snapshot of the
+ * paper ledger. Binds to 127.0.0.1 only; never places orders and never writes
+ * the ledger (the optional paper loop lives in the CLI). The one thing it can
+ * change is the bots' start / stop switches (POST /api/control).
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -206,8 +208,9 @@ export async function buildState(opts: DashboardOptions) {
       });
     }
   }
+  const controls = await loadControls(controlsPathFor(opts.ledgerPath));
   const rules = [...byId.values()]
-    .map((s) => ({ ...s, ...(ruleMeta.get(s.ruleId) ?? { name: s.ruleId, action: "unknown", enabled: false }) }))
+    .map((s) => ({ ...s, ...(ruleMeta.get(s.ruleId) ?? { name: s.ruleId, action: "unknown", enabled: false }), stopped: isStopped(controls, s.ruleId) }))
     .sort((a, b) => Number(b.ruleId === ARB_RULE_ID) - Number(a.ruleId === ARB_RULE_ID) || a.name.localeCompare(b.name));
 
   const groups = Object.values(ledger.arbGroups ?? {});
@@ -300,6 +303,7 @@ export async function buildState(opts: DashboardOptions) {
     },
     totals: summary.total,
     rules,
+    controls: { allStopped: controls.allStopped, allStoppedAt: controls.allStoppedAt, stopped: controls.stopped },
     /** Display names for every rule, including alert-only ones (used by the alert feed). */
     ruleNames: Object.fromEntries([...ruleMeta].map(([id, m]) => [id, m.name])),
     rulesError,
@@ -480,6 +484,56 @@ function hostAllowed(host: string | undefined): boolean {
   return name === "localhost" || name === "127.0.0.1" || name === "::1";
 }
 
+/** Reads a small JSON body (bot controls are a few bytes). */
+async function readJson(req: http.IncomingMessage, max = 2048): Promise<unknown> {
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > max) throw new Error("body too large");
+    chunks.push(chunk as Buffer);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+}
+
+/**
+ * Start / stop a bot (or all of them). Only from this page: JSON only (another site can't send
+ * that without the browser asking first, and this server never says yes) and, when the browser
+ * says where the request comes from, it must be this dashboard. Paper settings only; no orders.
+ */
+async function control(opts: DashboardOptions, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const reply = (status: number, body: unknown) => {
+    res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(body));
+  };
+  const origin = req.headers.origin;
+  let originHost: string | undefined;
+  try {
+    originHost = origin ? new URL(origin).host : undefined;
+  } catch {
+    originHost = "bad";
+  }
+  if (origin && (!originHost || !hostAllowed(originHost) || originHost !== req.headers.host)) return reply(403, { ok: false, error: "not from this dashboard" });
+  if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) return reply(415, { ok: false, error: "send JSON" });
+  let body: { action?: unknown; id?: unknown; all?: unknown };
+  try {
+    body = (await readJson(req)) as typeof body;
+  } catch {
+    return reply(400, { ok: false, error: "bad request" });
+  }
+  const action = body?.action === "start" || body?.action === "stop" ? body.action : undefined;
+  const all = body?.all === true;
+  const id = typeof body?.id === "string" && /^[\w.:-]{1,200}$/.test(body.id) ? body.id : undefined;
+  if (!action || (!all && !id)) return reply(400, { ok: false, error: "need action start|stop and an id (or all: true)" });
+  const state = await buildState(opts);
+  const known = state.rules.filter((r) => r.action !== "alert").map((r) => r.ruleId);
+  if (id && !known.includes(id)) return reply(404, { ok: false, error: "no such bot" });
+  const file = controlsPathFor(opts.ledgerPath);
+  const next = applyControl(await loadControls(file), { action, id, all } as ControlAction, new Date(), known);
+  await saveControls(file, next);
+  reply(200, { ok: true, controls: { allStopped: next.allStopped, stopped: next.stopped } });
+}
+
 export function createDashboardServer(opts: DashboardOptions): http.Server {
   return http.createServer(async (req, res) => {
     try {
@@ -487,11 +541,15 @@ export function createDashboardServer(opts: DashboardOptions): http.Server {
         res.writeHead(403, { "Content-Type": "text/plain" }).end("Forbidden");
         return;
       }
-      if (req.method !== "GET" && req.method !== "HEAD") {
-        res.writeHead(405, { Allow: "GET, HEAD", "Content-Type": "text/plain" }).end("Read-only dashboard");
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (req.method === "POST" && url.pathname === "/api/control") {
+        await control(opts, req, res);
         return;
       }
-      const url = new URL(req.url ?? "/", "http://localhost");
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        res.writeHead(405, { Allow: "GET, HEAD", "Content-Type": "text/plain" }).end("Read-only dashboard (POST only to /api/control)");
+        return;
+      }
       if (url.pathname === "/" || url.pathname === "/index.html") {
         res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "text/html; charset=utf-8" });
         res.end(req.method === "HEAD" ? undefined : await page());

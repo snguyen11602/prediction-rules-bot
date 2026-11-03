@@ -153,6 +153,8 @@ export interface ParlayRecord {
 export interface RulePaperState {
   consecutiveLosses: number;
   pausedUntil?: string;
+  /** The last dashboard Start already applied (it lifts a loss pause once). */
+  resumedAt?: string;
 }
 
 export interface PaperLedger {

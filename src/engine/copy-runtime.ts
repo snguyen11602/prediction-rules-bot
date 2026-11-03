@@ -97,6 +97,8 @@ export interface CopyCtx {
   now: Date;
   push: (e: EngineEvent) => Promise<void>;
   statePath: string;
+  /** Stopped from the dashboard: bets are still read and matched (for exits and parlays), not copied. */
+  stopped?: boolean;
   deps: CopyDeps;
   /** Markets already fetched this cycle (listings + cached Kalshi events) for title matching. */
   venueMarkets: () => NormalizedMarket[];
@@ -409,6 +411,10 @@ export async function enterCopies(ctx: CopyCtx, poll: CopyPoll): Promise<{ opene
     const tgt = { platform: fresh.platform, id: fresh.id, title: fresh.title, side: target.side };
     // A big bet on a tradable market is a possible parlay leg, whether or not the copy fills.
     addLeg(state, bet, fresh, target.side, cfg);
+    if (ctx.stopped) {
+      record(state, { ...base, result: "skipped", reason: "copy trading is stopped (dashboard)", target: tgt });
+      continue;
+    }
     const skip = ctx.skipMarket(ctx.rule, fresh, target.side);
     if (skip) {
       record(state, { ...base, result: "skipped", reason: skip, target: tgt });

@@ -215,8 +215,9 @@ Two more guard rails for league strategies (copy trading has its own 95¢ cap; y
 - **No buying above 95¢.** A 98¢ contract risks 98¢ to make 2¢, so one loss wipes out dozens of wins.
 - **No stacking: one league strategy per game.** League strategies often think alike, so without this
   three or four of them would pile into the same game at once, which is really one big bet. "Same game"
-  includes sibling markets (on Kalshi, "PSG by 3.5" and "PSG by 4.5" are one game). The first one in
-  gets it; the others skip with "another league strategy already holds this game".
+  includes sibling markets (on Kalshi, "PSG by 3.5" and "PSG by 4.5" are one game) and every other market
+  on the same match (its spread, total goals and team totals). The first one in gets it; the others skip
+  with "another league strategy already holds this game".
 
 Once a day (`evolve_every_hours`) a **round** runs in the background while `npm run paper:watch` is running,
 or now with `npm run league`:
@@ -299,15 +300,24 @@ PnL but don't change the loss streak.
 
 ```bash
 npm run paper:watch          # trades every 5 minutes and opens http://localhost:4321
-npm run dashboard            # just the dashboard (read-only), if paper runs elsewhere (cron, --loop)
+npm run dashboard            # just the dashboard, if paper runs elsewhere (cron, --loop)
 npm run paper:watch -- --demo --fixture fixtures/markets.later.json   # try it on demo data
 ```
 
 Tabs: **Paper trading** (below), **Leaderboard** and **Backtests** (see Strategy league), and **Live
 money** (off). The page refreshes every 5 seconds. It shows total, closed-trade and open-trade profit/loss, win rate,
 a chart of closed-trade profit/loss over time, each strategy (including loss-streak pauses), open and
-closed trades, and new alerts. It only listens on `127.0.0.1`, is read-only, and warns you when paper
-trading has stopped. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C finishes the current check
+closed trades, and new alerts. It only listens on `127.0.0.1` and warns you when paper trading has
+stopped.
+
+**Start / stop.** Each strategy (your rules, league strategies, copy trading, parlays, arbitrage) has a
+**Stop** / **Start** button in the Strategies table, and **Stop all** / **Start all** sits at the top of the
+page. A stopped bot makes no new trades; its open trades still sell at their exits and settle, so
+nothing is left unwatched. **Start** on a bot that's paused after a losing streak lifts the pause. The
+switches are saved next to the ledger (`data/paper-ledger.controls.json`) and take effect on the next
+check (within 5 seconds in fast mode). Stopping copy trading still follows the leaders' sells for copies
+you hold. The buttons are the only thing the dashboard can change, and they only accept requests from the
+dashboard page itself. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C finishes the current check
 and exits. Don't run `paper:watch` and `paper -- --loop` at the same time; the second one just waits
 for the lock.
 

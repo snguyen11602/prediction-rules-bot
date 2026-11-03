@@ -126,6 +126,13 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 - Rounds run in a child process (`npm run league`) started by `paper:watch`, guarded by
   `data/backtest/round.lock`. Paper only, like everything else.
 
+## Start / stop controls
+
+- `src/engine/controls.ts`: `data/paper-ledger.controls.json`, written only by the dashboard's
+  `POST /api/control` (JSON only, same-origin, localhost Host) and read by every paper cycle. Stopped
+  bots get no entries; exits, settlement and copy sells always run. A Start is applied to the ledger once
+  (`ruleState[id].resumedAt`) and lifts a loss pause. Keep any new strategy behind `isStopped`.
+
 ## Paper ledger
 
 - `src/ledger/paper.ts` is the only writer of `data/paper-ledger*.json` (gitignored). Bump `version` and add a migration if you change its shape; v1 → v2 already exists.
