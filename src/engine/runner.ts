@@ -1,7 +1,7 @@
 import { enabledRules, loadRulesFile } from "../rules/loader.js";
 import type { Rule } from "../rules/schema.js";
 import { createAdapters, type PlatformAdapter } from "../platforms/index.js";
-import type { EngineEvent, NormalizedMarket, PlatformId, SignalSide } from "../types.js";
+import { DEFAULT_PLATFORMS, type EngineEvent, type NormalizedMarket, type PlatformId, type SignalSide } from "../types.js";
 import { dayKeyLA } from "./clock.js";
 import { traceEntry, type PriorPrice } from "./evaluate.js";
 import { stageReached, type Check, type Decision, type FunnelRow, type ScanSample, type ScanTrace } from "./trace.js";
@@ -73,8 +73,7 @@ export function platformsFromRules(rules: Rule[]): PlatformId[] {
     if (r.filters.platforms?.length) {
       for (const p of r.filters.platforms) set.add(p);
     } else {
-      set.add("kalshi");
-      set.add("polymarket");
+      for (const p of DEFAULT_PLATFORMS) set.add(p);
     }
   }
   return [...set];
@@ -349,7 +348,9 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
   try {
     adapters = createAdapters({
       demo: opts.demo,
-      platforms: arbCfg ? ["kalshi", "polymarket"] : platformsFromRules(rules),
+      platforms: arbCfg
+        ? [...new Set<PlatformId>([...platformsFromRules(rules), "kalshi", arbCfg.cross_platform.with])]
+        : platformsFromRules(rules),
       fixturePath: opts.fixturePath,
     });
   } catch (err) {

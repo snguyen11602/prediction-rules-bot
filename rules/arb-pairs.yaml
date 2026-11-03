@@ -10,6 +10,7 @@
 #   confirmed:
 #     - kalshi: KXFEDDECISION-26DEC-C25
 #       polymarket: "123456"
+#       platform: polymarket_us      # or polymarket (global); pairs without it are global
 #       note: Fed cuts 25bps in December 2026
 confirmed: []
 blocked: []

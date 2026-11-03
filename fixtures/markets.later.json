@@ -52,7 +52,7 @@
     "url": "https://kalshi.com/markets/DEMO-CPI-HOT"
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-poly-1",
     "title": "Presidential election winner: Democratic nominee?",
     "yesPrice": 0.4,
@@ -62,10 +62,10 @@
     "liquidityUsd": 240000,
     "volume24hUsd": 140000,
     "closesInHours": 210,
-    "url": "https://polymarket.com/event/demo-election"
+    "url": "https://polymarket.us/event/demo-election"
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-poly-2",
     "title": "Fed rate cut at the next FOMC meeting?",
     "yesPrice": 0.68,
@@ -75,10 +75,10 @@
     "liquidityUsd": 182000,
     "volume24hUsd": 41000,
     "closesInHours": 294,
-    "url": "https://polymarket.com/event/demo-fed"
+    "url": "https://polymarket.us/event/demo-fed"
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-poly-3",
     "title": "Parlay same game NFL special (should be excluded)",
     "yesPrice": 0.2,
@@ -90,7 +90,7 @@
     "closesInHours": 24
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-poly-4",
     "title": "Bitcoin above $60k on Friday close?",
     "yesPrice": 0.9875,
@@ -100,10 +100,10 @@
     "liquidityUsd": 65000,
     "volume24hUsd": 26000,
     "closesInHours": 44,
-    "url": "https://polymarket.com/event/demo-btc-friday"
+    "url": "https://polymarket.us/event/demo-btc-friday"
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-poly-5",
     "title": "Will the frontrunner withdraw before the debate?",
     "yesPrice": 0.4,
@@ -113,10 +113,10 @@
     "liquidityUsd": 32000,
     "volume24hUsd": 60000,
     "closesInHours": 54,
-    "url": "https://polymarket.com/event/demo-withdraw"
+    "url": "https://polymarket.us/event/demo-withdraw"
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-poly-6",
     "title": "Will a third-party candidate win any state?",
     "yesPrice": 0.065,
@@ -126,7 +126,7 @@
     "liquidityUsd": 40000,
     "volume24hUsd": 9000,
     "closesInHours": 48,
-    "url": "https://polymarket.com/event/demo-third-party"
+    "url": "https://polymarket.us/event/demo-third-party"
   },
   {
     "platform": "kalshi",
@@ -197,7 +197,7 @@
     "url": "https://kalshi.com/markets/DEMO-FEDDEC-H25"
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-fed-dec-25",
     "title": "Will the Fed decrease interest rates by 25 bps after the December 2026 meeting?",
     "yesPrice": 0.615,
@@ -211,10 +211,10 @@
     "liquidityUsd": 15000,
     "volume24hUsd": 8000,
     "closesInHours": 1000,
-    "url": "https://polymarket.com/event/demo-fed-dec-25"
+    "url": "https://polymarket.us/event/demo-fed-dec-25"
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-mayor-a",
     "title": "Will Alvarez win the Demo City mayoral race?",
     "yesPrice": 1,
@@ -226,7 +226,7 @@
     "liquidityUsd": 30000,
     "volume24hUsd": 9000,
     "closesInHours": -1,
-    "url": "https://polymarket.com/event/demo-mayor-a",
+    "url": "https://polymarket.us/event/demo-mayor-a",
     "eventId": "demo-mayor",
     "eventTitle": "Demo City mayoral race",
     "mutuallyExclusive": true,
@@ -234,7 +234,7 @@
     "resolvedOutcome": "yes"
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-mayor-b",
     "title": "Will Brooks win the Demo City mayoral race?",
     "yesPrice": 0,
@@ -246,7 +246,7 @@
     "liquidityUsd": 30000,
     "volume24hUsd": 9000,
     "closesInHours": -1,
-    "url": "https://polymarket.com/event/demo-mayor-b",
+    "url": "https://polymarket.us/event/demo-mayor-b",
     "eventId": "demo-mayor",
     "eventTitle": "Demo City mayoral race",
     "mutuallyExclusive": true,
@@ -254,7 +254,7 @@
     "resolvedOutcome": "no"
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-mayor-c",
     "title": "Will Chen win the Demo City mayoral race?",
     "yesPrice": 0,
@@ -266,7 +266,7 @@
     "liquidityUsd": 30000,
     "volume24hUsd": 9000,
     "closesInHours": -1,
-    "url": "https://polymarket.com/event/demo-mayor-c",
+    "url": "https://polymarket.us/event/demo-mayor-c",
     "eventId": "demo-mayor",
     "eventTitle": "Demo City mayoral race",
     "mutuallyExclusive": true,
@@ -274,7 +274,7 @@
     "resolvedOutcome": "no"
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-film-x",
     "title": "Will Film X win the Demo Film Festival top prize?",
     "yesPrice": 0.305,
@@ -288,14 +288,14 @@
     "liquidityUsd": 8000,
     "volume24hUsd": 3000,
     "closesInHours": 300,
-    "url": "https://polymarket.com/event/demo-film-x",
+    "url": "https://polymarket.us/event/demo-film-x",
     "eventId": "demo-film",
     "eventTitle": "Demo Film Festival top prize",
     "mutuallyExclusive": true,
     "exhaustive": true
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-film-y",
     "title": "Will Film Y win the Demo Film Festival top prize?",
     "yesPrice": 0.235,
@@ -309,14 +309,14 @@
     "liquidityUsd": 8000,
     "volume24hUsd": 3000,
     "closesInHours": 300,
-    "url": "https://polymarket.com/event/demo-film-y",
+    "url": "https://polymarket.us/event/demo-film-y",
     "eventId": "demo-film",
     "eventTitle": "Demo Film Festival top prize",
     "mutuallyExclusive": true,
     "exhaustive": true
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-film-z",
     "title": "Will Film Z win the Demo Film Festival top prize?",
     "yesPrice": 0.195,
@@ -330,14 +330,14 @@
     "liquidityUsd": 8000,
     "volume24hUsd": 3000,
     "closesInHours": 300,
-    "url": "https://polymarket.com/event/demo-film-z",
+    "url": "https://polymarket.us/event/demo-film-z",
     "eventId": "demo-film",
     "eventTitle": "Demo Film Festival top prize",
     "mutuallyExclusive": true,
     "exhaustive": true
   },
   {
-    "platform": "polymarket",
+    "platform": "polymarket_us",
     "id": "demo-film-other",
     "title": "Will another film win the Demo Film Festival top prize?",
     "yesPrice": 0.165,
@@ -351,7 +351,7 @@
     "liquidityUsd": 8000,
     "volume24hUsd": 3000,
     "closesInHours": 300,
-    "url": "https://polymarket.com/event/demo-film-other",
+    "url": "https://polymarket.us/event/demo-film-other",
     "eventId": "demo-film",
     "eventTitle": "Demo Film Festival top prize",
     "mutuallyExclusive": true,

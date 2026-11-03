@@ -4,7 +4,7 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 
 ## Goals
 
-- Keep **one shared rule schema** for Kalshi and Polymarket.
+- Keep **one shared rule schema** for Kalshi, Polymarket US (`polymarket_us`, the default) and global Polymarket (`polymarket`).
 - Prefer **alerts / paper**; never add accidental live order placement.
 - Preserve `npm run scan` (and `--demo`) working **without API keys**.
 
@@ -44,6 +44,15 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 ## Risk engine
 
 `src/engine/risk.ts` owns consecutive-loss pause, sizing and the bankroll/exposure gate. If you change pause semantics, update the example rule comments and README table.
+
+## Platforms
+
+- `polymarket_us` and `polymarket` are different exchanges (different markets, ids, fees). Never map one
+  to the other; ledger positions keep the platform they were opened on, and paper runs create an adapter
+  for every platform that still has open positions.
+- Display names come from `platformName()` / `PLATFORM_NAMES` in `src/types.ts`.
+- Missing platform data stays missing: a filter that needs it fails, except `volume24hUnavailable`
+  (Polymarket US publishes no 24h volume), where the 24h-volume check is skipped and says so.
 
 ## Arbitrage
 

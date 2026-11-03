@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { parse as parseYaml } from "yaml";
 import { ArbPairsFileSchema, type ArbitrageConfig, type ArbPairsFile } from "../rules/schema.js";
 import type { EventGroup } from "../platforms/types.js";
-import type { NormalizedMarket, PlatformId, SignalSide } from "../types.js";
+import { platformName, type NormalizedMarket, type PlatformId, type SignalSide } from "../types.js";
 import { hoursToResolve } from "./evaluate.js";
 import { findMatches, type MatchCandidate } from "./match.js";
 import { buyPrice, sellPrice } from "./pricing.js";
@@ -63,7 +63,8 @@ export interface QuoteEnv {
   slippage: number;
   includeFees: boolean;
   feeFor: (market: NormalizedMarket, contracts: number, price: number) => number;
-  roundSets: (platforms: PlatformId[], sets: number) => number;
+  /** Round a set count to what every leg's market can trade. */
+  roundSets: (markets: NormalizedMarket[], sets: number) => number;
   now: Date;
 }
 
@@ -75,8 +76,9 @@ function quoted(m: NormalizedMarket): boolean {
   return (m.status ?? "open") === "open" && m.yesBid != null && m.yesAsk != null;
 }
 
-export function pairKey(kalshiId: string, polymarketId: string): string {
-  return `x|kalshi:${kalshiId}|polymarket:${polymarketId}`;
+/** `venue` is the Polymarket exchange (global pairs keep the key format they always had). */
+export function pairKey(kalshiId: string, polymarketId: string, venue: PlatformId = "polymarket"): string {
+  return `x|kalshi:${kalshiId}|${venue}:${polymarketId}`;
 }
 
 /** The pairs file must live in the rules folder (it's rewritten by arb:confirm / arb:block). */
@@ -123,16 +125,16 @@ export function quoteBasket(basket: ArbBasket, size: { sizeUsd: number } | { set
   const perSet = prices.reduce((a, b) => a + b, 0);
   if (!(perSet < basket.payoutPerSet)) return null;
 
-  const platforms = basket.legs.map((l) => l.market.platform);
+  const legMarkets = basket.legs.map((l) => l.market);
   const feesFor = (n: number) =>
     basket.legs.map((l, i) => (env.includeFees ? env.feeFor(l.market, n, prices[i]) : 0));
-  let sets = env.roundSets(platforms, "sets" in size ? size.sets : size.sizeUsd / perSet);
+  let sets = env.roundSets(legMarkets, "sets" in size ? size.sets : size.sizeUsd / perSet);
   if ("sizeUsd" in size) {
     // Fees count toward the position size: shrink until cost + fees fit.
     for (let i = 0; i < 20 && sets > 0; i++) {
       const total = sets * perSet + feesFor(sets).reduce((a, b) => a + b, 0);
       if (total <= size.sizeUsd + 1e-9) break;
-      sets = env.roundSets(platforms, sets * (size.sizeUsd / total) - 1e-9);
+      sets = env.roundSets(legMarkets, sets * (size.sizeUsd / total) - 1e-9);
     }
   }
   if (!(sets > 0)) return null;
@@ -200,7 +202,7 @@ export function crossBaskets(
   matchedBy: "confirmed" | "auto",
   score?: number,
 ): ArbBasket[] {
-  const key = pairKey(k.id, p.id);
+  const key = pairKey(k.id, p.id, p.platform);
   const title = `${k.title} ↔ ${p.title}`;
   return (["yes", "no"] as const).map((kSide) => ({
     key,
@@ -227,17 +229,28 @@ export async function discoverBaskets(input: DiscoverInput): Promise<Discovery> 
     const byKey = new Map(input.markets.map((m) => [`${m.platform}:${m.id}`, m]));
     const get = async (platform: PlatformId, id: string) =>
       byKey.get(`${platform}:${id}`) ?? (input.lookup ? await input.lookup(platform, id) : null);
-    const blocked = new Set(pairs.blocked.map((b) => pairKey(b.kalshi, b.polymarket)));
+    const venue = cfg.cross_platform.with;
+    const venueBlocks = pairs.blocked.filter((b) => b.platform === venue);
+    const blocked = new Set(venueBlocks.map((b) => pairKey(b.kalshi, b.polymarket, venue)));
     const claimed = new Set<string>();
 
     for (const c of pairs.confirmed) {
-      const key = pairKey(c.kalshi, c.polymarket);
+      if (c.platform !== venue) {
+        // A pair on the other Polymarket isn't tradable with this setting; say so instead of ignoring it.
+        skipped.push({
+          key: pairKey(c.kalshi, c.polymarket, c.platform),
+          title: c.note ?? `${c.kalshi} ↔ ${c.polymarket}`,
+          reason: `pair is for ${platformName(c.platform)}; arbitrage.cross_platform.with is ${venue}`,
+        });
+        continue;
+      }
+      const key = pairKey(c.kalshi, c.polymarket, venue);
       if (blocked.has(key)) continue;
-      const [k, p] = await Promise.all([get("kalshi", c.kalshi), get("polymarket", c.polymarket)]);
+      const [k, p] = await Promise.all([get("kalshi", c.kalshi), get(venue, c.polymarket)]);
       claimed.add(`kalshi:${c.kalshi}`);
-      claimed.add(`polymarket:${c.polymarket}`);
+      claimed.add(`${venue}:${c.polymarket}`);
       if (!k || !p) {
-        skipped.push({ key, title: c.note ?? key, reason: `market not found (${!k ? "Kalshi" : "Polymarket"})` });
+        skipped.push({ key, title: c.note ?? key, reason: `market not found (${!k ? "Kalshi" : platformName(venue)})` });
         continue;
       }
       baskets.push(...crossBaskets(k, p, c.invert, "confirmed"));
@@ -246,16 +259,16 @@ export async function discoverBaskets(input: DiscoverInput): Promise<Discovery> 
     if (cfg.cross_platform.auto_match) {
       candidates = findMatches(
         input.markets.filter((m) => m.platform === "kalshi" && !claimed.has(`kalshi:${m.id}`)),
-        input.markets.filter((m) => m.platform === "polymarket" && !claimed.has(`polymarket:${m.id}`)),
+        input.markets.filter((m) => m.platform === venue && !claimed.has(`${venue}:${m.id}`)),
         {
           minScore: cfg.cross_platform.min_score,
           maxCloseGapHours: cfg.cross_platform.max_close_gap_hours,
           // Blocked pairs never compete for a market in the one-to-one assignment.
-          exclude: new Set(pairs.blocked.map((b) => `${b.kalshi}|${b.polymarket}`)),
+          exclude: new Set(venueBlocks.map((b) => `${b.kalshi}|${b.polymarket}`)),
         },
       );
       for (const c of candidates) {
-        const key = pairKey(c.kalshi.id, c.polymarket.id);
+        const key = pairKey(c.kalshi.id, c.polymarket.id, venue);
         if (blocked.has(key)) continue;
         const gap = Math.abs(c.kalshi.yesPrice - c.polymarket.yesPrice);
         if (gap > cfg.cross_platform.max_price_gap) {

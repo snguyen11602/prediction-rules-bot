@@ -1,7 +1,7 @@
 import type { ArbitrageConfig, Rule, RulesFile } from "../rules/schema.js";
 import { arbitrageAsRule } from "../rules/schema.js";
 import type { EventGroup, PlatformAdapter } from "../platforms/types.js";
-import type { EngineEvent, NormalizedMarket, PlatformId } from "../types.js";
+import { platformName, type EngineEvent, type NormalizedMarket, type PlatformId } from "../types.js";
 import {
   closePosition,
   markPosition,
@@ -193,11 +193,11 @@ export function quoteEnv(cfg: ArbitrageConfig, adapters: PlatformAdapter[], now:
     includeFees: cfg.paper.include_fees,
     now,
     feeFor: (market, contracts, price) => adapterFor(market.platform)?.estimateTakerFeeUsd?.(contracts, price, market) ?? 0,
-    roundSets: (platforms, sets) => {
+    roundSets: (markets, sets) => {
       let s = Math.floor(sets * 100 + 1e-9) / 100;
-      for (const p of new Set(platforms)) {
-        const a = adapterFor(p);
-        if (a?.roundContracts) s = Math.min(s, a.roundContracts(sets));
+      for (const m of markets) {
+        const a = adapterFor(m.platform);
+        if (a?.roundContracts) s = Math.min(s, a.roundContracts(s, m));
       }
       return s;
     },
@@ -405,7 +405,7 @@ export async function emitArbSignals(
     if (opts.lastMatched?.has(k)) continue;
     const s = summarize(q, opts.cfg);
     const willTrade = opts.action === "paper" && s.tradable;
-    const legs = q.legs.map((l) => `${l.side.toUpperCase()} ${l.market.platform} @ ${(l.price * 100).toFixed(1)}¢`).join(" + ");
+    const legs = q.legs.map((l) => `${l.side.toUpperCase()} ${platformName(l.market.platform)} @ ${(l.price * 100).toFixed(1)}¢`).join(" + ");
     await push({
       at: now.toISOString(),
       type: "arb_signal",
@@ -642,7 +642,7 @@ function arbChecks(cfg: ArbitrageConfig, q: ArbQuote, now: Date): Check[] {
   out.push({ stage: "filters", name: b.kind === "cross_platform" ? "Same question" : "Outcomes", ok: true, detail: same });
   out.push({ stage: "filters", name: "Live quotes", ok: true, detail: `all ${q.legs.length} legs have a bid and an ask right now` });
   const perSet = q.legs.reduce((a, l) => a + l.price, 0);
-  const legs = q.legs.map((l) => `${l.side.toUpperCase()} ${l.market.platform === "kalshi" ? "Kalshi" : "Polymarket"} ${cents(l.price)}`).join(" + ");
+  const legs = q.legs.map((l) => `${l.side.toUpperCase()} ${platformName(l.market.platform)} ${cents(l.price)}`).join(" + ");
   out.push({ stage: "signal", name: "Cost vs payout", ok: true, detail: `${legs} = ${cents(perSet)} per set, which pays $${b.payoutPerSet.toFixed(2)}` });
   out.push({ stage: "signal", name: "Fees", ok: true, detail: q.feesUsd > 0 ? `$${q.feesUsd.toFixed(2)} taker fees on ${q.sets} sets (counted in the size)` : "no fees on these markets" });
   out.push({ stage: "signal", name: "Locked-in profit", ok: true, detail: `${(q.edge * 100).toFixed(1)}¢ per $1 after fees and slippage ≥ ${(cfg.min_edge * 100).toFixed(1)}¢ minimum` });

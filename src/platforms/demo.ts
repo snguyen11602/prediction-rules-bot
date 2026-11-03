@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { NormalizedMarket, PlatformId } from "../types.js";
 import { kalshiTakerFeeUsd } from "./kalshi.js";
 import { polymarketTakerFeeUsd } from "./polymarket.js";
+import { polymarketUsTakerFeeUsd } from "./polymarket-us.js";
 import type { EventGroup, ListMarketsOptions, PlatformAdapter } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -85,6 +86,7 @@ export class DemoAdapter implements PlatformAdapter {
   estimateTakerFeeUsd(contracts: number, price: number, market?: NormalizedMarket): number {
     if (this.id === "kalshi") return kalshiTakerFeeUsd(contracts, price);
     // Demo Polymarket rows are fee-free unless they set takerFeeRate.
+    if (this.id === "polymarket_us") return polymarketUsTakerFeeUsd(contracts, price, market?.takerFeeRate ?? 0);
     return polymarketTakerFeeUsd(contracts, price, market?.takerFeeRate ?? 0);
   }
 

@@ -26,7 +26,7 @@ async function ledgerWithTrades(): Promise<string> {
       demo: true,
       now,
       emit: () => undefined,
-      adapters: (["kalshi", "polymarket"] as const).map(
+      adapters: (["kalshi", "polymarket_us"] as const).map(
         (id) => new DemoAdapter(id, { fixturePath: path.join(ROOT, fixture), now: () => now }),
       ),
     });

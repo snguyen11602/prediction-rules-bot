@@ -1,5 +1,5 @@
 import type { Rule } from "../rules/schema.js";
-import type { NormalizedMarket, SignalSide } from "../types.js";
+import { platformName, type NormalizedMarket, type SignalSide } from "../types.js";
 import type { Tick } from "./series.js";
 import { describeMove, detectUnusualMove, type UnusualMove } from "./unusual.js";
 import { cents, hours, usd, type Check } from "./trace.js";
@@ -37,7 +37,7 @@ export function filterChecks(rule: Rule, market: NormalizedMarket, now = new Dat
   const f = rule.filters;
   const out: Check[] = [];
   const add = (name: string, ok: boolean, detail: string) => out.push({ stage: "filters", name, ok, detail });
-  const platform = market.platform === "kalshi" ? "Kalshi" : "Polymarket";
+  const platform = platformName(market.platform);
   if (f.platforms?.length) add("Platform", f.platforms.includes(market.platform), `${platform}${f.platforms.includes(market.platform) ? " is" : " isn't"} in this rule's platforms`);
   if (f.keywords_any?.length) {
     const hit = f.keywords_any.find((k) => market.title.toLowerCase().includes(k.toLowerCase()));
@@ -63,7 +63,12 @@ export function filterChecks(rule: Rule, market: NormalizedMarket, now = new Dat
   }
   if (f.min_volume_24h_usd != null) {
     const v = market.volume24hUsd;
-    add("24h volume", v != null && v >= f.min_volume_24h_usd, v == null ? "platform gave no volume" : `${usd(v)} ${v >= f.min_volume_24h_usd ? "≥" : "<"} ${usd(f.min_volume_24h_usd)}`);
+    if (v == null && market.volume24hUnavailable) {
+      // Not published by the platform: skip (don't fail) and say so; spread and liquidity still apply.
+      add("24h volume", true, `skipped: ${platformName(market.platform)} doesn't publish 24h volume`);
+    } else {
+      add("24h volume", v != null && v >= f.min_volume_24h_usd, v == null ? "platform gave no volume" : `${usd(v)} ${v >= f.min_volume_24h_usd ? "≥" : "<"} ${usd(f.min_volume_24h_usd)}`);
+    }
   }
   if (f.max_spread != null) {
     if (market.yesBid == null || market.yesAsk == null) add("Spread", false, "no bid or no ask (can't trade at a fair price)");

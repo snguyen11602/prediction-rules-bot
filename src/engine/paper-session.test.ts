@@ -18,7 +18,7 @@ const T0 = new Date("2026-10-26T19:00:00Z");
 const T1 = new Date("2026-10-26T19:30:00Z"); // 30 min later: within dip-reversion's 60-minute window
 
 function adapters(fixturePath: string, now: Date) {
-  return (["kalshi", "polymarket"] as const).map((id) => new DemoAdapter(id, { fixturePath, now: () => now }));
+  return (["kalshi", "polymarket_us"] as const).map((id) => new DemoAdapter(id, { fixturePath, now: () => now }));
 }
 
 let rulesPath = RULES;

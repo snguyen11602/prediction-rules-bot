@@ -29,7 +29,7 @@ To even consider a future live path you would need ALL of:
   ALLOW_LIVE=true
   CLI flag --i-understand-live
   Kalshi: API key + private key for signed trading endpoints
-  Polymarket: wallet private key (L1) + CLOB API credentials (L2)
+  Polymarket US: API Key ID + Secret Key from polymarket.us/developer (Ed25519-signed requests)
 
 Current gate status: ${gatesOk() ? "ENV FLAGS SET — but order placement is still stubbed" : "BLOCKED (flags missing)"}
 

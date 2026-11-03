@@ -1,10 +1,14 @@
 import { z } from "zod";
+import { PLATFORM_IDS } from "../types.js";
+
+/** The Polymarket exchanges a cross-platform pair can use (the other side is always Kalshi). */
+export const POLYMARKET_VENUES = ["polymarket_us", "polymarket"] as const;
 
 /** Shared rule schema — keep stable; extend with optional fields only. */
 
 export const MarketFiltersSchema = z.object({
   /** Platforms this rule applies to. Empty / omitted = both. */
-  platforms: z.array(z.enum(["kalshi", "polymarket"])).optional(),
+  platforms: z.array(z.enum(PLATFORM_IDS)).optional(),
   /** Title must contain at least one of these (case-insensitive). */
   keywords_any: z.array(z.string()).optional(),
   /** Title must contain all of these. */
@@ -199,6 +203,11 @@ export const ArbitrageSchema = z.object({
       scan_limit: z.number().int().positive().max(2000).default(400),
       /** Confirmed / blocked pairs, relative to the rules file's folder. */
       pairs_file: z.string().default("arb-pairs.yaml"),
+      /**
+       * Which Polymarket to pair with Kalshi. polymarket_us (default) is the exchange US residents
+       * can trade; polymarket is the global site (polymarket.com), which is close-only from the US.
+       */
+      with: z.enum(POLYMARKET_VENUES).default("polymarket_us"),
     })
     .default({}),
   same_platform: z
@@ -232,7 +241,10 @@ export const ArbitrageSchema = z.object({
 
 const PairRefSchema = z.object({
   kalshi: z.string().min(1),
+  /** Market id on the Polymarket exchange named by `platform`. */
   polymarket: z.coerce.string().min(1),
+  /** polymarket_us or polymarket (global). Pairs written before Polymarket US support are global. */
+  platform: z.enum(POLYMARKET_VENUES).default("polymarket"),
 });
 
 /** rules/arb-pairs.yaml — pairs you've checked by hand. */

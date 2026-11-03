@@ -321,7 +321,8 @@ export function findMatches(
   opts: MatchOptions,
 ): MatchCandidate[] {
   const ks = kalshiMarkets.filter((m) => m.platform === "kalshi" && openForMatching(m));
-  const ps = polyMarkets.filter((m) => m.platform === "polymarket" && openForMatching(m));
+  // Either Polymarket exchange; the caller passes one exchange's markets at a time.
+  const ps = polyMarkets.filter((m) => (m.platform === "polymarket" || m.platform === "polymarket_us") && openForMatching(m));
   const fK = ks.map((m) => titleFeatures(m.title));
   const fP = ps.map((m) => titleFeatures(m.title));
 
