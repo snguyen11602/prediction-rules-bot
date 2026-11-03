@@ -114,8 +114,9 @@ checks the leaders every minute. Still paper only.
 - "Moved since the last check" rules still compare with the last **full** check, so a 5¢ drop since then
   is caught within seconds, not missed because the previous quick check was 5 seconds ago.
 - The status line on the dashboard shows each stream (✓ live, ✗ key rejected).
-- `quick-flip-paper` in the example rules is made for this mode. Round-trip fees are about 3¢ at mid
-  prices, so quick flips only pay on bigger bounces; check `npm run paper:report` before trusting it.
+- `quick-flip-paper` in the example rules is made for this mode, but it's **off** by default: fees plus the
+  bid/ask gap (~5% a round trip) were bigger than the bounces it caught in backtests. Set `enabled: true`
+  to try it again.
 
 ## Unusual moves (possible informed trading)
 
@@ -134,7 +135,7 @@ The rules that use it:
 |------|--------------|
 | `unusual-move-alert` | Alert only: shows up in the terminal, webhook and the dashboard's **Unusual moves** panel |
 | `follow-unusual-move-paper` | Paper-buys in the direction of the move (`side: with_move`), then a trailing stop sells near the high |
-| `dip-reversion-paper` | Still buys ordinary dips, but `unusual_move: { mode: exclude }` keeps it out of drops that look informed |
+| `dip-reversion-paper` | Buys ordinary dips, with `unusual_move: { mode: exclude }` keeping it out of drops that look informed. **Off** by default: it lost in backtests (game-market drops are usually real news) |
 
 It needs at least 3 hours of snapshots (12 for a full baseline) before it can judge what's normal, so leave `npm run paper:watch` running. Until then, the dip rule stays out rather than guess.
 News, big traders and thin order books cause the same pattern, so treat it as a lead, not proof.
@@ -150,9 +151,15 @@ and paper-trades them next to your own rules. Each one has a personality:
 | **Creativity** | how different its clones are from it |
 | **Knowledge** | how many safety checks it uses: tighter spreads, timing, skipping parlays and the like |
 
-Rookies come from five ideas: buy sharp drops (The Dip Hunter), ride sharp moves (The Trend Rider), buy
-heavy favorites near the finish (The Closer), bet against long shots (The Skeptic) and flip small moves in
-tight markets (The Scalper).
+Rookies come from three ideas: ride sharp moves (The Trend Rider), buy heavy favorites near the finish
+(The Closer) and bet against long shots (The Skeptic). Two more exist but are **off** by default because
+they lost in every backtest version: buying sharp drops (The Dip Hunter — in game markets a drop is usually
+real news) and flipping small moves (The Scalper — it can't cover fees). Add `dip_buyer` / `scalper` to
+`families` to try them again; strategies of a type that's off stop opening trades and retire at the next round.
+
+Every league strategy aims to win at least **2×** what it risks (profit target ≥ 2 × stop) and gets at least
+**48 hours** per trade: with ~5% in fees and the bid/ask gap on each round trip, small targets and short time
+limits mostly pay costs. A 40% win rate is fine when the wins are twice the losses.
 
 Once a day (`evolve_every_hours`) a **round** runs in the background while `npm run paper:watch` is running,
 or now with `npm run league`:

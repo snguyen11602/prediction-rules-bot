@@ -12,7 +12,7 @@ import { loadSeries, seriesPathFor } from "../engine/series.js";
 import type { EngineEvent } from "../types.js";
 import type { RulesFile } from "../rules/schema.js";
 import { FAMILIES, describeRule, toBody } from "../league/genome.js";
-import { backtestDirs, houseNames, leagueConfig, leaguePathFor, loadLeague, migrateNames, scoreOf, type LeagueFile } from "../league/league.js";
+import { backtestDirs, familyAllowed, houseNames, leagueConfig, leaguePathFor, loadLeague, scoreOf, upgradeLeague, type LeagueFile } from "../league/league.js";
 import { openTradesByRule, statsFromTrades, tradesByRule } from "../league/metrics.js";
 import { housePersonas } from "../league/personas.js";
 import { houseContestantRules } from "../league/evolve.js";
@@ -178,11 +178,11 @@ export async function buildState(opts: DashboardOptions) {
   } catch (err) {
     rulesError = (err as Error).message;
   }
-  migrateNames(league, houseNames(file));
+  upgradeLeague(league, houseNames(file));
   // League strategies trade under their own names.
   const leagueOn = file ? leagueConfig(file).enabled : true;
   for (const m of league.members) {
-    if (!ruleMeta.has(m.id)) ruleMeta.set(m.id, { name: `${m.name} — ${m.style}`, action: "paper", enabled: leagueOn && m.status !== "retired" });
+    if (!ruleMeta.has(m.id)) ruleMeta.set(m.id, { name: `${m.name} — ${m.style}`, action: "paper", enabled: leagueOn && m.status !== "retired" && familyAllowed(m, file?.league) });
   }
 
   // Every paper rule appears, even before its first trade.

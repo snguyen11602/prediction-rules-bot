@@ -9,8 +9,9 @@ import {
   activeMembers,
   backtestDirs,
   houseContestantRules,
+  familyAllowed,
   houseNames,
-  migrateNames,
+  upgradeLeague,
   leagueConfig,
   PAPER_TRADES_TO_COUNT,
   scoreOf,
@@ -144,11 +145,20 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
   const l = await loadLeague(leaguePath);
   const houseNameMap = houseNames(file);
   const reserved = new Set(houseNameMap.values());
-  migrateNames(l, houseNameMap);
+  upgradeLeague(l, houseNameMap);
   const round = l.round + 1;
   const born: Member[] = [];
   const cloned: Member[] = [];
   const retired: Member[] = [];
+
+  // 0. Types of strategy that are switched off (league `families`) retire now; open trades keep their exits.
+  for (const m of activeMembers(l)) {
+    if (familyAllowed(m, cfg)) continue;
+    m.status = "retired";
+    m.retiredAt = now.toISOString();
+    retired.push(m);
+    event(l, now, "retired", `${m.name} retired: ${m.style} is switched off (in backtests that type lost money in every version tried).`, m.id);
+  }
 
   // 1. Fill the roster.
   while (activeMembers(l).length < cfg.roster_size) {
@@ -202,7 +212,7 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
     const heldUp = !backtest || (backtest.test.trades + backtest.test.open >= testTradesNeeded(cfg.min_trades) && backtest.test.pnlUsd >= 0);
     const eligible = ranked && score > 0 && heldUp;
     const basis = backtest && c.paper.trades < PAPER_TRADES_TO_COUNT ? backtest.all : c.paper;
-    const diagnosis = diagnose(basis, { minTrades: cfg.min_trades, blocks: res?.blocks, test: backtest?.test, now });
+    const diagnosis = diagnose(basis, { minTrades: cfg.min_trades, blocks: res?.blocks, test: backtest?.test, now, rule: c.rule });
     contestants.push({ ...c, backtest, score, ranked, eligible, diagnosis });
   };
   for (const m of players) {

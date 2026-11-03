@@ -1,3 +1,4 @@
+import type { Rule } from "../rules/schema.js";
 import type { StrategyStats } from "./metrics.js";
 
 /** Plain-English "why didn't this work", from a strategy's trades and the checks that stopped it. */
@@ -33,7 +34,7 @@ const LOOSEN: Record<string, string> = {
 
 export function diagnose(
   s: StrategyStats,
-  opts: { minTrades: number; blocks?: BlockCounts; test?: StrategyStats; now?: Date },
+  opts: { minTrades: number; blocks?: BlockCounts; test?: StrategyStats; now?: Date; rule?: Pick<Rule, "exit" | "risk"> },
 ): Diagnosis {
   const at = (opts.now ?? new Date()).toISOString();
   const findings: Array<{ weight: number; text: string; fix: string }> = [];
@@ -62,6 +63,29 @@ export function diagnose(
       text: `Still holding ${s.open} trade(s) worth ${usd(s.openPnlUsd)} at the end — it lets losers ride instead of selling them.`,
       fix: "add a stop loss or a time limit",
     });
+  }
+
+  // The rule's own numbers: a target that can't beat costs, or one smaller than the stop.
+  const x = opts.rule?.exit;
+  const traded = s.trades + s.open;
+  if (x?.take_profit_pct != null && traded > 0 && s.pnlUsd < 0) {
+    const stake = Math.min(opts.rule!.risk.max_position_usd ?? Infinity, opts.rule!.risk.bankroll_usd * opts.rule!.risk.position_size_fraction);
+    const costPct = stake > 0 ? s.feesUsd / traded / stake : 0;
+    if (costPct > 0 && x.take_profit_pct < 3 * costPct) {
+      findings.push({
+        weight: 8,
+        text: `Its profit target (+${Math.round(x.take_profit_pct * 100)}%) is tiny next to its costs: fees alone take about ${(costPct * 100).toFixed(1)}% of each trade, before the bid/ask gap.`,
+        fix: "aim for bigger moves (a target several times the costs)",
+      });
+    }
+    if (x.stop_loss_pct != null && x.take_profit_pct < x.stop_loss_pct) {
+      const need = Math.round((x.stop_loss_pct / (x.stop_loss_pct + x.take_profit_pct)) * 100);
+      findings.push({
+        weight: 7,
+        text: `It aims to win +${Math.round(x.take_profit_pct * 100)}% but risks −${Math.round(x.stop_loss_pct * 100)}%, so it must be right about ${need}% of the time just to break even.`,
+        fix: "make the profit target at least twice the stop",
+      });
+    }
   }
 
   const gross = s.pnlUsd + s.feesUsd;

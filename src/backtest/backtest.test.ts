@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { stringify } from "yaml";
-import { RuleSchema, type Rule } from "../rules/schema.js";
+import { LeagueSchema, RuleSchema, type Rule } from "../rules/schema.js";
 import type { NormalizedMarket } from "../types.js";
 import type { HistMarket, HistPoint, HistorySet } from "./history.js";
 import { lastAtOrBefore, ReplayAdapter } from "./replay.js";
@@ -159,7 +159,9 @@ test("a league round: roster, backtest, clones of the best, diagnosis for the wo
   // The paper session runs the new roster next to your rules.
   const saved = await loadLeague(leaguePathFor(ledgerPath));
   assert.equal(saved.members.length, league.members.length);
-  assert.equal(leagueRules(saved, undefined).filter((r) => r.enabled).length, 4);
+  assert.equal(leagueRules(saved, LeagueSchema.parse({ families: ["dip_buyer"] })).filter((r) => r.enabled).length, 4);
+  // With the default types, the dip hunters stop opening trades (the clone of your rule keeps going).
+  assert.equal(leagueRules(saved, undefined).filter((r) => r.enabled).length, 1);
   const t = new Date(NOW.getTime() - 30 * 3600_000);
   const res = await runPaperCycle({
     rulesPath,
@@ -251,4 +253,25 @@ test("a broken league file or member never stops paper trading", async () => {
   ({ res, events } = await run());
   assert.ok(res.trace?.rules.some((r) => r.ruleId === "fav"));
   assert.match(events.join(" "), /League strategy \w+ skipped/);
+});
+
+test("a round retires strategies whose type is switched off", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "prb-league-off-"));
+  const rulesPath = path.join(dir, "rules.yaml");
+  const ledgerPath = path.join(dir, "data", "paper-ledger.json");
+  await mkdir(path.dirname(ledgerPath), { recursive: true });
+  await writeFile(rulesPath, stringify({ version: 1, rules: [FAVORITE], league: { roster_size: 3 } }));
+  const { makeRookie } = await import("../league/evolve.js");
+  const { saveLeague } = await import("../league/league.js");
+  const l = { version: 1 as const, round: 1, members: [] as import("../league/league.js").Member[], events: [], nameStyle: 2, ruleStyle: 2 };
+  const r = (() => { let x = 0.3; return () => (x = (x * 9301 + 0.49297) % 1); })();
+  const all = LeagueSchema.parse({ families: ["scalper", "dip_buyer", "momentum"] });
+  for (let i = 0; i < 3; i++) l.members.push(makeRookie(l, all, r, NOW));
+  await saveLeague(leaguePathFor(ledgerPath), l);
+  const { league, summary } = await runRound({ rulesPath, ledgerPath, now: NOW, seed: 1, noBacktest: true });
+  const off = summary.retired.filter((m) => m.family === "scalper" || m.family === "dip_buyer");
+  assert.equal(off.length, 2);
+  assert.ok(league.events.some((e) => e.kind === "retired" && /is switched off/.test(e.text)));
+  assert.ok(activeMembers(league).every((m) => ["momentum", "favorite", "longshot_fade", "custom"].includes(m.family)));
+  assert.equal(activeMembers(league).length, 3, "replaced by rookies of the types still on");
 });
