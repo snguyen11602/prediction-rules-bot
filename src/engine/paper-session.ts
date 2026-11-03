@@ -247,6 +247,11 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         deps: opts.copyDeps ?? defaultCopyDeps(),
         venueMarkets: () => [...fetched, ...(universeMarkets ?? [])],
         skipMarket: (rule, market, side) => skipMarket(rule, market, side),
+        feePerContract: (market, price) => {
+          if (copyCfg.paper.include_fees === false) return 0;
+          const fee = adapterFor(market.platform)?.estimateTakerFeeUsd?.(100, price, market) ?? 0;
+          return fee / 100;
+        },
         buy: async (market, side, checks) => {
           const gate = checkEntryRisk(copyRule, copyRisk!, now);
           const all: Check[] = [...checks, { stage: "position", name: "Position", ok: true, detail: "not already holding, no re-entry cool-down, ask available" }, ...gate.checks];

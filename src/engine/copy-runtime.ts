@@ -4,9 +4,13 @@ import { PolymarketAdapter } from "../platforms/polymarket.js";
 import { PolymarketUsAdapter } from "../platforms/polymarket-us.js";
 import { platformName, type EngineEvent, type NormalizedMarket, type PlatformId, type SignalSide } from "../types.js";
 import type { PaperLedger, PaperPosition } from "../ledger/paper.js";
+import { KalshiAdapter } from "../platforms/kalshi.js";
+import { buyPrice } from "./pricing.js";
 import {
   betKey,
   copyChecks,
+  kalshiGameEvents,
+  matchKalshiGame,
   loadCopyState,
   matchGame,
   matchTitle,
@@ -30,12 +34,20 @@ export interface CopyDeps {
   globalBySlug: (slugs: string[]) => Promise<NormalizedMarket[]>;
   /** Polymarket US markets by slug. */
   usBySlug: (slugs: string[]) => Promise<NormalizedMarket[]>;
+  /** Kalshi markets of one event (a game), [] when there's no such event. */
+  kalshiEvent?: (eventTicker: string) => Promise<NormalizedMarket[]>;
 }
 
 export function defaultCopyDeps(): CopyDeps {
   const gamma = new PolymarketAdapter();
   const us = new PolymarketUsAdapter(undefined, { books: 0 });
-  return { data: new PolymarketDataClient(), globalBySlug: (s) => gamma.getMarketsBySlug(s), usBySlug: (s) => us.getMarketsBySlug(s) };
+  const kalshi = new KalshiAdapter();
+  return {
+    data: new PolymarketDataClient(),
+    globalBySlug: (s) => gamma.getMarketsBySlug(s),
+    usBySlug: (s) => us.getMarketsBySlug(s),
+    kalshiEvent: (t) => kalshi.getEventMarkets(t),
+  };
 }
 
 /** What the dashboard shows for copy trading. */
@@ -65,6 +77,8 @@ export interface CopyCtx {
   /** Pairs from arb-pairs.yaml: confirmed Kalshi ↔ global pairs are copy targets, blocked ones never are. */
   pairs?: ArbPairsFile;
   skipMarket: (rule: Rule, market: NormalizedMarket, side: SignalSide) => string | null;
+  /** Taker fee per contract at `price` on this market's exchange (to compare venues fairly). */
+  feePerContract: (market: NormalizedMarket, price: number) => number;
   /** Paper-buy through the shared risk gate; returns false (with a reason) when it doesn't fill. */
   buy: (market: NormalizedMarket, side: SignalSide, checks: Check[]) => Promise<{ ok: true; position: PaperPosition } | { ok: false; reason: string; checks: Check[] }>;
 }
@@ -172,6 +186,11 @@ export async function enterCopies(ctx: CopyCtx, poll: CopyPoll): Promise<{ opene
   const gameSlugs = buys.flatMap((b) => (cfg.copy.venues.includes("polymarket_us") && b.slug ? usGameSlugs(b.slug) : []));
   const usGames = gameSlugs.length ? await ctx.deps.usBySlug(gameSlugs).catch(() => [] as NormalizedMarket[]) : [];
   const venue = (p: PlatformId) => ctx.venueMarkets().filter((m) => m.platform === p);
+  const eventCache = new Map<string, Promise<NormalizedMarket[]>>();
+  const kalshiEvent = (t: string) => {
+    if (!eventCache.has(t)) eventCache.set(t, ctx.deps.kalshiEvent!(t).catch(() => []));
+    return eventCache.get(t)!;
+  };
   const blocked = new Set((ctx.pairs?.blocked ?? []).filter((b) => b.platform === "polymarket").map((b) => `${b.kalshi}|${b.polymarket}`));
   const confirmed = (ctx.pairs?.confirmed ?? []).filter((c) => c.platform === "polymarket");
 
@@ -200,31 +219,44 @@ export async function enterCopies(ctx: CopyCtx, poll: CopyPoll): Promise<{ opene
       continue;
     }
 
-    // Venues in order: a pair you confirmed, the exact game, then a strict title match.
-    let target: CopyTarget | undefined;
+    // Find the same bet on each venue: a pair you confirmed, the exact game, or a strict title match.
+    // Polymarket US goes first so its full team names can confirm Kalshi's game markets.
+    const found: CopyTarget[] = [];
     const misses: string[] = [];
-    for (const v of cfg.copy.venues) {
+    let usTwin: NormalizedMarket | undefined;
+    const venues = [...cfg.copy.venues].sort((a, b) => Number(a === "kalshi") - Number(b === "kalshi"));
+    for (const v of venues) {
       const tries: Array<CopyTarget | { reason: string }> = [];
-      if (v === "kalshi") {
+      if (v === "polymarket_us") {
+        const games = usGames.filter((m) => usGameSlugs(bet.slug ?? "").includes(String((m.raw as { slug?: string })?.slug)));
+        const g = matchGame(global, games, bet.outcome);
+        if ("market" in g) usTwin = g.market;
+        tries.push(g);
+        if (!("market" in g)) tries.push(matchTitle(global, v, venue(v), bet.outcome, cfg));
+      } else {
         const pair = confirmed.find((c) => c.polymarket === global.id);
         const k = pair ? await ctx.freshMarket("kalshi", pair.kalshi).catch(() => null) : null;
         if (pair && k && /^(yes|no)$/i.test(bet.outcome)) {
           const yes = /^yes$/i.test(bet.outcome) !== pair.invert;
           tries.push({ market: k, side: yes ? "yes" : "no", how: "a pair you confirmed" });
         }
-        tries.push(matchTitle(global, v, venue(v), bet.outcome, cfg, blocked));
-      } else {
-        const games = usGames.filter((m) => usGameSlugs(bet.slug ?? "").includes(String((m.raw as { slug?: string })?.slug)));
-        tries.push(matchGame(global, games, bet.outcome), matchTitle(global, v, venue(v), bet.outcome, cfg));
+        if (!tries.length && ctx.deps.kalshiEvent && bet.slug && kalshiGameEvents(bet.slug).length) {
+          let gameTry: CopyTarget | { reason: string } = { reason: "game not listed on Kalshi" };
+          for (const ev of kalshiGameEvents(bet.slug)) {
+            const markets = await kalshiEvent(ev.event);
+            if (!markets.length) continue;
+            gameTry = matchKalshiGame(global, markets, ev.codes, bet.outcome, usTwin);
+            break;
+          }
+          tries.push(gameTry);
+        }
+        if (!tries.some((t) => "market" in t)) tries.push(matchTitle(global, v, venue(v), bet.outcome, cfg, blocked));
       }
       const hit = tries.find((t): t is CopyTarget => "market" in t);
-      if (hit) {
-        target = hit;
-        break;
-      }
-      misses.push(...tries.map((t) => ("reason" in t ? t.reason : "")).filter(Boolean));
+      if (hit) found.push(hit);
+      else misses.push(...tries.map((t) => ("reason" in t ? t.reason : "")).filter(Boolean));
     }
-    if (!target) {
+    if (!found.length) {
       const uniq = [...new Set(misses)];
       // "Not Yes/No" only matters when nothing else explains it.
       const telling = uniq.filter((r) => !/not Yes\/No$/.test(r));
@@ -233,25 +265,50 @@ export async function enterCopies(ctx: CopyCtx, poll: CopyPoll): Promise<{ opene
       continue;
     }
 
-    // Trade only on a current read: open, with a real ask for the side we'd buy.
-    const fresh = await ctx.freshMarket(target.market.platform, target.market.id).catch(() => null);
-    const tgt = { platform: target.market.platform, id: target.market.id, title: target.market.title, side: target.side };
-    if (!fresh) {
-      record(state, { ...base, result: "skipped", reason: `couldn't get a current price on ${platformName(target.market.platform)}`, target: tgt });
+    // Price each venue on a current read (open, real ask, all copy checks), then pick one.
+    const viable: Array<{ target: CopyTarget; checks: Check[]; cost: number; pay: number }> = [];
+    let firstMiss: { reason: string; tgt: CopyDecision["target"] } | undefined;
+    for (const t of found) {
+      const tgt = { platform: t.market.platform, id: t.market.id, title: t.market.title, side: t.side };
+      const fresh = await ctx.freshMarket(t.market.platform, t.market.id).catch(() => null);
+      let reason: string | undefined;
+      if (!fresh) reason = `couldn't get a current price on ${platformName(t.market.platform)}`;
+      else if ((fresh.status ?? "open") !== "open") reason = "that market is closed";
+      else if (!(t.side === "yes" ? fresh.yesAsk != null : fresh.yesBid != null)) reason = `nobody is selling ${t.side.toUpperCase()} there right now`;
+      let checks: Check[] = [];
+      if (fresh && !reason) {
+        checks = copyChecks(bet, global, { ...t, market: fresh }, cfg, now);
+        const failed = checks.find((c) => !c.ok);
+        if (failed) reason = `${failed.name}: ${failed.detail}`;
+      }
+      if (reason || !fresh) {
+        firstMiss ??= { reason: reason ?? "no price", tgt };
+        continue;
+      }
+      const pay = buyPrice(fresh, t.side, cfg.paper.slippage);
+      viable.push({ target: { ...t, market: fresh }, checks, pay, cost: pay + ctx.feePerContract(fresh, pay) });
+    }
+    if (!viable.length) {
+      record(state, { ...base, result: "skipped", reason: firstMiss?.reason ?? "no fair price", target: firstMiss?.tgt });
       continue;
     }
-    const askKnown = target.side === "yes" ? fresh.yesAsk != null : fresh.yesBid != null;
-    if ((fresh.status ?? "open") !== "open" || !askKnown) {
-      record(state, { ...base, result: "skipped", reason: (fresh.status ?? "open") !== "open" ? "that market is closed" : `nobody is selling ${target.side.toUpperCase()} there right now`, target: tgt });
-      continue;
-    }
-    target = { ...target, market: fresh };
-    const checks = copyChecks(bet, global, target, cfg, now);
-    const failed = checks.find((c) => !c.ok);
-    if (failed) {
-      record(state, { ...base, result: "skipped", reason: `${failed.name}: ${failed.detail}`, target: tgt });
-      continue;
-    }
+    const cheapest = viable.reduce((a, b) => (b.cost < a.cost ? b : a));
+    const preferred = cfg.copy.prefer !== "none" ? viable.find((x) => x.target.market.platform === cfg.copy.prefer) : undefined;
+    const pick = preferred && preferred.cost <= cheapest.cost + cfg.copy.prefer_within + 1e-9 ? preferred : cheapest;
+    const others = viable.filter((x) => x !== pick);
+    pick.checks.push({
+      stage: "signal",
+      name: "Venue",
+      ok: true,
+      detail: others.length
+        ? `${platformName(pick.target.market.platform)} ${cents(pick.cost)} vs ${others.map((o) => `${platformName(o.target.market.platform)} ${cents(o.cost)}`).join(", ")} per contract with fees` +
+          (pick === preferred && pick !== cheapest ? ` — within ${cents(cfg.copy.prefer_within)}, so your preferred ${platformName(pick.target.market.platform)}` : " — cheapest")
+        : `only on ${platformName(pick.target.market.platform)}`,
+    });
+    let target = pick.target;
+    const fresh = target.market;
+    const checks = pick.checks;
+    const tgt = { platform: fresh.platform, id: fresh.id, title: fresh.title, side: target.side };
     const skip = ctx.skipMarket(ctx.rule, fresh, target.side);
     if (skip) {
       record(state, { ...base, result: "skipped", reason: skip, target: tgt });

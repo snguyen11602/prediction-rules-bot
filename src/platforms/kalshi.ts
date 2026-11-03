@@ -255,6 +255,19 @@ export class KalshiAdapter implements PlatformAdapter {
     return { groups, cursor: data.cursor || undefined };
   }
 
+  /** One event's markets by event ticker (e.g. a game: KXNBAGAME-26NOV02ATLIND); [] when it doesn't exist. */
+  async getEventMarkets(eventTicker: string): Promise<NormalizedMarket[]> {
+    const url = new URL(`${this.baseUrl}/events/${encodeURIComponent(eventTicker)}`);
+    url.searchParams.set("with_nested_markets", "true");
+    const { status, data } = await getJson<{ event?: { event_ticker?: string; markets?: KalshiMarket[] }; markets?: KalshiMarket[] }>(url, "Kalshi");
+    if (status === 404 || !data) return [];
+    const ev = data.event;
+    const markets = ev?.markets ?? data.markets ?? [];
+    return markets
+      .map((m) => normalize({ ...m, event_ticker: m.event_ticker ?? ev?.event_ticker ?? eventTicker }))
+      .filter((m): m is NormalizedMarket => m != null);
+  }
+
   async listEventGroups(opts: { limit?: number } = {}): Promise<EventGroup[]> {
     return (await this.listEventGroupsPage({ limit: opts.limit })).groups;
   }

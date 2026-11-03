@@ -96,6 +96,8 @@ copy_trading:
     max_price_gap: 0.10
     follow_sells: true                # sell when the leader sells
     poll_seconds: 60                  # with paper:fast, checks leaders every minute
+    prefer: kalshi                    # same bet on both? use Kalshi if it costs ≤ 1¢ more (with fees)…
+    prefer_within: 0.01               # …otherwise the cheaper venue
   exit:
     stop_loss_pct: 0.5                # otherwise hold until the leader sells or it resolves
   risk:

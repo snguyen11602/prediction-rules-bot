@@ -310,6 +310,12 @@ export const CopyTradingSchema = z.object({
       follow_sells: z.boolean().default(true),
       /** How often to check the leaders' new trades (seconds; fast mode checks between full checks). */
       poll_seconds: z.number().int().min(15).default(60),
+      /**
+       * When the same bet is on more than one venue, use this one if it costs no more than
+       * `prefer_within` above the cheapest (price + fee per contract). none = always the cheapest.
+       */
+      prefer: z.enum(["kalshi", "polymarket_us", "none"]).default("kalshi"),
+      prefer_within: z.number().min(0).max(0.1).default(0.01),
     })
     .default({}),
   exit: ExitConditionsSchema,

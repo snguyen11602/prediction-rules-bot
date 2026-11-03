@@ -76,11 +76,15 @@ Configured in the `copy_trading:` block of `rules/example.yaml`. Paper by defaul
   `include` / `exclude` take wallets to always / never follow.
 - **What gets copied.** Their new buys of $500+ from the last 30 minutes, on the same market where you
   can trade it:
-  - sports: the exact game on Polymarket US (same teams and start time; the side is chosen by team name),
+  - sports: the exact game on Polymarket US (same teams and start time; the side is chosen by team name)
+    and on Kalshi (its game event for the same teams and date; team names checked against Polymarket US),
   - everything else: the strict Yes/No title match used for arbitrage, on Polymarket US, then Kalshi.
   Spreads, over/unders and props aren't copied yet. Bets with no clear twin are skipped, not guessed.
 - **Price.** A copy never pays more than 3¢ above the leader's price, and the two sites must agree on the
   price within 10¢ (otherwise it's probably not the same bet).
+- **Which venue.** When the bet is on both Kalshi and Polymarket US, it goes to Kalshi if Kalshi costs no
+  more than 1¢ extra per contract including fees (`prefer: kalshi`, `prefer_within: 0.01`), otherwise to
+  the cheaper one. The trade's **Why?** shows both prices.
 - **Exits.** It sells when the leader sells (`follow_sells`; a sale worth at least half of
   `min_leader_trade_usd` counts, so a partial trim closes the whole copy), when the market resolves, or at
   the stop loss. A leader's sell is remembered, so a copy that can't sell right away (no bid) sells on a
