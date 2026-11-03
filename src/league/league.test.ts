@@ -298,7 +298,8 @@ test("existing strategies get the new floors, and switched-off types stop openin
   upgradeLeague(l, new Map());
   assert.equal(l.members[0].rule.exit?.take_profit_pct, 0.2);
   assert.equal(l.members[0].rule.exit?.max_hold_hours, MIN_HOLD_HOURS);
-  assert.equal(l.ruleStyle, 2);
+  assert.equal(l.ruleStyle, 3);
+  assert.equal(l.members[0].rule.entry.max_buy_price, 0.95);
   assert.ok(!familyAllowed(scalp, undefined) && familyAllowed({ family: "custom" }, undefined));
   const rules = leagueRules(l, undefined);
   assert.equal(rules.find((x) => x.id === "lg-s-2")?.enabled, false, "still listed, so its open trades get their exits");

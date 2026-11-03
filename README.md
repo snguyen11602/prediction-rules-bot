@@ -177,6 +177,13 @@ Every league strategy aims to win at least **2×** what it risks (profit target 
 **48 hours** per trade: with ~5% in fees and the bid/ask gap on each round trip, small targets and short time
 limits mostly pay costs. A 40% win rate is fine when the wins are twice the losses.
 
+Two more guard rails for league strategies (your own rules and copy trading aren't limited):
+- **No buying above 95¢.** A 98¢ contract risks 98¢ to make 2¢, so one loss wipes out dozens of wins.
+- **No stacking: one league strategy per game.** League strategies often think alike, so without this
+  three or four of them would pile into the same game at once, which is really one big bet. "Same game"
+  includes sibling markets (on Kalshi, "PSG by 3.5" and "PSG by 4.5" are one game). The first one in
+  gets it; the others skip with "another league strategy already holds this game".
+
 Once a day (`evolve_every_hours`) a **round** runs in the background while `npm run paper:watch` is running,
 or now with `npm run league`:
 
