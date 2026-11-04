@@ -248,6 +248,8 @@ export async function copyLeaderParlays(ctx: ParlayCtx, state: CopyState, bets: 
   let made = 0;
   // Parlays that couldn't be read last time come back while they're still fresh.
   const retry: LeaderBet[] = [];
+  /** Games in parlays made (or suggested) this round. */
+  const suggested = new Set<string>();
   const todo = [...(state.parlayPending ?? []), ...bets];
   for (const bet of todo) {
     if (!bet.combo || bet.side !== "BUY" || !/^yes$/i.test(bet.outcome) || !bet.kalshiTicker) continue;
@@ -330,6 +332,10 @@ export async function copyLeaderParlays(ctx: ParlayCtx, state: CopyState, bets: 
       later();
       continue;
     }
+    // One game in two parlays means one result sinks both.
+    const busy = new Set([...openParlays(ctx.ledger).flatMap((p) => p.legs.filter((l) => l.status === "open" && l.game).map((l) => l.game!)), ...suggested]);
+    const clash = legs.find((l) => l.status === "open" && l.game && busy.has(l.game));
+    if (!bad && clash) bad = `${clash.title} is already in another open parlay`;
     if (bad || !feeMarket) {
       skip(bad ?? "every leg has already settled", sel.length);
       continue;
@@ -360,7 +366,10 @@ export async function copyLeaderParlays(ctx: ParlayCtx, state: CopyState, bets: 
       feeMarket,
       { kind: "leader", title: combo.title, leader: L.name, usd: Math.round(bet.usd) },
     );
-    if (ok) made += 1;
+    if (ok) {
+      made += 1;
+      for (const l of legs) if (l.game) suggested.add(l.game);
+    }
   }
   const maxAge = ctx.cfg.copy.max_trade_age_minutes * 60;
   state.parlayPending = retry.filter((b, i) => nowSec - b.at <= maxAge && retry.findIndex((x) => x.leader.wallet === b.leader.wallet && x.kalshiTicker === b.kalshiTicker) === i);

@@ -87,7 +87,9 @@ test("a stopped bot makes no new trades but still sells its open ones; Start lif
   const B = "KXNBAGAME-26NOV03LALGSW-GSW";
   assert.equal((await s.run(T0, [market(A, 0.6, 0.61)])).opened, 1);
   await s.press({ action: "stop", id: "buyer" });
-  // Stopped: the open trade still hits its stop loss, and the new market isn't bought.
+  // Stopped: the open trade still hits its stop loss (confirmed on a second check), and the new
+  // market isn't bought.
+  assert.equal((await s.run(new Date(T0.getTime() + 540_000), [market(A, 0.4, 0.41), market(B, 0.7, 0.71)])).closed, 0);
   const r = await s.run(new Date(T0.getTime() + 600_000), [market(A, 0.4, 0.41), market(B, 0.7, 0.71)]);
   assert.equal(r.closed, 1);
   assert.equal(r.opened, 0);
@@ -101,6 +103,7 @@ test("a stopped bot makes no new trades but still sells its open ones; Start lif
   assert.equal(st.pausedUntil, undefined);
   assert.equal(st.resumedAt, new Date(T0.getTime() + 700_000).toISOString());
   // A later pause isn't lifted again by the same old Start.
+  await s.run(new Date(T0.getTime() + 1_140_000), [market(B, 0.5, 0.51)]);
   const r3 = await s.run(new Date(T0.getTime() + 1_200_000), [market(B, 0.5, 0.51)]);
   assert.equal(r3.closed, 1);
   assert.ok((await s.ledger()).ruleState.buyer.pausedUntil);

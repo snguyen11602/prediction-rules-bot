@@ -111,12 +111,26 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
   parlay; settled leg by leg (a lost leg loses it, a void leg drops out). Keep the price honest: legs'
   asks multiplied plus `combo_margin`, never better than the legs alone.
 
+## Market timing and selection
+
+- `NormalizedMarket.resolvesAt` (expected result) and `startsAt` (event start) are what timing filters use;
+  `closesAt` is the platform's placeholder (Kalshi: latest expiry ≈ start + 48h; Polymarket US games:
+  ~14 days after the start). Kalshi's start is inferred only from that fixed pattern (`kalshiTimes`).
+- Kalshi's API lists the newest markets first (thousands of in-play props a day) and can't sort by volume,
+  so `KalshiAdapter.listMarkets` takes upcoming games from the game-winner series first, then the busiest
+  markets at least 2h old. Polymarket US game moneylines sit far down its volume order, so its listing
+  scans a few pages for them. Keep the backtest (`history.ts`) on the same game-winner series.
+- Stops: `evaluateExit(…, stopPrice)` compares the mid; the paper session confirms a loss exit on a second
+  check ≥ 20s later (`exitPending` on the position) and never sells into a book wider than 10¢.
+
 ## Strategy league and backtests
 
 - `src/league/`: `personas.ts` (names + traits, seeded), `genome.ts` (rookie rules per family, `mutate`,
   `describeRule`), `metrics.ts` (stats + steady score), `diagnose.ts` (plain-English findings),
   `league.ts` (league file `*.league.json` next to the ledger), `evolve.ts` (one round).
-- League members are ordinary `Rule`s with ids `lg-…`, loaded by the paper session each cycle. Retired
+- League members are ordinary `Rule`s with ids `lg-…`, loaded by the paper session each cycle. They only
+  trade when `gateCheck` passes (latest backtest profitable overall and held out, enough trades); bump
+  `LEAGUE_RULE_STYLE` when guard rails change so old backtests are cleared and a round re-tests them. Retired
   members stay in the file (disabled) while they have open positions so their exits keep running.
 - `src/backtest/`: `history.ts` (public price history, cached under `data/backtest/cache`), `replay.ts`
   (`ReplayAdapter`: read-only, never returns a price later than the replay time, settles at the close with

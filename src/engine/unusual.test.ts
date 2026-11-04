@@ -162,7 +162,8 @@ test("paper: follows an unusual breakout and sells near the high", async () => {
   let v = 10_000;
   for (let i = 0; i < 144; i++) path_.push({ p: 0.4 + (i % 2 ? 0.004 : -0.004), v: (v += 30) });
   for (let i = 1; i <= 12; i++) path_.push({ p: 0.4 + (0.1 * i) / 12, v: (v += 700) });
-  for (const p of [0.53, 0.55, 0.57, 0.58, 0.58, 0.56, 0.535]) path_.push({ p, v: (v += 300) });
+  // (The trailing stop fires at 53.5¢ and sells on the next check, once the drop is confirmed.)
+  for (const p of [0.53, 0.55, 0.57, 0.58, 0.58, 0.56, 0.535, 0.53]) path_.push({ p, v: (v += 300) });
   const events: EngineEvent[] = [];
   let bought = -1;
   let sold = -1;

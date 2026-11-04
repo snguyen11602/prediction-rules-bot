@@ -37,6 +37,9 @@ interface KalshiMarket {
   /** While open, close_time is this latest possible expiry; once settled it's the real close. */
   expiration_time?: string;
   latest_expiration_time?: string;
+  /** When Kalshi expects the result (for a game: a few hours after it starts). */
+  expected_expiration_time?: string;
+  created_time?: string;
   event_ticker?: string;
 }
 
@@ -144,12 +147,54 @@ function normalize(m: KalshiMarket): NormalizedMarket | null {
     liquidityUsd: oi,
     volume24hUsd: vol24,
     closesAt: m.close_time,
+    ...kalshiTimes(m),
+    marketType: isKalshiGameWinner(m.ticker) ? "game_winner" : "other",
+    createdAt: m.created_time ?? m.open_time,
     eventId: m.event_ticker,
     ...lifecycle,
     tags: m.event_ticker ? [m.event_ticker] : undefined,
     url: `https://kalshi.com/markets/${encodeURIComponent(m.ticker)}`,
     raw: m,
   };
+}
+
+/** Markets younger than this are left out of the listing (empty books, placeholder prices). */
+const MIN_AGE_SEC = 2 * 3600;
+
+/** Game-winner series (moneylines); the same set the backtest replays. */
+export const KALSHI_GAME_SERIES = [
+  "KXNFLGAME", "KXNCAAFGAME", "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXEPLGAME",
+  "KXUCLGAME", "KXLALIGAGAME", "KXNCAAMBGAME", "KXWNBAGAME", "KXMLSGAME",
+];
+const GAME_SERIES = new Set(KALSHI_GAME_SERIES);
+
+export function isKalshiGameWinner(ticker: string): boolean {
+  return GAME_SERIES.has(ticker.split("-")[0].toUpperCase());
+}
+
+/** The date + teams part of a Kalshi sports ticker ("26NOV03VILPSG"), or undefined. */
+export function kalshiMatchCode(ticker: string): string | undefined {
+  const code = ticker.split("-")[1];
+  return code && /^\d{2}[A-Z]{3}\d{2}(\d{4})?[A-Z]{4,}$/.test(code) ? code : undefined;
+}
+
+/**
+ * Real timing for a Kalshi market. `close_time` is the latest possible expiry (for a game, two days
+ * after it starts), so it can't tell a game in progress from one two days away. Kalshi's sports
+ * markets follow a fixed pattern: latest expiry = start + 48h, expected expiration = start + a few
+ * hours. The start is only inferred when both agree with that pattern.
+ */
+export function kalshiTimes(m: Pick<KalshiMarket, "ticker" | "close_time" | "expected_expiration_time" | "latest_expiration_time">): Pick<NormalizedMarket, "resolvesAt" | "startsAt"> {
+  const out: Pick<NormalizedMarket, "resolvesAt" | "startsAt"> = {};
+  const expected = m.expected_expiration_time ? Date.parse(m.expected_expiration_time) : NaN;
+  if (Number.isFinite(expected)) out.resolvesAt = new Date(expected).toISOString();
+  const latest = m.latest_expiration_time ? Date.parse(m.latest_expiration_time) : NaN;
+  if (kalshiMatchCode(m.ticker) && Number.isFinite(latest) && Number.isFinite(expected)) {
+    const start = latest - 48 * 3600_000;
+    const gapH = (expected - start) / 3600_000;
+    if (gapH >= 1 && gapH <= 8) out.startsAt = new Date(start).toISOString();
+  }
+  return out;
 }
 
 /**
@@ -167,42 +212,63 @@ export class KalshiAdapter implements PlatformAdapter {
   readonly id = "kalshi" as const;
   constructor(private readonly baseUrl = DEFAULT_BASE) {}
 
+  /**
+   * Kalshi lists the newest markets first, and most new ones are props created minutes ago with
+   * empty books. So: upcoming games first (the game-winner series, soonest first), then the
+   * busiest markets that are at least a couple of hours old, by 24h volume.
+   */
   async listMarkets(opts: ListMarketsOptions = {}): Promise<NormalizedMarket[]> {
     const limit = opts.limit ?? 100;
-    const pageSize = Math.min(200, Math.max(limit, 50));
-    const out: NormalizedMarket[] = [];
-    let cursor: string | undefined;
+    const now = Date.now();
+    const matches = (norm: NormalizedMarket, m: KalshiMarket) => {
+      if (!opts.query) return true;
+      const q = opts.query.toLowerCase();
+      return norm.title.toLowerCase().includes(q) || m.ticker.toLowerCase().includes(q);
+    };
+    const games: NormalizedMarket[] = [];
+    for (const series of KALSHI_GAME_SERIES) {
+      try {
+        for (const m of await this.page({ series_ticker: series, limit: "200" }, 1)) {
+          const n = normalize(m);
+          // Games that haven't finished, starting within the next week.
+          if (n && n.status === "open" && matches(n, m) && (!n.startsAt || Date.parse(n.startsAt) < now + 7 * 86_400_000)) games.push(n);
+        }
+      } catch {
+        // one series failing shouldn't hide the rest
+      }
+    }
+    const soon = (m: NormalizedMarket) => (m.startsAt ? Date.parse(m.startsAt) : Infinity);
+    games.sort((a, b) => Number(soon(a) < now) - Number(soon(b) < now) || soon(a) - soon(b));
+    const others: NormalizedMarket[] = [];
+    const seen = new Set(games.map((g) => g.id));
+    const pages = Math.min(3, Math.max(1, Math.ceil(limit / 400)));
+    for (const m of await this.page({ max_created_ts: String(Math.floor(now / 1000) - MIN_AGE_SEC), limit: "1000" }, pages)) {
+      if (seen.has(m.ticker)) continue;
+      const n = normalize(m);
+      if (n && matches(n, m)) others.push(n);
+    }
+    others.sort((a, b) => (b.volume24hUsd ?? 0) - (a.volume24hUsd ?? 0));
+    // Up to half the slots go to games, the rest to the busiest other markets.
+    const g = games.slice(0, Math.ceil(limit / 2));
+    return [...g, ...others].slice(0, limit);
+  }
 
-    while (out.length < limit) {
+  /** Open, single markets (no parlays), `pages` pages of results. */
+  private async page(params: Record<string, string>, pages: number): Promise<KalshiMarket[]> {
+    const out: KalshiMarket[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < pages; i++) {
       const url = new URL(`${this.baseUrl}/markets`);
       url.searchParams.set("status", "open");
-      url.searchParams.set("limit", String(pageSize));
-      // Prefer simple binary markets over multivariate combos when supported
       url.searchParams.set("mve_filter", "exclude");
+      for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
       if (cursor) url.searchParams.set("cursor", cursor);
-
       const data = (await getJson<KalshiMarketsResponse>(url, "Kalshi")).data ?? {};
-      const batch = data.markets ?? [];
-      if (batch.length === 0) break;
-
-      for (const m of batch) {
-        const norm = normalize(m);
-        if (!norm) continue;
-        if (opts.query) {
-          const q = opts.query.toLowerCase();
-          if (!norm.title.toLowerCase().includes(q) && !m.ticker.toLowerCase().includes(q)) {
-            continue;
-          }
-        }
-        out.push(norm);
-        if (out.length >= limit) break;
-      }
-
+      out.push(...(data.markets ?? []));
       cursor = data.cursor;
-      if (!cursor) break;
+      if (!cursor || !data.markets?.length) break;
     }
-
-    return out.slice(0, limit);
+    return out;
   }
 
   async getMarket(id: string): Promise<NormalizedMarket | null> {

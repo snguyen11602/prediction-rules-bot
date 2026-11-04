@@ -125,6 +125,8 @@ copy_trading:
     max_trade_age_minutes: 30
     max_chase: 0.03                   # pay at most 3¢ more than the leader
     max_buy_price: 0.95               # and never more than 95¢
+    max_discount: 0.05                # skip if it's already 5¢+ below the leader's price (moved against them)
+    pre_game_only: true               # don't copy bets on games already in progress
     max_price_gap: 0.10
     follow_sells: true                # sell when the leader sells
     poll_seconds: 60                  # with paper:fast, checks leaders every minute
@@ -152,14 +154,19 @@ copy_trading:
 league:
   enabled: true
   roster_size: 12            # bot-made strategies trading at once
-  # dip_buyer and scalper are off: they lost in every backtest version (add them back to try again)
-  families: [momentum, favorite, longshot_fade]
+  # momentum (Trend Rider), dip_buyer and scalper are off: they lost in every backtest version and
+  # live. Add them back to try again.
+  families: [favorite, longshot_fade]
   min_trades: 5              # finished trades before a strategy is ranked
-  # Every league strategy aims to win at least 2× what it risks, gets at least 48h per trade, never pays
-  # more than 95¢ for a contract, and only one league strategy at a time may bet on a given game.
+  # Every league strategy only bets on who wins a game, before it starts, never pays more than 95¢, holds
+  # favorites to the result (no stop loss), and only one league strategy at a time may bet on a game.
+  # A strategy only paper-trades after its latest backtest made money overall AND in the held-out
+  # part, over 10+ trades. Until then it's benched (shown on the leaderboard).
+  require_backtest: true
+  gate_min_trades: 10
   winners: 3                 # each round the top 3 get a clone…
   clones_per_winner: 1
-  retire: 3                  # …and up to 3 of the worst retire (with a diagnosis)
+  retire: 12                 # …and every ranked loser retires (with a diagnosis)
   clone_house_rules: true    # your own rules can be cloned too (never retired)
   backtest_days: 14
   test_share: 0.3            # the last 30% is held out: winners must make money there too
@@ -280,9 +287,11 @@ rules:
   # ── Paper strategies ──────────────────────────────────────────────────────
   # Follow informed-looking flow: buy in the direction of a sharp, high-volume move that holds,
   # then let a trailing stop sell near the high. Stricter thresholds than the alert above.
+  # Off since the Nov 4 review: chasing moves lost in every test (−$183 over 43 backtest trades), like
+  # the league's Trend Riders. Set enabled: true to try it again.
   - id: follow-unusual-move-paper
     name: Follow sharp high-volume moves; sell near the high
-    enabled: true
+    enabled: false
     action: paper
     filters:
       keywords_exclude: [parlay, same game]
@@ -319,9 +328,10 @@ rules:
       slippage: 0.005
       include_fees: true
 
-  # Favorite carry: buy the heavy favorite shortly before resolution and hold
-  # to settlement. Small wins, occasional large losses — so it is sized small,
-  # stops out if the favorite slips, and pauses after only 2 straight losses.
+  # Favorite carry: buy the heavy favorite shortly before resolution and hold to settlement. Small
+  # wins, occasional large losses, so it's sized small and pauses after 2 straight losses. No stop
+  # loss: in the Nov 4 review, every stopped-out favorite would have won if held (the stops fired on
+  # momentary dips in thin books). Never bets on a game that has already started.
   - id: favorite-carry-yes-paper
     name: Short-dated YES favorites (85–95¢), hold to resolution
     enabled: true
@@ -336,11 +346,11 @@ rules:
       max_spread: 0.02
       min_hours_to_resolve: 6
       max_hours_to_resolve: 72
+      pre_game_only: true        # no in-play bets
     entry:
       side: yes
     exit:
-      stop_loss_price: 0.70      # favorite slipped; take the loss before it goes to 0
-      take_profit_price: 0.985   # free the capital once nearly all value is captured
+      take_profit_price: 0.985   # free the capital once nearly all value is captured; otherwise hold
     risk:
       position_size_fraction: 0.05
       bankroll_usd: 1000
@@ -368,11 +378,11 @@ rules:
       max_spread: 0.02
       min_hours_to_resolve: 6
       max_hours_to_resolve: 72
+      pre_game_only: true
     entry:
       side: no
     exit:
-      stop_loss_price: 0.70      # NO price (i.e. YES has rallied to ~30¢)
-      take_profit_price: 0.985
+      take_profit_price: 0.985   # otherwise hold to the result
     risk:
       position_size_fraction: 0.05
       bankroll_usd: 1000

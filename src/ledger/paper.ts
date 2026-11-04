@@ -33,6 +33,10 @@ const LAST_PRICE_MAX_AGE_HOURS = 48;
 export interface PaperPosition {
   id: string;
   ruleId: string;
+  /** A stop fired at this time and waits for a second look before selling. */
+  exitPending?: { reason: string; since: string };
+  /** The game / event this market belongs to (no two league bots, and no re-buys, on one event). */
+  eventKey?: string;
   platform: PlatformId;
   marketId: string;
   title: string;

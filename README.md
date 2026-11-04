@@ -104,6 +104,9 @@ Configured in the `copy_trading:` block of `rules/example.yaml`. Paper by defaul
   - global Polymarket leaders, everything else: the strict Yes/No title match used for arbitrage, on
     Polymarket US, then Kalshi. Spreads, over/unders and props aren't copied yet. Bets with no clear twin
     are skipped, not guessed.
+- **Timing.** Only bets on games that haven't started are copied (`pre_game_only`): in-play copies chased
+  moves that had already happened. A copy is also skipped when the price has already fallen 5¢+ below the
+  leader's (`max_discount`): the bet has moved against them.
 - **Price.** A copy never pays more than 3¢ above the leader's price or more than 95¢ (`max_buy_price`),
   and for global Polymarket bets the two sites must agree on the price within 10¢ (otherwise it's
   probably not the same bet).
@@ -201,23 +204,31 @@ and paper-trades them next to your own rules. Each one has a personality:
 | **Creativity** | how different its clones are from it |
 | **Knowledge** | how many safety checks it uses: tighter spreads, timing, skipping parlays and the like |
 
-Rookies come from three ideas: ride sharp moves (The Trend Rider), buy heavy favorites near the finish
-(The Closer) and bet against long shots (The Skeptic). Two more exist but are **off** by default because
-they lost in every backtest version: buying sharp drops (The Dip Hunter — in game markets a drop is usually
-real news) and flipping small moves (The Scalper — it can't cover fees). Add `dip_buyer` / `scalper` to
-`families` to try them again; strategies of a type that's off stop opening trades and retire at the next round.
+Rookies come from two ideas: buy heavy favorites (The Closer) and bet against long shots (The Skeptic). Three
+more exist but are **off** by default because they lost in every backtest version and live: riding sharp moves
+(The Trend Rider — it lost even when held to the result), buying sharp drops (The Dip Hunter — in game markets a
+drop is usually real news) and flipping small moves (The Scalper — it can't cover fees). Add `momentum` /
+`dip_buyer` / `scalper` to `families` to try them again; strategies of a type that's off stop opening trades and
+retire at the next round.
 
-Every league strategy aims to win at least **2×** what it risks (profit target ≥ 2 × stop) and gets at least
-**48 hours** per trade: with ~5% in fees and the bid/ask gap on each round trip, small targets and short time
-limits mostly pay costs. A 40% win rate is fine when the wins are twice the losses.
-
-Two more guard rails for league strategies (copy trading has its own 95¢ cap; your own rules aren't limited):
+**Guard rails** (from the Nov 4 review of a week of paper results, which lost $833):
+- **Game winners, before the game.** League strategies only bet on who wins a game (no spreads, totals or
+  props) and only before it starts (`pre_game_only`, `market_types: [game_winner]`). That's what the backtest
+  replays; in-play books are thin and jumpy, and 55 of 98 Kalshi entries had been made mid-game.
+- **Favorites hold to the result.** Closers and Skeptics have no stop loss or target. Stops on them sold 19 of
+  19 bets bought at 80¢+ that went on to win, at prices that only existed for a few seconds.
+- **Benched until proven.** A strategy only paper-trades after its latest backtest made money overall **and**
+  in the held-out last 30%, over 10+ trades (`require_backtest`, `gate_min_trades`). New rookies and clones
+  wait for their first backtest; the leaderboard shows "benched" and why. If none passes, the league trades
+  nothing — that's the honest answer, not a bug.
 - **No buying above 95¢.** A 98¢ contract risks 98¢ to make 2¢, so one loss wipes out dozens of wins.
 - **No stacking: one league strategy per game.** League strategies often think alike, so without this
   three or four of them would pile into the same game at once, which is really one big bet. "Same game"
-  includes sibling markets (on Kalshi, "PSG by 3.5" and "PSG by 4.5" are one game) and every other market
-  on the same match (its spread, total goals and team totals). The first one in gets it; the others skip
-  with "another league strategy already holds this game".
+  covers every market of the match (spread, totals, team totals) and, on Polymarket US, the other team or
+  the other party's candidate in a race. The first one in gets it; the others skip with "another league
+  strategy already holds this game".
+- Other families (if you switch them back on) still aim to win at least **2×** what they risk and get at
+  least **48 hours** per trade.
 
 Once a day (`evolve_every_hours`) a **round** runs in the background while `npm run paper:watch` is running,
 or now with `npm run league`:
@@ -233,7 +244,8 @@ or now with `npm run league`:
 3. **Clone the best.** The top 3 each get a clone with the same idea, nudged numbers and a similar
    personality. A clone of Blaze is Blaze II, then Blaze III. To count, a winner must also make money on at least 2 trades
    in the last 30% of the window (held out), so early luck doesn't get cloned.
-4. **Diagnose and retire the worst** (up to 3): losing once ranked, or never trading. The diagnosis says why in
+4. **Diagnose and retire the worst** (every ranked loser, `retire: 12`): losing once ranked, or never
+   trading. Only paper trades made under a strategy's current rules count toward its score. The diagnosis says why in
    plain words, for example *"Fees ate the edge: $60 in fees on top of $37 lost before fees"* or
    *"Never found a trade: 'Price band' ruled out 96% of the market checks"*. Rookies take their place.
 
@@ -361,6 +373,9 @@ reversion in liquid markets). The paper strategies are hypotheses, not proven ed
 |---------|-------|---------|
 | `filters` | `min_volume_24h_usd` | Skip markets without enough 24h volume |
 | `filters` | `max_spread` | Max YES bid/ask spread; markets without quotes fail |
+| `filters` | `pre_game_only` | Only bet before the event starts (markets with no start time, like most non-sports, pass) |
+| `filters` | `market_types` | `[game_winner]` = only a game's moneyline / match winner |
+| `filters` | `min_hours_to_resolve`, `max_hours_to_resolve` | Hours until the result is **expected** (Kalshi's expected expiration, a game's start + 3h), not the platform's placeholder close |
 | `entry` | `move_direction` | `up` / `down` / `any` (default) for the move conditions |
 | `entry` | `max_prior_age_minutes` | Ignore the previous observation if it is older than this |
 | `entry` | `unusual_move` | `mode: require` / `exclude` plus thresholds (see Unusual moves) |
@@ -373,6 +388,11 @@ reversion in liquid markets). The paper strategies are hypotheses, not proven ed
 
 Exit prices (`take_profit_price`, `stop_loss_price`) are for the contract you **hold**: the YES price
 for `side: yes`, the NO price for `side: no`.
+
+**How stops fire** (all rules and copy trading): a stop or trailing stop compares the **mid** of the held
+side, not its bid (a bid can vanish for a few seconds in a thin book); it must still be there on a second
+check at least 20 seconds later; and it never sells into a book more than 10¢ wide (it holds and says so).
+It then sells at the bid, like before. Take-profits and time limits sell right away.
 
 ## Safety
 

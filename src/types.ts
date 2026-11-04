@@ -44,8 +44,19 @@ export interface NormalizedMarket {
    * filter is then skipped and says so, instead of failing every market on that platform.
    */
   volume24hUnavailable?: boolean;
-  /** ISO close / resolve time when known. */
+  /**
+   * ISO close time as the platform shows it. On Kalshi and Polymarket US sports markets this is a
+   * late placeholder (Kalshi: the latest possible expiry, ~2 days after the game); use `resolvesAt`.
+   */
   closesAt?: string;
+  /** When the result is expected (Kalshi expected expiration; a game's start + 3h). Falls back to closesAt. */
+  resolvesAt?: string;
+  /** When the event (a game) starts, when the platform says. Bets after this are in-play. */
+  startsAt?: string;
+  /** "game_winner" for a game's moneyline / match winner, "other" otherwise (spreads, totals, props…). */
+  marketType?: "game_winner" | "other";
+  /** When the market was listed (Kalshi). Brand-new markets have empty, jumpy books. */
+  createdAt?: string;
   /**
    * Lifecycle as seen by the adapter. Omitted = treat as open.
    * "closed" = trading stopped, outcome not known yet.

@@ -3,6 +3,7 @@ import path from "node:path";
 import type { CopyTradingConfig } from "../rules/schema.js";
 import type { PolymarketDataClient, TraderTrade } from "../platforms/polymarket-data.js";
 import type { KalshiPeriod, KalshiSocialClient, KalshiSocialTrade } from "../platforms/kalshi-social.js";
+import { hasStarted } from "./evaluate.js";
 import { platformName, type NormalizedMarket, type PlatformId, type SignalSide } from "../types.js";
 import { findMatches } from "./match.js";
 import { buyPrice } from "./pricing.js";
@@ -660,10 +661,22 @@ export function copyChecks(bet: LeaderBet, global: NormalizedMarket | undefined,
     {
       stage: "signal",
       name: "Price now",
-      ok: pay > 0 && pay < 1 && pay <= bet.price + cfg.copy.max_chase + 1e-9,
-      detail: `${t.side.toUpperCase()} costs ${cents(pay)} here vs the leader's ${cents(bet.price)} (max ${cents(bet.price + cfg.copy.max_chase)})`,
+      ok: pay > 0 && pay < 1 && pay <= bet.price + cfg.copy.max_chase + 1e-9 && pay >= bet.price - cfg.copy.max_discount - 1e-9,
+      detail:
+        pay < bet.price - cfg.copy.max_discount - 1e-9
+          ? `${t.side.toUpperCase()} costs ${cents(pay)} here, ${cents(bet.price - pay)} below the leader's ${cents(bet.price)}: the price already moved against them (max ${cents(cfg.copy.max_discount)} below)`
+          : `${t.side.toUpperCase()} costs ${cents(pay)} here vs the leader's ${cents(bet.price)} (max ${cents(bet.price + cfg.copy.max_chase)})`,
     },
   ];
+  if (cfg.copy.pre_game_only) {
+    const started = hasStarted(t.market, now);
+    checks.push({
+      stage: "filters",
+      name: "Before the game",
+      ok: started !== true,
+      detail: started == null ? "no start time (not a game)" : started ? "the game has started: in-play bets aren't copied" : `starts ${new Date(t.market.startsAt!).toISOString().slice(0, 16).replace("T", " ")} UTC`,
+    });
+  }
   if (global) {
     // Compare the price of the bet itself on both sites; far apart means it's not really the same bet.
     const here = sidePrice(t.market.yesPrice, t.side);

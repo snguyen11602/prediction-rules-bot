@@ -69,7 +69,7 @@ test("every paper trade stores the checks that led to it", async () => {
   assert.match(group!.entryTrace!.at(-1)!.detail, /locks in/);
 });
 
-test("demo paper flow: entries, no duplicates, exits, PnL and loss pause", async () => {
+test("demo paper flow: entries, no duplicates, exits, PnL; favorites hold to the result", async () => {
   rulesPath = await rulesWithAllArbPaths();
   const ledgerPath = path.join(await mkdtemp(path.join(tmpdir(), "prb-")), "ledger.json");
 
@@ -85,9 +85,11 @@ test("demo paper flow: entries, no duplicates, exits, PnL and loss pause", async
   assert.equal(r2.arb?.opened, 0, "arbs already held are not bought again");
 
   const r3 = await cycle(ledgerPath, SNAP2, T1);
-  assert.equal(r3.closed, 4);
-  assert.equal(r3.opened, 1); // dip-reversion entry on the 8¢ drop
-  assert.equal(r3.realizedPnlUsd, -29.06); // Kalshi fills are whole contracts
+  // The favorites' long shots rallied: they used to be stopped out here at a loss, but favorites
+  // now hold to the result (stops sold every one of them that went on to win).
+  assert.equal(r3.closed, 2);
+  assert.equal(r3.opened, 2); // dip-reversion entry on the 8¢ drop + a new favorite (no loss pause now)
+  assert.equal(r3.realizedPnlUsd, 7.3); // Kalshi fills are whole contracts
 
   assert.equal(r3.arb?.closed, 2, "Fed pair sold early, mayor basket resolved");
   assert.equal(r3.arb?.realizedPnlUsd, 7.66);
@@ -96,19 +98,15 @@ test("demo paper flow: entries, no duplicates, exits, PnL and loss pause", async
     .filter((e) => e.type === "paper_exit" && e.ruleId !== "arbitrage")
     .map((e) => e.data?.reason)
     .sort();
-  assert.deepEqual(reasons, ["resolved", "stop_loss", "stop_loss", "take_profit"]);
-  assert.ok(
-    r3.events.some((e) => e.type === "risk_block" && e.ruleId === "favorite-carry-no-paper" && /paused until/.test(e.message)),
-    "2 straight losses should pause favorite-carry-no-paper and block the next match",
-  );
+  assert.deepEqual(reasons, ["resolved", "take_profit"]);
 
   const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as PaperLedger;
   assert.equal(ledger.version, 2);
   assert.equal(ledger.demo, true);
-  assert.ok(ledger.ruleState["favorite-carry-no-paper"].pausedUntil);
+  assert.equal(ledger.ruleState["favorite-carry-no-paper"]?.pausedUntil, undefined);
   const solo = ledger.positions.filter((p) => !p.groupId);
-  assert.equal(solo.filter((p) => p.status === "open").length, 1);
-  assert.equal(ledger.fills.filter((f) => f.kind === "close" && f.ruleId !== "arbitrage").length, 4);
+  assert.equal(solo.filter((p) => p.status === "open").length, 4);
+  assert.equal(ledger.fills.filter((f) => f.kind === "close" && f.ruleId !== "arbitrage").length, 2);
   // A winning arb whose single leg lost must not count toward the loss streak.
   assert.equal(ledger.ruleState.arbitrage?.consecutiveLosses ?? 0, 0);
   const dip = ledger.positions.find((p) => p.ruleId === "dip-reversion-paper")!;
