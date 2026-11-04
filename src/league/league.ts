@@ -3,7 +3,7 @@ import path from "node:path";
 import { LeagueSchema, RuleSchema, type LeagueConfig, type Rule } from "../rules/schema.js";
 import type { StrategyStats } from "./metrics.js";
 import type { Diagnosis } from "./diagnose.js";
-import { withRewardRisk, type FamilyId, type RuleBody } from "./genome.js";
+import { leagueGuards, withRewardRisk, type FamilyId, type RuleBody } from "./genome.js";
 import { cloneName, hashSeed, housePersonas, legacyHouseName, NAMES, rookieName, type Traits } from "./personas.js";
 
 /** A strategy the league made (or one of your rules, seen as a "house" player). */
@@ -23,6 +23,8 @@ export interface Member {
   status: "rookie" | "active" | "champion" | "retired";
   retiredAt?: string;
   diagnosis?: Diagnosis;
+  /** Paper trades from before this (an older version of its rules) don't count toward its score. */
+  rulesSince?: string;
   /** Latest backtest: the whole window, the part it's ranked on, and the held-out last part. */
   backtest?: { all: StrategyStats; train?: StrategyStats; test: StrategyStats; at: string };
 }
@@ -61,9 +63,15 @@ export interface LeagueFile {
   pastNames?: string[];
   /** 2 = one-word names ("Blaze", "Blaze II"). Older files used first + last names. */
   nameStyle?: number;
-  /** Rules follow the league guard rails (withRewardRisk): 2 = targets/time limits, 3 = + max buy price. */
+  /**
+   * Rules follow the league guard rails: 2 = targets/time limits, 3 = + max buy price,
+   * 4 = game winners before the game only, favorites hold to the result (old backtests no longer apply).
+   */
   ruleStyle?: number;
 }
+
+/** The guard rails the current code applies; a file below this needs a fresh backtest round. */
+export const LEAGUE_RULE_STYLE = 4;
 
 /** Your own paper rules seen as league players (alert-only rules, arbitrage and copy trading aren't). */
 export function houseContestantRules(file: { rules: Rule[] }): Rule[] {
@@ -82,7 +90,7 @@ export function houseNames(file: { rules: Rule[] } | undefined): Map<string, str
  * cool-downs and history stay attached. Clones become "<parent's name> II", "III"…
  */
 /** Bring an older league file up to date, in memory (the next round saves it). */
-export function upgradeLeague(l: LeagueFile, house: Map<string, string>): void {
+export function upgradeLeague(l: LeagueFile, house: Map<string, string>, now = new Date()): void {
   migrateNames(l, house);
   if ((l.ruleStyle ?? 0) < 3) {
     l.ruleStyle = 3;
@@ -94,7 +102,42 @@ export function upgradeLeague(l: LeagueFile, house: Map<string, string>): void {
       }
     }
   }
+  if ((l.ruleStyle ?? 0) < 4) {
+    l.ruleStyle = 4;
+    for (const m of l.members) {
+      try {
+        if (m.rule) m.rule = leagueGuards(m.rule, m.family);
+        // Its backtest was of the old rules: it has to pass again before trading, and only paper
+        // trades under the new rules count from here.
+        m.backtest = undefined;
+        m.rulesSince = now.toISOString();
+      } catch {
+        // a broken member is skipped later, with a warning
+      }
+    }
+  }
 }
+
+/**
+ * May this member paper-trade? Only after its latest backtest made money overall AND in the
+ * held-out last part, over enough trades. Rookies and clones wait for their first backtest.
+ */
+export function gateCheck(m: Pick<Member, "backtest" | "family">, cfg: LeagueConfig | undefined): { ok: boolean; why: string } {
+  const c = cfg ?? LeagueSchema.parse({});
+  if (!c.require_backtest) return { ok: true, why: "backtest gate is off" };
+  const b = m.backtest;
+  if (!b) return { ok: false, why: "waiting for its first backtest" };
+  const trades = b.all.trades + (b.all.open ?? 0);
+  if (trades < c.gate_min_trades) return { ok: false, why: `only ${trades} backtest trade(s) (needs ${c.gate_min_trades})` };
+  if (b.all.pnlUsd <= 0) return { ok: false, why: `lost ${money(b.all.pnlUsd)} in its backtest` };
+  const needTest = Math.max(2, Math.ceil(c.min_trades / 3));
+  const tt = b.test.trades + (b.test.open ?? 0);
+  if (tt < needTest) return { ok: false, why: `only ${tt} trade(s) in the held-out part (needs ${needTest})` };
+  if (b.test.pnlUsd < 0) return { ok: false, why: `lost ${money(b.test.pnlUsd)} in the held-out part` };
+  return { ok: true, why: `made ${money(b.all.pnlUsd)} over ${trades} backtest trades, ${money(b.test.pnlUsd)} held out` };
+}
+
+const money = (x: number) => `${x < 0 ? "−" : ""}$${Math.abs(x).toFixed(2)}`;
 
 export function migrateNames(l: LeagueFile, house: Map<string, string>): void {
   if (l.nameStyle === 2) return;
@@ -186,8 +229,10 @@ export function leagueRules(l: LeagueFile, cfg: LeagueConfig | undefined, onBad?
   for (const m of l.members) {
     try {
       const r = memberRule(m);
-      // Switched off (the whole league, or this type): no new trades, open ones still get their exits.
-      out.push((cfg && !cfg.enabled) || !familyAllowed(m, cfg) ? { ...r, enabled: false } : r);
+      // Switched off (the whole league, or this type), or not proven in a backtest: no new trades,
+      // open ones still get their exits.
+      const off = (cfg && !cfg.enabled) || !familyAllowed(m, cfg) || !gateCheck(m, cfg).ok;
+      out.push(off ? { ...r, enabled: false } : r);
     } catch (err) {
       // One broken member mustn't stop paper trading for everything else.
       onBad?.(m, err as Error);

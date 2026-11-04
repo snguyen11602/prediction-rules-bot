@@ -157,7 +157,7 @@ copy_trading:
   assert.equal(pos.platform, "polymarket_us");
   assert.equal(pos.side, "no", "the leader bought Pacers = NO on 'Hawks win'");
   assert.equal(pos.copiedFrom?.wallet, w);
-  assert.deepEqual(pos.entryTrace?.map((c) => c.name).slice(0, 5), ["Leader", "Leader's bet", "Same market", "Price now", "Prices agree"]);
+  assert.deepEqual(pos.entryTrace?.map((c) => c.name).slice(0, 6), ["Leader", "Leader's bet", "Same market", "Price now", "Before the game", "Prices agree"]);
 
   // The leader sells → we sell on the next check.
   trades.push({ ...trades[0], side: "SELL", price: 0.3, timestamp: sec(T0) + 400 });
@@ -212,11 +212,14 @@ test("a loss pause armed by this cycle's exits blocks copies in the same cycle",
   await writeFile(rulesFile, (await readFile(rulesFile, "utf8")) + "  risk: { position_size_fraction: 0.03, max_position_usd: 30, fire_after_n_losses: 1, pause_hours_after_losses: 24 }\n  exit: { stop_loss_pct: 0.3 }\n");
   s.trades.push(s.buy("nba-atl-ind-2026-11-02", "Pacers", sec(T0) - 300));
   assert.equal((await s.run(T0)).opened, 1);
-  // The Hawks run away with it (our NO collapses → stop loss) while the leader buys another game.
+  // The Hawks run away with it (our NO collapses → stop loss, confirmed on the next check) while
+  // the leader buys another game.
   await s.writeMarkets({ yesPrice: 0.965, yesBid: 0.96, yesAsk: 0.97 });
   const t1 = new Date(T0.getTime() + 600_000);
-  s.trades.push(s.buy("nba-bos-hou-2026-11-02", "Rockets", sec(t1) - 60));
-  const r = await s.run(t1);
+  assert.equal((await s.run(t1)).closed, 0, "a stop waits for a second look");
+  const t2 = new Date(t1.getTime() + 60_000);
+  s.trades.push(s.buy("nba-bos-hou-2026-11-02", "Rockets", sec(t2) - 30));
+  const r = await s.run(t2);
   assert.equal(r.closed, 1);
   assert.equal(r.opened, 0, "the pause armed by the stop loss applies right away");
   assert.match(r.copy?.recent[0].reason ?? "", /pause|paused/i);

@@ -134,7 +134,7 @@ test("a league round: roster, backtest, clones of the best, diagnosis for the wo
       version: 1,
       rules: [FAVORITE],
       // Dip hunters never trade flat prices, so they're the ones to retire.
-      league: { roster_size: 4, families: ["dip_buyer"], winners: 1, clones_per_winner: 1, retire: 2, min_trades: 5 },
+      league: { roster_size: 4, families: ["dip_buyer"], winners: 1, clones_per_winner: 1, retire: 2, min_trades: 5, require_backtest: false },
     }),
   );
   const { league, summary } = await runRound({ rulesPath, ledgerPath, now: NOW, seed: 5, history: favorites(4), days: 4 });
@@ -159,9 +159,11 @@ test("a league round: roster, backtest, clones of the best, diagnosis for the wo
   // The paper session runs the new roster next to your rules.
   const saved = await loadLeague(leaguePathFor(ledgerPath));
   assert.equal(saved.members.length, league.members.length);
-  assert.equal(leagueRules(saved, LeagueSchema.parse({ families: ["dip_buyer"] })).filter((r) => r.enabled).length, 4);
-  // With the default types, the dip hunters stop opening trades (the clone of your rule keeps going).
-  assert.equal(leagueRules(saved, undefined).filter((r) => r.enabled).length, 1);
+  assert.equal(leagueRules(saved, LeagueSchema.parse({ families: ["dip_buyer"], require_backtest: false })).filter((r) => r.enabled).length, 4);
+  // With the default types, the dip hunters stop opening trades (the clone of your rule keeps going)…
+  assert.equal(leagueRules(saved, LeagueSchema.parse({ require_backtest: false })).filter((r) => r.enabled).length, 1);
+  // …and with the backtest gate on (the default), newcomers wait for their first backtest.
+  assert.equal(leagueRules(saved, undefined).filter((r) => r.enabled).length, 0);
   const t = new Date(NOW.getTime() - 30 * 3600_000);
   const res = await runPaperCycle({
     rulesPath,
@@ -282,12 +284,12 @@ test("league strategies don't stack on one game and never pay more than 95¢", a
   const ledgerPath = path.join(dir, "data", "paper-ledger.json");
   await mkdir(path.dirname(ledgerPath), { recursive: true });
   // Your own rule (not a league strategy) still buys freely.
-  await writeFile(rulesPath, stringify({ version: 1, rules: [{ ...FAVORITE, id: "mine", filters: { min_price: 0.5, max_price: 0.99 } }], league: { families: ["favorite"] } }));
+  await writeFile(rulesPath, stringify({ version: 1, rules: [{ ...FAVORITE, id: "mine", filters: { min_price: 0.5, max_price: 0.99 } }], league: { families: ["favorite"], require_backtest: false } }));
   const { saveLeague } = await import("../league/league.js");
   const { withRewardRisk } = await import("../league/genome.js");
   const body = withRewardRisk({ ...FAVORITE, filters: { min_price: 0.5, max_price: 0.99 } });
   const member = (id: string, name: string) => ({ id, name, style: "The Closer", family: "favorite" as const, traits: { hustle: 0.5, creativity: 0.5, knowledge: 0.5 }, rule: body, generation: 1, bornAt: NOW.toISOString(), status: "active" as const });
-  await saveLeague(leaguePathFor(ledgerPath), { version: 1, round: 1, members: [member("lg-a-1", "Ace"), member("lg-b-2", "Bolt"), member("lg-c-3", "Cash")], events: [], nameStyle: 2, ruleStyle: 3 });
+  await saveLeague(leaguePathFor(ledgerPath), { version: 1, round: 1, members: [member("lg-a-1", "Ace"), member("lg-b-2", "Bolt"), member("lg-c-3", "Cash")], events: [], nameStyle: 2, ruleStyle: 4 });
   // Two markets in one event, plus one at 97¢.
   const ev = (id: string, price: number) => ({ ...market(id, 10, -100, () => price), market: { ...market(id, 10, -100, () => price).market, id: `KXGAME-26NOV03XY-${id}`, eventId: "KXGAME-26NOV03XY" } });
   const hist = [ev("A", 0.6), ev("B", 0.62), { ...market("HI", 10, -100, () => 0.97) }];

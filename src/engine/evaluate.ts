@@ -22,11 +22,24 @@ export interface EvalContext {
   series?: Tick[];
 }
 
+/** Hours until the result is expected (`resolvesAt`, else the platform's close time). */
 export function hoursToResolve(market: NormalizedMarket, now: Date): number | undefined {
-  if (!market.closesAt) return undefined;
-  const t = new Date(market.closesAt).getTime();
+  const at = market.resolvesAt ?? market.closesAt;
+  if (!at) return undefined;
+  const t = new Date(at).getTime();
   if (!Number.isFinite(t)) return undefined;
   return (t - now.getTime()) / 3600_000;
+}
+
+/** A bet placed this close to the start is treated as in-play (clocks and listings lag). */
+export const PRE_GAME_BUFFER_MIN = 5;
+
+/** Has the event started (or is about to)? undefined = start time unknown. */
+export function hasStarted(market: Pick<NormalizedMarket, "startsAt">, now: Date): boolean | undefined {
+  if (!market.startsAt) return undefined;
+  const t = Date.parse(market.startsAt);
+  if (!Number.isFinite(t)) return undefined;
+  return t - PRE_GAME_BUFFER_MIN * 60_000 <= now.getTime();
 }
 
 
@@ -77,13 +90,23 @@ export function filterChecks(rule: Rule, market: NormalizedMarket, now = new Dat
       add("Spread", sp <= f.max_spread + 1e-9, `${cents(market.yesBid)} bid / ${cents(market.yesAsk)} ask = ${cents(sp)} ${sp <= f.max_spread + 1e-9 ? "≤" : ">"} ${cents(f.max_spread)}`);
     }
   }
+  if (f.market_types?.length) {
+    const t = market.marketType ?? "other";
+    add("Market type", f.market_types.includes(t), `${t === "game_winner" ? "a game winner" : "not a game winner (spread, total, prop or other)"}${f.market_types.includes(t) ? "" : ` (needs ${f.market_types.join(" / ")})`}`);
+  }
+  if (f.pre_game_only) {
+    const started = hasStarted(market, now);
+    const h = market.startsAt ? (Date.parse(market.startsAt) - now.getTime()) / 3600_000 : 0;
+    const when = Math.abs(h) < 1 ? `${Math.round(Math.abs(h) * 60)} min` : hours(Math.abs(h));
+    add("Before the game", started !== true, started == null ? "no start time (not a game)" : started ? (h <= 0 ? `started ${when} ago: in-play` : `starts in ${when} (too close)`) : `starts in ${when}`);
+  }
   if (f.min_hours_to_resolve != null || f.max_hours_to_resolve != null) {
     const hrs = hoursToResolve(market, now);
     const lo = f.min_hours_to_resolve;
     const hi = f.max_hours_to_resolve;
     const ok = hrs != null && (lo == null || hrs >= lo) && (hi == null || (hrs <= hi && hrs >= 0));
     const range = lo != null && hi != null ? `${hours(lo)}–${hours(hi)}` : lo != null ? `≥ ${hours(lo)}` : `≤ ${hours(hi)}`;
-    add("Time to resolve", ok, hrs == null ? "no close date" : `closes in ${hours(hrs)} (needs ${range})`);
+    add("Time to resolve", ok, hrs == null ? "no close date" : `result expected in ${hours(hrs)} (needs ${range})`);
   }
   return out;
 }

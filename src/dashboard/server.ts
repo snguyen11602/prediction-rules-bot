@@ -12,7 +12,7 @@ import { loadSeries, seriesPathFor } from "../engine/series.js";
 import type { EngineEvent } from "../types.js";
 import type { RulesFile } from "../rules/schema.js";
 import { FAMILIES, describeRule, toBody } from "../league/genome.js";
-import { backtestDirs, familyAllowed, houseNames, leagueConfig, leaguePathFor, loadLeague, scoreOf, upgradeLeague, type LeagueFile } from "../league/league.js";
+import { backtestDirs, familyAllowed, gateCheck, houseNames, leagueConfig, leaguePathFor, loadLeague, scoreOf, upgradeLeague, type LeagueFile } from "../league/league.js";
 import { openTradesByRule, statsFromTrades, tradesByRule } from "../league/metrics.js";
 import { housePersonas } from "../league/personas.js";
 import { houseContestantRules } from "../league/evolve.js";
@@ -379,6 +379,8 @@ function leagueView(l: LeagueFile, ledger: PaperLedger, file: RulesFile | undefi
       paper: p,
       score,
       ranked,
+      // Not trading until its backtest passes (rookies, clones, losers, rules just changed).
+      benched: m.status !== "retired" && familyAllowed(m, cfg) && !gateCheck(m, cfg).ok ? gateCheck(m, cfg).why : undefined,
     };
   });
   const house = houseRules.map((r) => {

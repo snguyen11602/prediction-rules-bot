@@ -52,12 +52,12 @@ test("dashboard serves the page and a ledger snapshot", async () => {
     const state = await (await fetch(`${base}/api/state`)).json();
     assert.equal(state.ok, true);
     assert.equal(state.ledger.demo, true);
-    assert.equal(state.open.length, 1);
-    assert.equal(state.closed.length, 4);
-    // 4 single trades + 2 arbitrage trades (each counted once, not per leg)
-    assert.equal(state.pnlSeries.length, 6);
-    assert.equal(state.pnlSeries.at(-1).cumPnlUsd, -21.4);
-    assert.equal(state.totals.realizedPnlUsd, -21.4);
+    assert.equal(state.open.length, 4);
+    assert.equal(state.closed.length, 2);
+    // 2 single trades + 2 arbitrage trades (each counted once, not per leg)
+    assert.equal(state.pnlSeries.length, 4);
+    assert.equal(state.pnlSeries.at(-1).cumPnlUsd, 14.96);
+    assert.equal(state.totals.realizedPnlUsd, 14.96);
     assert.equal(state.arbs.enabled, true);
     assert.equal(state.arbs.open.length, 1);
     assert.equal(state.arbs.open[0].kind, "yes_basket");
@@ -67,7 +67,8 @@ test("dashboard serves the page and a ledger snapshot", async () => {
     assert.ok(state.open[0].entryTrace?.length, "open trades carry their decision checklist for the Why? view");
     assert.ok(state.arbs.open[0].entryTrace?.length);
     assert.equal(state.ruleNames["macro-econ-alert"], "Fed / CPI / jobs markets resolving within two weeks");
-    assert.ok(state.rules.some((r: { ruleId: string; pausedUntil?: string }) => r.ruleId === "favorite-carry-no-paper" && r.pausedUntil));
+    // Favorites hold to the result now, so the long-shot rally doesn't stop them out (or pause them).
+    assert.ok(!state.rules.some((r: { ruleId: string; pausedUntil?: string }) => r.ruleId === "favorite-carry-no-paper" && r.pausedUntil));
   } finally {
     server.close();
   }

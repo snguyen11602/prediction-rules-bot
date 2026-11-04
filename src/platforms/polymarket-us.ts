@@ -29,6 +29,8 @@ export const POLYMARKET_US_DEFAULT_FEE = 0.0695;
 
 /** Markets per listing whose order book we read for liquidity (each is one request). */
 const DEFAULT_ENRICH = Number(process.env.POLYMARKET_US_BOOKS ?? 100);
+/** Markets read per listing to find upcoming games (they sit far down the volume order). */
+const DEFAULT_SCAN = 1500;
 /** 4 workers with a short pause each stay well under the 25 requests/s public limit. */
 const BOOK_CONCURRENCY = 4;
 const BOOK_PAUSE_MS = 150;
@@ -67,6 +69,7 @@ export interface UsMarket {
   feeCoefficient?: number;
   minimumTradeQty?: number;
   sportsMarketType?: string;
+  sportsMarketTypeV2?: string;
   gameStartTime?: string;
   tags?: Array<{ slug?: string; label?: string }>;
 }
@@ -155,6 +158,23 @@ function lifecycleOf(m: UsMarket): Lifecycle {
   return { status: "closed" };
 }
 
+/** A game's moneyline: `aec-` slugs (spreads are `asc-`, totals `tsc-`), or the sports type says so. */
+export function isUsGameWinner(m: Pick<UsMarket, "slug" | "sportsMarketTypeV2">): boolean {
+  return m.sportsMarketTypeV2 === "SPORTS_MARKET_TYPE_MONEYLINE" || /^aec-/.test(m.slug ?? "");
+}
+
+/**
+ * A game's end date here is a placeholder about two weeks after it starts; the start time is
+ * real. Results are expected a few hours after the start.
+ */
+export function usTimes(m: Pick<UsMarket, "gameStartTime" | "endDate" | "slug" | "sportsMarketTypeV2">): Pick<NormalizedMarket, "resolvesAt" | "startsAt"> {
+  const start = m.gameStartTime ? Date.parse(m.gameStartTime) : NaN;
+  if (!Number.isFinite(start)) return {};
+  // Every market carries a start time (an election's is election day); only games end a few hours later.
+  const game = /^(aec|asc|tsc)-/.test(m.slug ?? "") || /MONEYLINE|SPREAD|TOTAL/.test(m.sportsMarketTypeV2 ?? "");
+  return game ? { startsAt: new Date(start).toISOString(), resolvesAt: new Date(start + 3 * 3600_000).toISOString() } : { startsAt: new Date(start).toISOString() };
+}
+
 export function normalizePolymarketUs(m: UsMarket, settlement?: number): NormalizedMarket | null {
   if (m.id == null || m.id === "" || !m.slug) return null;
   const sides = m.marketSides ?? [];
@@ -195,6 +215,8 @@ export function normalizePolymarketUs(m: UsMarket, settlement?: number): Normali
     outcomes: long?.description && short?.description ? [long.description, short.description] : undefined,
     takerFeeRate: finite(m.feeCoefficient) ?? POLYMARKET_US_DEFAULT_FEE,
     closesAt: m.endDate,
+    ...usTimes(m),
+    marketType: isUsGameWinner(m) ? "game_winner" : "other",
     tags: tags.length ? [...new Set(tags)] : undefined,
     volume24hUnavailable: true,
     ...(resolved ?? lifecycle),
@@ -245,7 +267,7 @@ export class PolymarketUsAdapter implements PlatformAdapter {
 
   constructor(
     private readonly base = DEFAULT_BASE,
-    private readonly opts: { books?: number; now?: () => Date; pauseMs?: number } = {},
+    private readonly opts: { books?: number; now?: () => Date; pauseMs?: number; scan?: number } = {},
   ) {}
 
   private now(): Date {
@@ -266,12 +288,20 @@ export class PolymarketUsAdapter implements PlatformAdapter {
   }
 
   /** Open markets, most-traded first (server-side order by lifetime volume). */
+  /**
+   * The busiest markets are mostly season futures; a game's moneyline is far down the volume list.
+   * So scan a few pages and give up to half the slots to games starting soon (soonest first), the
+   * rest to the busiest markets.
+   */
   async listMarkets(opts: ListMarketsOptions = {}): Promise<NormalizedMarket[]> {
     const limit = opts.limit ?? 100;
-    const pageSize = Math.min(500, Math.max(50, limit));
-    const out: NormalizedMarket[] = [];
+    const pageSize = 500;
+    const scan = Math.max(limit, this.opts.scan ?? DEFAULT_SCAN);
+    const busiest: NormalizedMarket[] = [];
+    const games: NormalizedMarket[] = [];
+    const nowMs = this.now().getTime();
     let offset = 0;
-    while (out.length < limit) {
+    while (offset < scan) {
       const url = new URL(`${this.base}/v1/markets`);
       url.searchParams.set("active", "true");
       url.searchParams.set("closed", "false");
@@ -286,12 +316,17 @@ export class PolymarketUsAdapter implements PlatformAdapter {
         const m = normalizePolymarketUs(raw);
         if (!m || m.status !== "open") continue;
         if (opts.query && !m.title.toLowerCase().includes(opts.query.toLowerCase())) continue;
-        out.push(m);
-        if (out.length >= limit) break;
+        const start = m.startsAt ? Date.parse(m.startsAt) : NaN;
+        if (m.marketType === "game_winner" && Number.isFinite(start) && start > nowMs - 6 * 3600_000 && start < nowMs + 7 * 86_400_000) games.push(m);
+        else if (busiest.length < limit) busiest.push(m);
       }
       offset += batch.length;
       if (batch.length < pageSize) break;
     }
+    const soon = (m: NormalizedMarket) => Date.parse(m.startsAt!);
+    games.sort((a, b) => Number(soon(a) < nowMs) - Number(soon(b) < nowMs) || soon(a) - soon(b));
+    const g = games.slice(0, Math.ceil(limit / 2));
+    const out = [...g, ...busiest].slice(0, limit);
 
     // Rules look at the first markets of each platform, so read books for those.
     const n = Math.min(out.length, this.opts.books ?? DEFAULT_ENRICH);

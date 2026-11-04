@@ -174,7 +174,7 @@ function member(over: Partial<Member> = {}): Member {
 
 test("league members become normal paper rules; retired ones only manage exits", () => {
   const l: LeagueFile = { version: 1, round: 1, members: [member(), member({ id: "lg-x-2", name: "Milo Vance", status: "retired" })], events: [] };
-  const rules = leagueRules(l, LeagueSchema.parse({ families: ["dip_buyer"] }));
+  const rules = leagueRules(l, LeagueSchema.parse({ families: ["dip_buyer"], require_backtest: false }));
   assert.equal(rules.length, 2);
   assert.equal(rules[0].name, "Ava Sterling — The Dip Hunter");
   assert.equal(rules[0].action, "paper");
@@ -182,6 +182,8 @@ test("league members become normal paper rules; retired ones only manage exits",
   assert.equal(rules[1].enabled, false);
   // Switched off in the rules file: nothing new is entered.
   assert.ok(leagueRules(l, LeagueSchema.parse({ enabled: false })).every((r) => !r.enabled));
+  // With the backtest gate (the default), a strategy that was never backtested doesn't trade.
+  assert.ok(leagueRules(l, LeagueSchema.parse({ families: ["dip_buyer"] })).every((r) => !r.enabled));
   assert.equal(memberRule(member()).id, "lg-ava-sterling-1");
 });
 
@@ -192,8 +194,8 @@ test("rookies cycle through families; clones carry the family name and a similar
   for (let i = 0; i < 10; i++) l.members.push(makeRookie(l, cfg, r, new Date("2026-10-01T00:00:00Z")));
   const fams = new Map<string, number>();
   for (const m of l.members) fams.set(m.family, (fams.get(m.family) ?? 0) + 1);
-  assert.deepEqual([...fams.keys()].sort(), ["favorite", "longshot_fade", "momentum"], "dip hunters and scalpers are off by default");
-  assert.deepEqual([...fams.values()].sort(), [3, 3, 4]);
+  assert.deepEqual([...fams.keys()].sort(), ["favorite", "longshot_fade"], "dip hunters, scalpers and trend riders are off by default");
+  assert.deepEqual([...fams.values()].sort(), [5, 5]);
   assert.equal(new Set(l.members.map((m) => m.id)).size, 10);
 
   const parent = l.members[0];
@@ -295,15 +297,22 @@ test("existing strategies get the new floors, and switched-off types stop openin
   old.rule = { ...old.rule, exit: { take_profit_pct: 0.05, stop_loss_pct: 0.1, max_hold_hours: 2 } };
   const scalp = member({ id: "lg-s-2", name: "Zap", family: "scalper" });
   const l: LeagueFile = { version: 1, round: 1, members: [old, scalp], events: [], nameStyle: 2 };
-  upgradeLeague(l, new Map());
+  old.backtest = { all: statsFromTrades([], { bankrollUsd: 1000, minTrades: 5 }), test: statsFromTrades([], { bankrollUsd: 1000, minTrades: 5 }), at: "2026-11-01T00:00:00Z" };
+  upgradeLeague(l, new Map(), new Date("2026-11-04T21:00:00Z"));
   assert.equal(l.members[0].rule.exit?.take_profit_pct, 0.2);
   assert.equal(l.members[0].rule.exit?.max_hold_hours, MIN_HOLD_HOURS);
-  assert.equal(l.ruleStyle, 3);
+  assert.equal(l.ruleStyle, 4);
   assert.equal(l.members[0].rule.entry.max_buy_price, 0.95);
-  assert.ok(!familyAllowed(scalp, undefined) && familyAllowed({ family: "custom" }, undefined));
-  const rules = leagueRules(l, undefined);
+  // Style 4: game winners before the game only; the old backtest no longer counts.
+  assert.equal(l.members[0].rule.filters.pre_game_only, true);
+  assert.deepEqual(l.members[0].rule.filters.market_types, ["game_winner"]);
+  assert.equal(l.members[0].backtest, undefined);
+  assert.equal(l.members[0].rulesSince, "2026-11-04T21:00:00.000Z");
+  assert.ok(!familyAllowed(scalp, undefined) && !familyAllowed(old, undefined) && familyAllowed({ family: "custom" }, undefined));
+  const rules = leagueRules(l, LeagueSchema.parse({ families: ["momentum"], require_backtest: false }));
   assert.equal(rules.find((x) => x.id === "lg-s-2")?.enabled, false, "still listed, so its open trades get their exits");
   assert.equal(rules.find((x) => x.id === old.id)?.enabled, true);
+  assert.equal(leagueRules(l, undefined).find((x) => x.id === old.id)?.enabled, false, "trend riders are off by default");
 });
 
 test("the diagnosis calls out targets that can't beat costs or are smaller than the stop", () => {

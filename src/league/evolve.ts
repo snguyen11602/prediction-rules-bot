@@ -126,7 +126,7 @@ export function makeClone(l: LeagueFile, parent: Contestant, r: () => number, no
     style: FAMILIES[family].style,
     family,
     traits,
-    rule: mutate(parent.rule, parent.traits, traits, r),
+    rule: mutate(parent.rule, parent.traits, traits, r, family),
     generation: (parent.member?.generation ?? 0) + 1,
     parentId: parent.id,
     bornAt: now.toISOString(),
@@ -145,7 +145,7 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
   const l = await loadLeague(leaguePath);
   const houseNameMap = houseNames(file);
   const reserved = new Set(houseNameMap.values());
-  upgradeLeague(l, houseNameMap);
+  upgradeLeague(l, houseNameMap, now);
   const round = l.round + 1;
   const born: Member[] = [];
   const cloned: Member[] = [];
@@ -200,8 +200,13 @@ export async function runRound(o: RoundOptions): Promise<{ league: LeagueFile; s
   }
   const paperTrades = ledger ? tradesByRule(ledger) : new Map();
   const paperOpen = ledger ? openTradesByRule(ledger, now) : new Map();
-  const paperStats = (id: string, bankroll: number) =>
-    statsFromTrades(paperTrades.get(id) ?? [], { bankrollUsd: bankroll, minTrades: cfg.min_trades, openTrades: paperOpen.get(id) });
+  // Only paper trades made under a member's current rules count (older ones were a different strategy).
+  const since = new Map(l.members.map((m) => [m.id, m.rulesSince ?? ""]));
+  const paperStats = (id: string, bankroll: number) => {
+    const from = since.get(id) ?? "";
+    const keep = (t: { enteredAt: string }) => t.enteredAt >= from;
+    return statsFromTrades((paperTrades.get(id) ?? []).filter(keep), { bankrollUsd: bankroll, minTrades: cfg.min_trades, openTrades: (paperOpen.get(id) ?? []).filter(keep) });
+  };
 
   const contestants: Contestant[] = [];
   const add = (c: Omit<Contestant, "score" | "ranked" | "eligible" | "diagnosis">) => {

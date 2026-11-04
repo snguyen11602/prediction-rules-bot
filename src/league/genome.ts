@@ -47,6 +47,24 @@ export function withRewardRisk<T extends Partial<Pick<RuleBody, "exit" | "entry"
   return out;
 }
 
+/**
+ * What the panel review (Nov 4) found, applied to every league strategy:
+ *  - only bet on game winners, before the game starts: that's what the backtest replays, and
+ *    in-play books are thin and jumpy (stops sold winners at fake prices);
+ *  - favorites and long-shot fades hold to the result: stops on them sold 19 of 19 eventual
+ *    winners, and they risked 14–24¢ to make 5–9¢.
+ */
+export function leagueGuards<T extends Partial<Pick<RuleBody, "exit" | "entry" | "filters">>>(b: T, family: FamilyId): T {
+  const out = withRewardRisk(b);
+  if (family === "custom") return out;
+  if (out.filters) out.filters = { ...out.filters, pre_game_only: true, market_types: ["game_winner"] };
+  if (out.exit && (family === "favorite" || family === "longshot_fade")) {
+    const { stop_loss_price: _a, stop_loss_pct: _b, take_profit_price: _c, take_profit_pct: _d, trailing_stop: _e, trailing_activation: _f, ...rest } = out.exit;
+    out.exit = rest;
+  }
+  return out;
+}
+
 const round = (v: number, step: number) => Math.round(v / step) * step;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const between = (r: () => number, lo: number, hi: number, step = 0.01) => round(lo + r() * (hi - lo), step);
@@ -104,7 +122,7 @@ export function rookieRule(family: Exclude<FamilyId, "custom">, t: Traits, r: ()
       body = {
         filters: filtersFor(t, { min_price: lo, max_price: between(r, lo + 0.03, 0.97), min_hours_to_resolve: between(r, 1, 12, 1), max_hours_to_resolve: between(r, 24, 168, 1) }),
         entry: { side: "yes" },
-        exit: { stop_loss_price: between(r, 0.55, 0.8), take_profit_price: between(r, 0.97, 0.995, 0.005) },
+        exit: {}, // hold to the result
       };
       break;
     }
@@ -113,7 +131,7 @@ export function rookieRule(family: Exclude<FamilyId, "custom">, t: Traits, r: ()
       body = {
         filters: filtersFor(t, { min_price: between(r, 0.02, hi - 0.03), max_price: hi, min_hours_to_resolve: between(r, 1, 12, 1), max_hours_to_resolve: between(r, 24, 168, 1) }),
         entry: { side: "no" },
-        exit: { stop_loss_price: between(r, 0.55, 0.8), take_profit_price: between(r, 0.97, 0.995, 0.005) },
+        exit: {}, // hold to the result
       };
       break;
     }
@@ -128,7 +146,7 @@ export function rookieRule(family: Exclude<FamilyId, "custom">, t: Traits, r: ()
       break;
     }
   }
-  return withRewardRisk(toBody({ enabled: true, action: "paper", ...body, risk: riskFor(t), paper }));
+  return leagueGuards(toBody({ enabled: true, action: "paper", ...body, risk: riskFor(t), paper }), family);
 }
 
 /** Validate through the shared schema (fills defaults, rejects nonsense). */
@@ -159,7 +177,7 @@ const KNOBS: Array<{ path: [keyof RuleBody, string]; lo: number; hi: number; ste
  * A clone: same idea, nudged numbers. Creativity sets how far (±5% for a careful parent, up to
  * ±35% for a creative one), work ethic and knowledge come from the child's own (inherited) traits.
  */
-export function mutate(parent: RuleBody, parentTraits: Traits, childTraits: Traits, r: () => number): RuleBody {
+export function mutate(parent: RuleBody, parentTraits: Traits, childTraits: Traits, r: () => number, family: FamilyId = "custom"): RuleBody {
   const sigma = 0.05 + 0.3 * parentTraits.creativity;
   const gauss = () => {
     const u = Math.max(1e-9, r());
@@ -186,12 +204,13 @@ export function mutate(parent: RuleBody, parentTraits: Traits, childTraits: Trai
     exit.trailing_stop = 0.03;
     exit.trailing_activation = 0.02;
   }
-  return withRewardRisk(
+  return leagueGuards(
     toBody({
       ...child,
       filters: { ...(child.filters ?? {}), max_spread: (child.filters?.max_spread as number | undefined) ?? round(0.05 - childTraits.knowledge * 0.035, 0.005) },
       risk: { ...(child.risk ?? {}), ...riskFor(childTraits) },
     }),
+    family,
   );
 }
 
@@ -205,6 +224,8 @@ export function describeRule(b: RuleBody): string[] {
     out.push(`Only markets resolving in ${f.min_hours_to_resolve ?? 0}h–${f.max_hours_to_resolve != null ? `${f.max_hours_to_resolve}h` : "any time"}.`);
   }
   if (f.max_spread != null) out.push(`Skips markets with a bid/ask gap over ${c(f.max_spread)}.`);
+  if (f.market_types?.length === 1 && f.market_types[0] === "game_winner") out.push("Only bets on who wins a game (no spreads, totals or props).");
+  if (f.pre_game_only) out.push("Only bets before the game starts.");
   const e = b.entry;
   if (e.yes_price_move_abs != null) {
     const dir = e.move_direction === "down" ? "drops" : e.move_direction === "up" ? "rises" : "moves";

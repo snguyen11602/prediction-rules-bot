@@ -20,7 +20,7 @@ import {
 } from "../ledger/paper.js";
 import type { EventSink } from "./events.js";
 import { consoleSink } from "./events.js";
-import { evaluateExit } from "./exits.js";
+import { evaluateExit, EXIT_MAX_SPREAD, isLossExit, STOP_CONFIRM_SEC } from "./exits.js";
 import type { PriorPrice } from "./evaluate.js";
 import { buyPrice, canTrade, sellPrice, settlementPrice } from "./pricing.js";
 import { applyOutcome, defaultRiskState, type RiskState } from "./risk.js";
@@ -54,6 +54,8 @@ import {
 import { loadPairsFile, pairsFilePath } from "./arb.js";
 import { copyStatePathFor } from "./copy.js";
 import { settleParlays } from "./parlays.js";
+import { parseUsRace } from "./exact-pairs.js";
+import { kalshiMatchCode } from "../platforms/kalshi.js";
 import { controlsPathFor, isStopped, loadControls } from "./controls.js";
 import { houseNames, leaguePathFor, leagueRules, loadLeague, MEMBER_PREFIX, upgradeLeague } from "../league/league.js";
 import {
@@ -134,9 +136,17 @@ export interface PaperCycleResult {
  * "PSG by 3.5" and "PSG by 4.5" are one game), or another Kalshi market on the same match (a spread,
  * a total and a team total of one game).
  */
-export function sameGame(p: Pick<PaperPosition, "platform" | "marketId">, m: Pick<NormalizedMarket, "platform" | "id" | "eventId">): boolean {
+/** Bid / ask of the side held (NO's bid is 1 − YES ask). */
+function heldQuotes(m: NormalizedMarket, side: "yes" | "no"): { bid?: number; ask?: number } {
+  return side === "yes" ? { bid: m.yesBid, ask: m.yesAsk } : { bid: m.yesAsk != null ? 1 - m.yesAsk : undefined, ask: m.yesBid != null ? 1 - m.yesBid : undefined };
+}
+
+export function sameGame(p: Pick<PaperPosition, "platform" | "marketId" | "eventKey">, m: Pick<NormalizedMarket, "platform" | "id" | "eventId" | "raw">): boolean {
   if (p.platform !== m.platform) return false;
   if (p.marketId === m.id) return true;
+  // Same game or race, another market (Polymarket US: the other team, or the other party's candidate).
+  const ek = eventKeyOf(m);
+  if (ek && p.eventKey === ek) return true;
   if (m.platform !== "kalshi") return false;
   if (m.eventId && p.marketId.startsWith(`${m.eventId}-`)) return true;
   // One match, many market types: KXUCLSPREAD-26NOV03VILPSG-…, KXUCLTOTAL-26NOV03VILPSG-…,
@@ -145,10 +155,26 @@ export function sameGame(p: Pick<PaperPosition, "platform" | "marketId">, m: Pic
   return !!a && a === kalshiMatchCode(m.id);
 }
 
-/** The date + teams part of a Kalshi sports ticker ("26NOV03VILPSG"), or undefined. */
-export function kalshiMatchCode(ticker: string): string | undefined {
-  const code = ticker.split("-")[1];
-  return code && /^\d{2}[A-Z]{3}\d{2}(\d{4})?[A-Z]{4,}$/.test(code) ? code : undefined;
+export { kalshiMatchCode };
+
+const US_GAME_SLUG = /^[a-z]+-([a-z0-9]+-[a-z0-9]+-[a-z0-9]+-\d{4}-\d{2}-\d{2})/;
+
+/**
+ * The game or race a market belongs to: Kalshi's match code (date + teams) or event; on Polymarket
+ * US the game in the slug (moneyline, spread and total share it) or the election race (both
+ * parties' markets share it).
+ */
+export function eventKeyOf(m: Pick<NormalizedMarket, "platform" | "id" | "eventId" | "raw">): string | undefined {
+  if (m.platform === "kalshi") {
+    const code = kalshiMatchCode(m.id);
+    return code ? `kalshi:${code}` : m.eventId ? `kalshi:${m.eventId}` : undefined;
+  }
+  const slug = (m.raw as { slug?: string } | undefined)?.slug;
+  if (!slug) return undefined;
+  const race = parseUsRace(slug);
+  if (race) return `${m.platform}:${race.office}-${race.state}-${race.district ?? ""}-${race.year}`;
+  const g = US_GAME_SLUG.exec(slug);
+  return g ? `${m.platform}:${g[1]}` : undefined;
 }
 
 function money(n: number): string {
@@ -432,9 +458,33 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         const mark = sellPrice(market, pos.side);
         markPosition(pos, mark, now, "open");
         const soldBy = pos.ruleId === COPY_RULE_ID && copyCfg ? leaderSold(copyPoll, pos, copyCfg) : null;
-        const decision =
-          (rule ? evaluateExit(rule.exit, pos, market, mark, now) : null) ??
+        // Stops look at the mid, not a bid that may have vanished for a moment.
+        const held = heldQuotes(market, pos.side);
+        const stopAt = held.bid != null && held.ask != null ? (held.bid + held.ask) / 2 : mark;
+        let decision =
+          (rule ? evaluateExit(rule.exit, pos, market, mark, now, stopAt) : null) ??
           (soldBy ? { reason: "leader_sold" as const, detail: soldBy } : null);
+        if (decision && isLossExit(decision.reason)) {
+          // A loss is only taken on a sane book, and only if it's still there on a second look.
+          const spread = held.bid != null && held.ask != null ? held.ask - held.bid : undefined;
+          const pending = pos.exitPending;
+          if (spread != null && spread > EXIT_MAX_SPREAD + 1e-9) {
+            decision = null;
+            if (pending?.reason !== "wide_book") {
+              pos.exitPending = { reason: "wide_book", since: now.toISOString() };
+              await push({ at: now.toISOString(), type: "info", ruleId: pos.ruleId, message: `${key}: stop hit but the book is ${Math.round(spread * 100)}¢ wide; not selling into it`, market: marketRef(market) });
+            }
+          } else if (!pending || pending.reason !== decision.reason) {
+            pos.exitPending = { reason: decision.reason, since: now.toISOString() };
+            decision = null;
+          } else if (now.getTime() - Date.parse(pending.since) < STOP_CONFIRM_SEC * 1000) {
+            decision = null;
+          } else {
+            decision = { ...decision, detail: `${decision.detail}; still there after ${Math.round((now.getTime() - Date.parse(pending.since)) / 1000)}s` };
+          }
+        } else if (pos.exitPending) {
+          delete pos.exitPending; // the dip came back
+        }
         if (decision) {
           const slippage = rule?.paper.slippage ?? 0;
           const price = sellPrice(market, pos.side, slippage);
@@ -522,6 +572,14 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       if (exitedAt) {
         const hrs = (now.getTime() - new Date(exitedAt).getTime()) / 3600_000;
         if (hrs < rule.risk.reentry_cooldown_hours) return "re-entry cooldown";
+      }
+      // The cooldown covers the whole game: no buying a sibling market right after a stop.
+      const ek = eventKeyOf(market);
+      if (ek && rule.risk.reentry_cooldown_hours > 0) {
+        const recent = ledger.positions.some(
+          (p) => p.ruleId === rule.id && p.status === "closed" && p.exitAt && p.eventKey === ek && (now.getTime() - Date.parse(p.exitAt)) / 3600_000 < rule.risk.reentry_cooldown_hours,
+        );
+        if (recent) return "re-entry cooldown (same game)";
       }
       if (!canTrade(market, side, "buy")) return "no ask";
       const price = buyPrice(market, side, rule.paper.slippage);
@@ -622,6 +680,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
             feeUsd: fee,
             at: now,
           });
+          pos.eventKey = eventKeyOf(market);
           // Mark at the sell side immediately so the spread shows up as unrealized cost.
           markPosition(pos, sellPrice(market, side), now, "open");
           const fillCheck = {

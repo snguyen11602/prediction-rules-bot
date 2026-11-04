@@ -1451,7 +1451,8 @@
     return row;
   }
   function whoCell(p) {
-    const sub = p.house ? `${p.ruleName}` : `${p.style}${p.generation > 1 ? ` · gen ${p.generation}` : ""}${p.parentName ? ` · child of ${p.parentName}` : ""}`;
+    const sub = (p.house ? `${p.ruleName}` : `${p.style}${p.generation > 1 ? ` · gen ${p.generation}` : ""}${p.parentName ? ` · child of ${p.parentName}` : ""}`) +
+      (p.benched ? ` · benched: ${p.benched}` : "");
     return el("td", null, el("div", { class: "who" }, avatar(p), el("div", null, el("div", null, el("span", { class: "nm", text: p.name }), statusTag(p)), el("div", { class: "meta", text: sub }))));
   }
   function rankList(src, sort, withRetired) {
@@ -1553,7 +1554,8 @@
       ? `Your rule "${p.ruleName}"`
       : `${p.style} — ${p.idea}. Generation ${p.generation}${p.bornAt ? ` · joined ${ago(p.bornAt)}` : ""}${p.retiredAt ? ` · retired ${ago(p.retiredAt)}` : ""}`;
     const parent = p.parentId ? el("div", { class: "meta" }, "Cloned from ", el("a", { href: `#/s/${encodeURIComponent(p.parentId)}`, text: p.parentName || p.parentId })) : null;
-    prof.replaceChildren(avatar(p, true), el("div", null, el("h2", null, p.name, statusTag(p)), el("div", { class: "meta", text: life }), parent));
+    const bench = p.benched ? el("div", { class: "meta" }, `Benched (no paper trades) until its backtest passes: ${p.benched}.`) : null;
+    prof.replaceChildren(avatar(p, true), el("div", null, el("h2", null, p.name, statusTag(p)), el("div", { class: "meta", text: life }), parent, bench));
 
     const bt = p.backtest && p.backtest.all, test = p.backtest && p.backtest.test, pa = p.paper;
     $("sKpis").replaceChildren(

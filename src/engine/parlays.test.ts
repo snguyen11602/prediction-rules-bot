@@ -298,3 +298,22 @@ test("parlays in alert mode only suggest, and nothing is written to the ledger",
   assert.ok(r.events.some((e) => e.type === "entry_signal" && /PARLAY IDEA 2-leg/.test(e.message)));
   assert.equal(r.copy?.parlays?.recent[0].result, "alerted");
 });
+
+test("two leader parlays can't ride on the same game (one result would sink both)", async () => {
+  const a = km("KXNCAAFGAME-26NOV03BUFFMOH-MOH", 0.69, 0.7);
+  const b = km("KXNCAAFGAME-26NOV03OHIOAKR-OHIO", 0.81, 0.82);
+  const c = km("KXNCAAMBGAME-26NOV03WOFTENN-TENN", 0.92, 0.93);
+  const combo = (ticker: string, l: NormalizedMarket[]) =>
+    km(ticker, 0, 1, { yesBid: undefined, yesAsk: undefined, yesPrice: 0.6, title: l.map((m) => m.id).join(","), raw: { mve_selected_legs: l.map((m) => ({ market_ticker: m.id, side: "yes" })) } });
+  const pastWin = km("KXMVECROSSCATEGORY-OLD-1", 0, 1, { status: "resolved", resolvedOutcome: "yes", yesBid: undefined, yesAsk: undefined, yesPrice: 1 });
+  const s = await setup("  parlays: { min_leader_parlay_usd: 250, min_leader_parlay_wins: 1, min_leg_price: 0.65 }\n");
+  await s.write([a, b, c, combo("KXMVECROSSCATEGORY-P-1", [a, b]), combo("KXMVECROSSCATEGORY-P-2", [a, c]), pastWin]);
+  s.trades.push(
+    trade("ace", pastWin.id, "yes", 0.4, 100, iso(T0, 3000)),
+    trade("ace", "KXMVECROSSCATEGORY-P-1", "yes", 0.58, 1000, iso(T0, 3)),
+    trade("ace", "KXMVECROSSCATEGORY-P-2", "yes", 0.65, 1000, iso(T0, 2)),
+  );
+  const r = await s.run(T0);
+  assert.equal(r.parlays?.opened, 1, "the second parlay shares Miami (OH) with the first");
+  assert.ok(r.copy?.parlays?.recent.some((d) => d.result === "skipped" && /already in another open parlay/.test(d.reason ?? "")));
+});

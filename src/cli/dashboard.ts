@@ -26,7 +26,7 @@ import { QuoteBook } from "../live-data/quotes.js";
 import { KalshiStream, PolymarketUsStream, type AnyStream } from "../live-data/streams.js";
 import { LiveQuoteAdapter } from "../live-data/live-adapter.js";
 import { loadRulesFile } from "../rules/loader.js";
-import { leagueConfig, leaguePathFor, loadLeague } from "../league/league.js";
+import { LEAGUE_RULE_STYLE, leagueConfig, leaguePathFor, loadLeague } from "../league/league.js";
 
 /**
  * League rounds (backtest + evolution) take a few minutes, so they run in a child process
@@ -43,7 +43,8 @@ function leagueScheduler(args: ReturnType<typeof parseArgs>, ledgerPath: string,
     try {
       if (!leagueConfig(await loadRulesFile(args.rules)).enabled) return;
       const l = await loadLeague(leaguePathFor(ledgerPath));
-      if (l.nextRoundAt && Date.parse(l.nextRoundAt) > Date.now()) return;
+      // New guard rails make old backtests meaningless: re-test right away instead of tomorrow.
+      if (l.nextRoundAt && Date.parse(l.nextRoundAt) > Date.now() && (l.ruleStyle ?? 0) >= LEAGUE_RULE_STYLE) return;
       log(`League round ${l.round + 1} starting in the background (backtest + evolution, a few minutes)…`);
     } catch {
       return;

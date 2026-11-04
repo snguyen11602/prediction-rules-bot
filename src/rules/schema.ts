@@ -27,9 +27,17 @@ export const MarketFiltersSchema = z.object({
    * fail this filter, so paper fills are only taken where quotes are known.
    */
   max_spread: z.number().min(0).max(1).optional(),
-  /** Max hours until market close/resolve. */
+  /** Max hours until the result is expected (the market's real end, not Kalshi's placeholder close). */
   max_hours_to_resolve: z.number().positive().optional(),
   min_hours_to_resolve: z.number().nonnegative().optional(),
+  /**
+   * Only bet before the event starts. In-play prices jump on every goal or basket, books empty out
+   * for seconds at a time, and paper fills there aren't trustworthy. Markets without a known start
+   * time (most non-sports) pass.
+   */
+  pre_game_only: z.boolean().optional(),
+  /** Only these kinds of market (game_winner = a game's moneyline / match winner). */
+  market_types: z.array(z.enum(["game_winner", "other"])).optional(),
 });
 
 export const EntryConditionsSchema = z.object({
@@ -377,6 +385,10 @@ export const CopyTradingSchema = z.object({
       max_chase: z.number().min(0).max(0.5).default(0.03),
       /** Never pay more than this for a copy (a 97¢ bet risks 97¢ to make 3¢). */
       max_buy_price: z.number().min(0.5).max(1).default(0.95),
+      /** Skip when the price already fell this far below the leader's (the bet moved against them). */
+      max_discount: z.number().min(0).max(0.5).default(0.05),
+      /** Only copy bets on games that haven't started (in-play copies chased moves and lost). */
+      pre_game_only: z.boolean().default(true),
       /** The copy's price must be within this of the leader's market, or it's probably not the same bet. */
       max_price_gap: z.number().min(0).max(1).default(0.1),
       /** Title-match score needed when there's no exact game match. */
@@ -416,21 +428,27 @@ export const LeagueSchema = z.object({
   /** Bot-made strategies paper-trading at once. */
   roster_size: z.number().int().min(2).max(50).default(12),
   /**
-   * Kinds of idea in play. dip_buyer and scalper are off by default: in backtests they lost in every
-   * variant (game-market drops are usually real news, and quick flips can't cover fees). League
-   * strategies of a type that's switched off stop opening trades and retire at the next round.
+   * Kinds of idea in play. dip_buyer, scalper and momentum are off by default: they lost in every
+   * backtest variant and live (momentum lost even when held to the result). League strategies of a
+   * type that's switched off stop opening trades and retire at the next round.
    */
   families: z
     .array(z.enum(["dip_buyer", "momentum", "favorite", "longshot_fade", "scalper"]))
     .min(1)
-    .default(["momentum", "favorite", "longshot_fade"]),
+    .default(["favorite", "longshot_fade"]),
   /** Finished trades needed before a strategy is ranked (or cloned, or retired for losing). */
   min_trades: z.number().int().positive().default(5),
+  /**
+   * A league strategy only paper-trades after its latest backtest made money overall and in the
+   * held-out part, over at least `gate_min_trades` trades. Until then it's benched.
+   */
+  require_backtest: z.boolean().default(true),
+  gate_min_trades: z.number().int().min(1).default(10),
   /** Each round: the top `winners` each get `clones_per_winner` clones… */
   winners: z.number().int().min(1).max(10).default(3),
   clones_per_winner: z.number().int().min(0).max(3).default(1),
-  /** …and up to `retire` of the worst are diagnosed and retired. */
-  retire: z.number().int().min(0).max(10).default(3),
+  /** …and up to `retire` of the worst are diagnosed and retired (12 = every ranked loser). */
+  retire: z.number().int().min(0).max(50).default(12),
   /** Your own paper rules can be cloned too (they're never retired). */
   clone_house_rules: z.boolean().default(true),
   /** Backtest window and resolution. */

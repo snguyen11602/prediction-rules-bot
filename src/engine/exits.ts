@@ -28,24 +28,32 @@ export function evaluateExit(
   market: NormalizedMarket,
   markPrice: number,
   now = new Date(),
+  /**
+   * Price the stops compare against (default: markPrice). The paper session passes the mid: a bid
+   * that vanishes for a few seconds in a thin book isn't a real price, and selling there turned
+   * winners into losers.
+   */
+  stopPrice = markPrice,
 ): ExitDecision | null {
   if (!exit) return null;
+  const sret = position.entryPrice > 0 ? stopPrice / position.entryPrice - 1 : 0;
   const ret = position.entryPrice > 0 ? markPrice / position.entryPrice - 1 : 0;
   const pct = `${(ret * 100).toFixed(1)}%`;
+  const what = stopPrice === markPrice ? "mark" : "mid";
 
-  if (exit.stop_loss_price != null && markPrice <= exit.stop_loss_price + EPS) {
-    return { reason: "stop_loss", detail: `mark ${markPrice.toFixed(3)} <= stop ${exit.stop_loss_price}` };
+  if (exit.stop_loss_price != null && stopPrice <= exit.stop_loss_price + EPS) {
+    return { reason: "stop_loss", detail: `${what} ${stopPrice.toFixed(3)} <= stop ${exit.stop_loss_price}` };
   }
-  if (exit.stop_loss_pct != null && ret <= -exit.stop_loss_pct + EPS) {
-    return { reason: "stop_loss", detail: `return ${pct} <= -${(exit.stop_loss_pct * 100).toFixed(1)}%` };
+  if (exit.stop_loss_pct != null && sret <= -exit.stop_loss_pct + EPS) {
+    return { reason: "stop_loss", detail: `return ${(sret * 100).toFixed(1)}% (${what}) <= -${(exit.stop_loss_pct * 100).toFixed(1)}%` };
   }
   if (exit.trailing_stop != null && position.peakMarkPrice != null) {
     const peak = Math.max(position.peakMarkPrice, markPrice);
     const armed = peak - position.entryPrice >= (exit.trailing_activation ?? 0) - EPS;
-    if (armed && markPrice <= peak - exit.trailing_stop + EPS) {
+    if (armed && stopPrice <= peak - exit.trailing_stop + EPS) {
       return {
         reason: "trailing_stop",
-        detail: `mark ${markPrice.toFixed(3)} is ${((peak - markPrice) * 100).toFixed(1)}¢ below the high of ${peak.toFixed(3)}`,
+        detail: `${what} ${stopPrice.toFixed(3)} is ${((peak - stopPrice) * 100).toFixed(1)}¢ below the high of ${peak.toFixed(3)}`,
       };
     }
   }
@@ -69,3 +77,10 @@ export function evaluateExit(
   }
   return null;
 }
+
+/** Loss-taking exits wait for a second look before selling. */
+export const isLossExit = (r: PaperExitReason) => r === "stop_loss" || r === "trailing_stop";
+/** A stop must still hold this long after it first fires (fast mode re-checks every few seconds). */
+export const STOP_CONFIRM_SEC = 20;
+/** Never sell into a book wider than this for the held side: it's an empty book, not a price. */
+export const EXIT_MAX_SPREAD = 0.1;
