@@ -108,9 +108,12 @@ Configured in the `copy_trading:` block of `rules/example.yaml`. Paper by defaul
   moves that had already happened. A copy is also skipped when the price has already fallen 5¢+ below the
   leader's (`max_discount`): the bet has moved against them.
 - **Games only, no long shots.** Only games and matches are copied (`games_only`): the copies that
-  weren't games (15-minute crypto prices, politics, the Fed) all lost in paper and can't be checked for
-  "before the game". A copy that would cost under 30¢ is skipped (`min_buy_price`): on two months of
-  settled Kalshi games, buying sides under 30¢ lost about 18% of the money put in.
+  weren't games (15-minute crypto prices, politics, the Fed) can't be checked for "before the game";
+  in paper they lost $77 over 10 closed trades and 7 more sat open in markets months from settling.
+  A copy that would cost under 30¢ is skipped (`min_buy_price`): on two months of settled Kalshi games
+  (1,749 bets), buying sides under 30¢ lost about 18% of the money put in. The bot's own 10 long-shot
+  copies happened to be up (3 wins), which is too few to outweigh that; set `min_buy_price: 0` to copy
+  them anyway.
 - **Price.** A copy never pays more than 3¢ above the leader's price or more than 95¢ (`max_buy_price`),
   and for global Polymarket bets the two sites must agree on the price within 10¢ (otherwise it's
   probably not the same bet).

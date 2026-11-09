@@ -409,13 +409,16 @@ export const CopyTradingSchema = z.object({
       pre_game_only: z.boolean().default(true),
       /**
        * Don't copy long shots: skip a bet that costs less than this here. On two months of settled
-       * Kalshi games, buying sides under 30¢ lost 12–35% of the money put in (they win a little
-       * less often than the price says, and the spread and fee are a big share of a small price).
+       * Kalshi games (1,749 bets), buying sides under 30¢ lost about 18% of the money put in (they
+       * win a little less often than the price says, and the spread and fee are a big share of a
+       * small price). The bot's own 10 long-shot copies happened to be up; that is 3 wins, too few
+       * to outweigh the study. Set to 0 to copy them anyway.
        */
       min_buy_price: z.number().min(0).max(0.9).default(0.3),
       /**
        * Only copy bets on games and matches. The copied bets that weren't games (15-minute crypto
-       * prices, politics, the Fed) can't be checked for "before the game", and all six lost in paper.
+       * prices, politics, the Fed) can't be checked for "before the game"; in paper they lost $77
+       * over 10 closed trades (4 won, 6 lost) and 7 more sat open in markets months from settling.
        */
       games_only: z.boolean().default(true),
       /** The copy's price must be within this of the leader's market, or it's probably not the same bet. */
