@@ -15,6 +15,8 @@ export interface Tick {
   p: number;
   /** Platform 24h volume at that moment, when known (units vary by platform; only ratios are used). */
   v?: number;
+  /** Quoted bid/ask spread at that moment (platform hourly history only; not saved to disk). */
+  s?: number;
 }
 
 type Packed = [number, number] | [number, number, number];

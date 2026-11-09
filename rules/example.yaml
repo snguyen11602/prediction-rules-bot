@@ -127,6 +127,8 @@ copy_trading:
     max_buy_price: 0.95               # and never more than 95¢
     max_discount: 0.05                # skip if it's already 5¢+ below the leader's price (moved against them)
     pre_game_only: true               # don't copy bets on games already in progress
+    games_only: true                  # only games and matches (no 15-minute crypto, politics, the Fed)
+    min_buy_price: 0.30               # no long shots: sides under 30¢ lose about 18% of the money put in
     max_price_gap: 0.10
     follow_sells: true                # sell when the leader sells
     poll_seconds: 60                  # with paper:fast, checks leaders every minute
@@ -391,6 +393,41 @@ rules:
       fire_after_n_losses: 2
       pause_hours_after_losses: 48
       daily_loss_cap_usd: 75
+      reentry_cooldown_hours: 48
+    paper:
+      slippage: 0.005
+      include_fees: true
+
+  # Late movers: a game whose price rose in the last half day before it starts, bought in the last
+  # 3 hours, held to the result. From the Nov 9 study of 812 settled Kalshi games: the side that
+  # rose 2¢+ won 2.8 points more often than its price said (±1.6) and returned +1.1% after fees
+  # (±3.3). That is ahead but within luck, and several windows were tried to find it, so treat it
+  # as a test, sized small. Re-check on games it has never seen: npm run study -- --since 2026-11-10
+  - id: late-mover-paper
+    name: Late movers (price rose 2¢+ before the game), hold to the result
+    enabled: true
+    action: paper
+    filters:
+      platforms: [kalshi]            # the study and the hourly price history are Kalshi's
+      market_types: [game_winner]
+      min_price: 0.30                # no long shots
+      max_price: 0.95
+      max_spread: 0.05
+      pre_game_only: true
+    entry:
+      side: yes
+      pregame_move:
+        min_move: 0.02               # rose at least 2¢ …
+        lookback_hours: 10           # … over the last 10 hours
+        max_hours_to_start: 3        # only buys in the last 3 hours before the start
+      max_buy_price: 0.95
+    risk:
+      position_size_fraction: 0.025
+      bankroll_usd: 1000
+      max_position_usd: 25
+      max_open_positions: 8
+      fire_after_n_losses: 0         # never pauses: a 57¢ bet loses 4 in a row often, and pausing would spoil the test
+      daily_loss_cap_usd: 100
       reentry_cooldown_hours: 48
     paper:
       slippage: 0.005

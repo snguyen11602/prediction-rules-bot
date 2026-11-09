@@ -4,6 +4,7 @@ import type { CopyTradingConfig } from "../rules/schema.js";
 import type { PolymarketDataClient, TraderTrade } from "../platforms/polymarket-data.js";
 import type { KalshiPeriod, KalshiSocialClient, KalshiSocialTrade } from "../platforms/kalshi-social.js";
 import { hasStarted } from "./evaluate.js";
+import { isGame } from "./games.js";
 import { platformName, type NormalizedMarket, type PlatformId, type SignalSide } from "../types.js";
 import { findMatches } from "./match.js";
 import { buyPrice } from "./pricing.js";
@@ -668,6 +669,18 @@ export function copyChecks(bet: LeaderBet, global: NormalizedMarket | undefined,
           : `${t.side.toUpperCase()} costs ${cents(pay)} here vs the leader's ${cents(bet.price)} (max ${cents(bet.price + cfg.copy.max_chase)})`,
     },
   ];
+  if (cfg.copy.min_buy_price > 0) {
+    checks.push({
+      stage: "signal",
+      name: "Not a long shot",
+      ok: !(pay > 0) || pay >= cfg.copy.min_buy_price - 1e-9,
+      detail: pay >= cfg.copy.min_buy_price - 1e-9 ? `${cents(pay)} is at least ${cents(cfg.copy.min_buy_price)}` : `${cents(pay)} is under ${cents(cfg.copy.min_buy_price)}: long shots lose money on average, so they aren't copied`,
+    });
+  }
+  if (cfg.copy.games_only) {
+    const game = isGame(t.market);
+    checks.push({ stage: "filters", name: "A game", ok: game, detail: game ? "a game or match" : "not a game (crypto, politics, other): only games are copied" });
+  }
   if (cfg.copy.pre_game_only) {
     const started = hasStarted(t.market, now);
     checks.push({

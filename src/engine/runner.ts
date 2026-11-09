@@ -5,7 +5,8 @@ import { DEFAULT_PLATFORMS, type EngineEvent, type NormalizedMarket, type Platfo
 import { dayKeyLA } from "./clock.js";
 import { traceEntry, type PriorPrice } from "./evaluate.js";
 import { stageReached, type Check, type Decision, type FunnelRow, type ScanSample, type ScanTrace } from "./trace.js";
-import { SeriesStore } from "./series.js";
+import { SeriesStore, type Tick } from "./series.js";
+import { loadHourly } from "./pregame.js";
 import { checkEntryRisk, defaultRiskState, type RiskState } from "./risk.js";
 import type { EventSink } from "./events.js";
 import { consoleSink } from "./events.js";
@@ -130,6 +131,8 @@ export interface EvaluateOptions {
   lastMatched?: Set<string>;
   /** Price / volume history (already including this scan's snapshot). */
   series?: SeriesStore;
+  /** Hourly platform prices by market key, for pregame_move rules. */
+  hourly?: Map<string, Tick[]>;
   onSignal?: RunnerOptions["onSignal"];
 }
 
@@ -189,7 +192,7 @@ export async function evaluateRules(
     for (const market of markets) {
       const key = marketKey(market);
       row.scanned += 1;
-      const t = traceEntry(rule, market, priors.get(key), now, { series: opts.series?.get(key) });
+      const t = traceEntry(rule, market, priors.get(key), now, { series: opts.series?.get(key), hourly: opts.hourly?.get(key) });
       const checks = [...t.checks];
       const match = t.match;
       const filtersOk = checks.every((c) => c.stage !== "filters" || c.ok);
@@ -376,6 +379,7 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
   }
 
   opts.series?.record(markets, now);
+  const hourly = await loadHourly(rules, markets, (id) => adapters.find((a) => a.id === id), now);
   const { signals, suppressed } = await evaluateRules({
     rules,
     markets,
@@ -386,6 +390,7 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     riskByRule: opts.riskByRule ?? new Map<string, RiskState>(),
     lastMatched: opts.lastMatched,
     series: opts.series,
+    hourly,
     onSignal: opts.onSignal,
   });
 

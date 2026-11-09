@@ -26,8 +26,9 @@ test("Kalshi timing: the real start and expected result, not the two-days-later 
   assert.deepEqual(kalshiTimes(game), { resolvesAt: "2026-11-08T23:30:00.000Z", startsAt: "2026-11-08T20:30:00.000Z" });
   // Not a sports ticker: no start guessed.
   assert.equal(kalshiTimes({ ticker: "KXHIGHNY-26NOV03-B60", latest_expiration_time: "2026-11-05T00:00:00Z", expected_expiration_time: "2026-11-04T05:00:00Z" }).startsAt, undefined);
-  // A sports ticker whose times don't fit the pattern: no start guessed either.
-  assert.equal(kalshiTimes({ ...game, expected_expiration_time: "2026-11-10T20:00:00Z" }).startsAt, undefined);
+  // Baseball, tennis and some soccer use a different latest expiry: the start is the expected result − 3h.
+  assert.equal(kalshiTimes({ ticker: "KXMLBGAME-26OCT282000MILTB-TB", latest_expiration_time: "2026-11-01T00:00:00Z", expected_expiration_time: "2026-10-29T03:00:00Z" }).startsAt, "2026-10-29T00:00:00.000Z");
+  assert.equal(kalshiTimes({ ticker: "KXATPMATCH-26NOV09BORSAM-SAM", latest_expiration_time: "2026-11-23T18:10:00Z", expected_expiration_time: "2026-11-09T21:10:00Z" }).startsAt, "2026-11-09T18:10:00.000Z");
   const m = normalizeKalshi({ ...game, status: "active", yes_bid_dollars: "0.60", yes_ask_dollars: "0.62" })!;
   assert.equal(m.marketType, "game_winner");
   assert.equal(normalizeKalshi({ ...game, ticker: "KXNBASPREAD-26NOV08PHICHI-PHI5", status: "active", yes_bid_dollars: "0.4", yes_ask_dollars: "0.42" })!.marketType, "other");
@@ -190,7 +191,13 @@ test("copies: only before the game, and not after the price already moved agains
   const leader = { wallet: "0xa", name: "Ace", windowPnlUsd: 1, markets: 100, decided: 50, wins: 30, winRate: 0.6 };
   const bet: LeaderBet = { leader, side: "BUY", title: "Boston", outcome: "Yes", price: 0.9, shares: 1000, usd: 900, at: NOW.getTime() / 1000 - 60 };
   const names = (c: ReturnType<typeof copyChecks>) => Object.fromEntries(c.map((x) => [x.name, x.ok]));
-  assert.deepEqual(names(copyChecks(bet, undefined, { market: km(), side: "yes", how: "x" }, cfg, NOW)), { Leader: true, "Leader's bet": true, "Same market": true, "Price now": true, "Before the game": true });
+  assert.deepEqual(names(copyChecks(bet, undefined, { market: km(), side: "yes", how: "x" }, cfg, NOW)), { Leader: true, "Leader's bet": true, "Same market": true, "Price now": true, "Not a long shot": true, "A game": true, "Before the game": true });
+  // Long shots and things that aren't games (15-minute crypto, politics) aren't copied.
+  const cheap = copyChecks({ ...bet, price: 0.2 }, undefined, { market: km({ yesPrice: 0.2, yesBid: 0.19, yesAsk: 0.21 }), side: "yes", how: "x" }, cfg, NOW);
+  assert.equal(names(cheap)["Not a long shot"], false);
+  const btc = copyChecks(bet, undefined, { market: km({ id: "KXBTC15M-26NOV091430-30", eventId: "KXBTC15M-26NOV091430", marketType: "other", startsAt: undefined }), side: "yes", how: "x" }, cfg, NOW);
+  assert.equal(names(btc)["A game"], false);
+  assert.equal(names(copyChecks(bet, undefined, { market: km({ id: "KXATPMATCH-26NOV04BORSAM-SAM", marketType: "other" }), side: "yes", how: "x" }, cfg, NOW))["A game"], true, "a tennis match is a game");
   assert.equal(names(copyChecks(bet, undefined, { market: km({ startsAt: "2026-11-04T19:00:00Z" }), side: "yes", how: "x" }, cfg, NOW))["Before the game"], false);
   const moved = copyChecks({ ...bet, price: 0.98 }, undefined, { market: km(), side: "yes", how: "x" }, cfg, NOW).find((c) => c.name === "Price now")!;
   assert.equal(moved.ok, false);

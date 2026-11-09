@@ -129,6 +129,7 @@ test("paper copy: copies the leader's game bet onto Polymarket US, and sells whe
     filters: { keywords_any: [zzzz] }
 copy_trading:
   leaders: { min_markets: 50, min_win_rate: 0.6, min_decided: 30, min_profit_usd: 10000 }
+  copy: { min_buy_price: 0 }
 `,
   );
   const fixture = path.join(dir, "m.json");
@@ -157,7 +158,7 @@ copy_trading:
   assert.equal(pos.platform, "polymarket_us");
   assert.equal(pos.side, "no", "the leader bought Pacers = NO on 'Hawks win'");
   assert.equal(pos.copiedFrom?.wallet, w);
-  assert.deepEqual(pos.entryTrace?.map((c) => c.name).slice(0, 6), ["Leader", "Leader's bet", "Same market", "Price now", "Before the game", "Prices agree"]);
+  assert.deepEqual(pos.entryTrace?.map((c) => c.name).slice(0, 7), ["Leader", "Leader's bet", "Same market", "Price now", "A game", "Before the game", "Prices agree"]);
 
   // The leader sells → we sell on the next check.
   trades.push({ ...trades[0], side: "SELL", price: 0.3, timestamp: sec(T0) + 400 });
@@ -180,6 +181,7 @@ async function copySetup(extraRules = "") {
     filters: { keywords_any: [zzzz] }
 copy_trading:
   leaders: { min_markets: 50, min_win_rate: 0.6, min_decided: 30, min_profit_usd: 10000 }
+  copy: { min_buy_price: 0 }
 ${extraRules}`,
   );
   const fixture = path.join(dir, "m.json");

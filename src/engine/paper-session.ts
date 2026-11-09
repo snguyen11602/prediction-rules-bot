@@ -35,6 +35,7 @@ import {
 import { dayKeyLA } from "./clock.js";
 import { cents, type ScanTrace } from "./trace.js";
 import { loadSeries, saveSeries, seriesPathFor } from "./series.js";
+import { loadHourly } from "./pregame.js";
 import { ARB_RULE_ID, ArbitrageSchema, arbitrageAsRule, copyAsRule, COPY_RULE_ID, PARLAY_RULE_ID } from "../rules/schema.js";
 import { checkEntryRisk } from "./risk.js";
 import type { Check } from "./trace.js";
@@ -587,6 +588,9 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       if (rule.entry.max_buy_price != null && price > rule.entry.max_buy_price + 1e-9) {
         return `price ${cents(price)} is above its ${cents(rule.entry.max_buy_price)} limit`;
       }
+      // A pre-game move shows up on every market of a game at once (one team up, the other down):
+      // one bet per game.
+      if (rule.entry.pregame_move && openPositions(ledger).some((p) => p.ruleId === rule.id && sameGame(p, market))) return "already holding this game";
       // No stacking: one league strategy per game. Many league strategies think alike, so
       // several of them on one game is really one big bet.
       if (rule.id.startsWith(MEMBER_PREFIX)) {
@@ -603,6 +607,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     // Quick checks only enter on markets with a live streamed quote.
     const entryMarkets = opts.fastTick ? markets.filter((m) => m.quotedAt) : markets;
     if (entryMarkets.length > 0 && entryRules.length > 0) {
+      const hourly = await loadHourly(entryRules.filter((r) => !stopped(r.id)), entryMarkets, adapterFor, now);
       const res = await evaluateRules({
         rules: entryRules,
         markets: entryMarkets,
@@ -613,6 +618,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         riskByRule,
         paperAll: opts.paperAll,
         series,
+        hourly,
         skipMarket,
         onSignal: async ({ rule, market, side, sizeUsd, checks }) => {
           if (!papersRule(rule, opts.paperAll)) return false;

@@ -85,6 +85,24 @@ export const EntryConditionsSchema = z.object({
     })
     .optional(),
   /**
+   * Pre-game move: the price moved at least `min_move` over the last `lookback_hours`, and the game
+   * starts within `max_hours_to_start`. With side: yes it must have risen, side: no fallen;
+   * with_move buys whichever side rose. Needs hourly price history (Kalshi publishes it; elsewhere
+   * the bot's own snapshots are used when they go back far enough). On 812 settled Kalshi games
+   * (Sept–Nov 2026) the side that rose 2¢+ in the last half day won 2.8 points more often than its
+   * price said (±1.6) and returned +1.1% after fees (±3.3): ahead, but within luck. A lead being
+   * paper-tested, not a proven edge (`npm run study` re-checks it on new games).
+   */
+  pregame_move: z
+    .object({
+      min_move: z.number().min(0.005).max(0.5).default(0.02),
+      lookback_hours: z.number().min(2).max(30).default(10),
+      max_hours_to_start: z.number().positive().max(24).default(3),
+      /** Ignore the earlier price if the book was wider than this then (the mid isn't a real price). */
+      max_spread_then: z.number().positive().max(1).default(0.05),
+    })
+    .optional(),
+  /**
    * Side when entering. yes / no, or relative to the price move:
    * with_move = buy YES after a rise, NO after a drop; against_move = the opposite (buy the dip).
    */
@@ -389,6 +407,20 @@ export const CopyTradingSchema = z.object({
       max_discount: z.number().min(0).max(0.5).default(0.05),
       /** Only copy bets on games that haven't started (in-play copies chased moves and lost). */
       pre_game_only: z.boolean().default(true),
+      /**
+       * Don't copy long shots: skip a bet that costs less than this here. On two months of settled
+       * Kalshi games (1,749 bets), buying sides under 30¢ lost about 18% of the money put in (they
+       * win a little less often than the price says, and the spread and fee are a big share of a
+       * small price). The bot's own 10 long-shot copies happened to be up; that is 3 wins, too few
+       * to outweigh the study. Set to 0 to copy them anyway.
+       */
+      min_buy_price: z.number().min(0).max(0.9).default(0.3),
+      /**
+       * Only copy bets on games and matches. The copied bets that weren't games (15-minute crypto
+       * prices, politics, the Fed) can't be checked for "before the game"; in paper they lost $77
+       * over 10 closed trades (4 won, 6 lost) and 7 more sat open in markets months from settling.
+       */
+      games_only: z.boolean().default(true),
       /** The copy's price must be within this of the leader's market, or it's probably not the same bet. */
       max_price_gap: z.number().min(0).max(1).default(0.1),
       /** Title-match score needed when there's no exact game match. */
@@ -487,12 +519,12 @@ export const RulesFileSchema = z.object({
   file.rules.forEach((r, i) => {
     const relative = r.entry.side === "with_move" || r.entry.side === "against_move";
     const hasMove =
-      r.entry.unusual_move?.mode === "require" || r.entry.yes_price_move_abs != null || r.entry.yes_price_move_pct != null;
+      r.entry.unusual_move?.mode === "require" || r.entry.yes_price_move_abs != null || r.entry.yes_price_move_pct != null || r.entry.pregame_move != null;
     if (relative && !hasMove) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["rules", i, "entry", "side"],
-        message: `side: ${r.entry.side} needs a move to follow — add unusual_move (mode: require) or yes_price_move_abs / _pct`,
+        message: `side: ${r.entry.side} needs a move to follow — add unusual_move (mode: require), pregame_move or yes_price_move_abs / _pct`,
       });
     }
   });

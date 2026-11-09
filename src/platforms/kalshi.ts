@@ -1,6 +1,7 @@
 import type { NormalizedMarket } from "../types.js";
 import type { EventGroup, ListMarketsOptions, PlatformAdapter } from "./types.js";
 import { getJson } from "./http.js";
+import type { Tick } from "../engine/series.js";
 
 /**
  * Kalshi public market data (no API key).
@@ -180,19 +181,23 @@ export function kalshiMatchCode(ticker: string): string | undefined {
 
 /**
  * Real timing for a Kalshi market. `close_time` is the latest possible expiry (for a game, two days
- * after it starts), so it can't tell a game in progress from one two days away. Kalshi's sports
- * markets follow a fixed pattern: latest expiry = start + 48h, expected expiration = start + a few
- * hours. The start is only inferred when both agree with that pattern.
+ * after it starts), so it can't tell a game in progress from one two days away. Most sports markets
+ * follow a fixed pattern: latest expiry = start + 48h, expected expiration = start + 3h. Baseball,
+ * tennis and part of soccer use a different latest expiry; there the start is taken as expected
+ * expiration − 3h (checked against two months of settled games: exact for baseball and soccer, a
+ * close estimate for tennis).
  */
+export const KALSHI_GAME_HOURS = 3;
 export function kalshiTimes(m: Pick<KalshiMarket, "ticker" | "close_time" | "expected_expiration_time" | "latest_expiration_time">): Pick<NormalizedMarket, "resolvesAt" | "startsAt"> {
   const out: Pick<NormalizedMarket, "resolvesAt" | "startsAt"> = {};
   const expected = m.expected_expiration_time ? Date.parse(m.expected_expiration_time) : NaN;
   if (Number.isFinite(expected)) out.resolvesAt = new Date(expected).toISOString();
   const latest = m.latest_expiration_time ? Date.parse(m.latest_expiration_time) : NaN;
-  if (kalshiMatchCode(m.ticker) && Number.isFinite(latest) && Number.isFinite(expected)) {
+  if (kalshiMatchCode(m.ticker) && Number.isFinite(expected)) {
     const start = latest - 48 * 3600_000;
     const gapH = (expected - start) / 3600_000;
-    if (gapH >= 1 && gapH <= 8) out.startsAt = new Date(start).toISOString();
+    const fits = Number.isFinite(latest) && gapH >= 1 && gapH <= 8;
+    out.startsAt = new Date(fits ? start : expected - KALSHI_GAME_HOURS * 3600_000).toISOString();
   }
   return out;
 }
@@ -206,6 +211,30 @@ export function kalshiTakerFeeUsd(contracts: number, price: number): number {
   if (contracts <= 0 || price <= 0 || price >= 1) return 0;
   const raw = 0.07 * contracts * price * (1 - price);
   return Math.ceil(raw * 100 - 1e-9) / 100;
+}
+
+export interface KalshiCandle {
+  end_period_ts?: number;
+  yes_bid?: { close_dollars?: string | number };
+  yes_ask?: { close_dollars?: string | number };
+  volume_fp?: string | number;
+}
+interface KalshiCandleSet {
+  market_ticker?: string;
+  ticker?: string;
+  candlesticks?: KalshiCandle[];
+}
+
+/** Hourly candles → ticks (YES mid at each hour's close). Hours without a real two-sided quote are dropped. */
+export function candlesToTicks(candles: KalshiCandle[]): Tick[] {
+  const out: Tick[] = [];
+  for (const c of candles) {
+    const bid = Number(c.yes_bid?.close_dollars);
+    const ask = Number(c.yes_ask?.close_dollars);
+    if (!c.end_period_ts || !(bid > 0) || !(ask < 1) || !(ask >= bid)) continue;
+    out.push({ t: c.end_period_ts * 1000, p: (bid + ask) / 2, s: ask - bid });
+  }
+  return out.sort((a, b) => a.t - b.t);
 }
 
 export class KalshiAdapter implements PlatformAdapter {
@@ -355,6 +384,29 @@ export class KalshiAdapter implements PlatformAdapter {
 
   async listEventGroups(opts: { limit?: number } = {}): Promise<EventGroup[]> {
     return (await this.listEventGroupsPage({ limit: opts.limit })).groups;
+  }
+
+  /**
+   * Hourly YES mid prices for several markets (public candlesticks, one request per 40 markets).
+   * Read-only; used by the pre-game move signal. Markets with no two-sided quote in an hour are
+   * skipped for that hour.
+   */
+  async priceHistory(ids: string[], sinceMs: number, untilMs: number): Promise<Map<string, Tick[]>> {
+    const out = new Map<string, Tick[]>();
+    for (let i = 0; i < ids.length; i += 40) {
+      const chunk = ids.slice(i, i + 40);
+      const url = new URL(`${this.baseUrl}/markets/candlesticks`);
+      url.searchParams.set("market_tickers", chunk.join(","));
+      url.searchParams.set("start_ts", String(Math.floor(sinceMs / 1000)));
+      url.searchParams.set("end_ts", String(Math.ceil(untilMs / 1000)));
+      url.searchParams.set("period_interval", "60");
+      const data = (await getJson<{ markets?: KalshiCandleSet[] }>(url, "Kalshi")).data ?? {};
+      for (const set of data.markets ?? []) {
+        const id = set.market_ticker ?? set.ticker;
+        if (id) out.set(id, candlesToTicks(set.candlesticks ?? []));
+      }
+    }
+    return out;
   }
 
   /** Kalshi trades whole contracts. */

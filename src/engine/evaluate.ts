@@ -20,6 +20,19 @@ export interface EvalMatch {
 export interface EvalContext {
   /** This market's recent price / volume snapshots (for unusual_move). */
   series?: Tick[];
+  /** Hourly prices from the platform (for pregame_move); the snapshots above are used when absent. */
+  hourly?: Tick[];
+}
+
+/** The latest price at or before `atMs`, if one exists within `toleranceMs` before it. */
+export function priceAt(ticks: Tick[], atMs: number, toleranceMs: number, maxSpread?: number): Tick | undefined {
+  let best: Tick | undefined;
+  for (const t of ticks) {
+    if (t.t > atMs || t.t < atMs - toleranceMs) continue;
+    if (maxSpread != null && t.s != null && t.s > maxSpread + 1e-9) continue;
+    if (!best || t.t > best.t) best = t;
+  }
+  return best;
 }
 
 /** Hours until the result is expected (`resolvesAt`, else the platform's close time). */
@@ -160,6 +173,26 @@ export function traceEntry(
     } else {
       sig("Not an informed move", true, res.insufficient ? `not enough data (${res.reason}); allowed by on_missing_data` : `nothing unusual (${res.reason})`);
     }
+  }
+
+  if (e.pregame_move) {
+    const cfg = e.pregame_move;
+    const startMs = market.startsAt ? Date.parse(market.startsAt) : NaN;
+    if (!Number.isFinite(startMs)) return fail("Pre-game move", "no start time (not a game)");
+    const toStart = (startMs - now.getTime()) / 3600_000;
+    if (toStart <= 0) return fail("Pre-game move", "the game has started");
+    if (toStart > cfg.max_hours_to_start) return fail("Pre-game move", `starts in ${hours(toStart)} (only buys in the last ${hours(cfg.max_hours_to_start)})`);
+    const ticks = ctx.hourly?.length ? ctx.hourly : ctx.series ?? [];
+    const then = priceAt(ticks, now.getTime() - cfg.lookback_hours * 3600_000, 2 * 3600_000, cfg.max_spread_then);
+    if (!then) return fail("Pre-game move", `no trustworthy price from ${hours(cfg.lookback_hours)} ago`);
+    const delta = market.yesPrice - then.p;
+    const moved = `${delta >= 0 ? "+" : "−"}${cents(Math.abs(delta))} in ${hours((now.getTime() - then.t) / 3600_000)} (${cents(then.p)} → ${cents(market.yesPrice)})`;
+    if (Math.abs(delta) < cfg.min_move - 1e-9) return fail("Pre-game move", `${moved}, needs ≥ ${cents(cfg.min_move)}`);
+    if (e.side === "yes" && delta < 0) return fail("Pre-game move", `${moved}, needs a rise`);
+    if (e.side === "no" && delta > 0) return fail("Pre-game move", `${moved}, needs a drop`);
+    moveDir ??= delta > 0 ? "up" : "down";
+    reasons.push(`pregame_move=${delta >= 0 ? "+" : "-"}${Math.abs(delta).toFixed(3)}`);
+    sig("Pre-game move", true, `${moved}, starts in ${hours(toStart)}`);
   }
 
   if (e.yes_price_above != null) {
