@@ -35,12 +35,14 @@ export class LiveQuoteAdapter implements PlatformAdapter {
     this.id = inner.id;
     if (inner.listEventGroups) this.listEventGroups = (o) => inner.listEventGroups!(o);
     if (inner.listEventGroupsPage) this.listEventGroupsPage = (o) => inner.listEventGroupsPage!(o);
+    if (inner.priceHistory) this.priceHistory = (ids, since, until) => inner.priceHistory!(ids, since, until);
     if (inner.estimateTakerFeeUsd) this.estimateTakerFeeUsd = (c, p, m) => inner.estimateTakerFeeUsd!(c, p, m);
     if (inner.roundContracts) this.roundContracts = (c, m) => inner.roundContracts!(c, m);
   }
 
   listEventGroups?: (opts?: { limit?: number }) => Promise<EventGroup[]>;
   listEventGroupsPage?: (opts: { limit?: number; cursor?: string }) => Promise<{ groups: EventGroup[]; cursor?: string }>;
+  priceHistory?: PlatformAdapter["priceHistory"];
   estimateTakerFeeUsd?: (contracts: number, price: number, market?: NormalizedMarket) => number;
   roundContracts?: (contracts: number, market?: NormalizedMarket) => number;
 

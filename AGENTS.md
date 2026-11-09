@@ -115,7 +115,16 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 
 - `NormalizedMarket.resolvesAt` (expected result) and `startsAt` (event start) are what timing filters use;
   `closesAt` is the platform's placeholder (Kalshi: latest expiry ≈ start + 48h; Polymarket US games:
-  ~14 days after the start). Kalshi's start is inferred only from that fixed pattern (`kalshiTimes`).
+  ~14 days after the start). Kalshi's start (`kalshiTimes`) is latest expiry − 48h when that fits the
+  pattern, else expected expiration − 3h (baseball, tennis, part of soccer), for match tickers only.
+- `isGame()` (`src/engine/games.ts`) is the one definition of "a game or match" (Kalshi match ticker,
+  Polymarket US game slug). Copy trading's `games_only` uses it.
+- `entry.pregame_move` reads hourly platform prices through the optional read-only adapter method
+  `priceHistory()` (Kalshi candlesticks), loaded by `src/engine/pregame.ts` only for games inside a
+  rule's window and cached 15 minutes; without it the signal falls back to our own snapshots.
+- `npm run study` (`src/cli/study.ts`, pure maths in `src/study/study.ts`) is how a strategy idea gets
+  checked against settled games. Don't describe a rule as profitable in docs or UI unless the study
+  says so (two standard errors, 100+ bets); say "within luck" otherwise.
 - Kalshi's API lists the newest markets first (thousands of in-play props a day) and can't sort by volume,
   so `KalshiAdapter.listMarkets` takes upcoming games from the game-winner series first, then the busiest
   markets at least 2h old. Polymarket US game moneylines sit far down its volume order, so its listing

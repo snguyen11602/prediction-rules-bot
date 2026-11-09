@@ -1,4 +1,5 @@
 import type { NormalizedMarket, PlatformId } from "../types.js";
+import type { Tick } from "../engine/series.js";
 
 export interface ListMarketsOptions {
   /** Soft cap on markets to return after normalization. */
@@ -55,4 +56,9 @@ export interface PlatformAdapter {
   listEventGroupsPage?(opts: { limit?: number; cursor?: string }): Promise<{ groups: EventGroup[]; cursor?: string }>;
   /** Current data for several markets in one request. */
   getMarkets?(ids: string[]): Promise<NormalizedMarket[]>;
+  /**
+   * Hourly YES mid prices between two times for several markets, oldest first (public read).
+   * Used by the pre-game move signal; adapters without price history omit it.
+   */
+  priceHistory?(ids: string[], sinceMs: number, untilMs: number): Promise<Map<string, Tick[]>>;
 }

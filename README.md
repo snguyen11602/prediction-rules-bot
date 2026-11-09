@@ -107,6 +107,10 @@ Configured in the `copy_trading:` block of `rules/example.yaml`. Paper by defaul
 - **Timing.** Only bets on games that haven't started are copied (`pre_game_only`): in-play copies chased
   moves that had already happened. A copy is also skipped when the price has already fallen 5¢+ below the
   leader's (`max_discount`): the bet has moved against them.
+- **Games only, no long shots.** Only games and matches are copied (`games_only`): the copies that
+  weren't games (15-minute crypto prices, politics, the Fed) all lost in paper and can't be checked for
+  "before the game". A copy that would cost under 30¢ is skipped (`min_buy_price`): on two months of
+  settled Kalshi games, buying sides under 30¢ lost about 18% of the money put in.
 - **Price.** A copy never pays more than 3¢ above the leader's price or more than 95¢ (`max_buy_price`),
   and for global Polymarket bets the two sites must agree on the price within 10¢ (otherwise it's
   probably not the same bet).
@@ -170,6 +174,39 @@ checks the leaders every minute. Still paper only.
 - `quick-flip-paper` in the example rules is made for this mode, but it's **off** by default: fees plus the
   bid/ask gap (~5% a round trip) were bigger than the bounces it caught in backtests. Set `enabled: true`
   to try it again.
+
+## Does it actually pay? (`npm run study`)
+
+```bash
+npm run study                         # the last 60 days of settled Kalshi games
+npm run study -- --since 2026-11-10   # only games since a date (ones a rule has never seen)
+```
+
+Public data, read-only, no keys, a few minutes. For every settled game-winner market it takes the
+hourly prices before the start and answers three questions, after the taker fee, buying at the ask:
+buy the favorite and hold; buy the long shot; buy the side whose price rose before the game. Each
+line ends with a plain verdict, and a result is only called real when it is at least two standard
+errors from zero with 100+ bets. On Sept 2 – Nov 9, 2026 (3,054 games):
+
+| Idea | Bets | Return per $1 | Verdict |
+|---|---|---|---|
+| Favorites 50–95¢ | 2,510 | −1.8% ±1.5 | behind, within luck |
+| Favorites 85–95¢ | 302 | +0.9% ±1.7 | ahead, within luck |
+| Long shots under 30¢ | 1,749 | −18.3% ±5.4 | lost money, not luck |
+| Side that rose 2¢+ in the last half day | 812 | +1.1% ±3.3 | ahead, within luck |
+
+So: prices on Kalshi's game winners are close to fair, the fee is most of what a taker loses, long
+shots are the one clearly bad bet, and nothing tested is a proven edge. Resting limit orders ("maker")
+looked about 2 points better only if every order fills; counting only orders the price actually traded
+through, they did no better than taking.
+
+### Late movers (`late-mover-paper`)
+
+The one lead from the study, being tested in paper at $25 a bet: on Kalshi game winners priced 30–95¢,
+buy the side whose price rose 2¢+ over the last 10 hours, in the last 3 hours before the start, and
+hold to the result (`entry.pregame_move`). The earlier price comes from Kalshi's public hourly history
+(one request per 40 markets, at most every 15 minutes), so it works even if the laptop was asleep. One
+bet per game. It is a test, not a proven edge: re-run the study on new games before trusting it.
 
 ## Unusual moves (possible informed trading)
 
@@ -368,6 +405,11 @@ three paper strategies to evaluate (YES favorites and NO-on-longshots held to re
 reversion in liquid markets). The paper strategies are hypotheses, not proven edges.
 
 ### Rule fields added in this version (all optional)
+
+- `entry.pregame_move: { min_move, lookback_hours, max_hours_to_start }` — the price moved at least
+  `min_move` over the last `lookback_hours` and the game starts within `max_hours_to_start`
+  (`side: yes` needs a rise, `no` a drop, `with_move` buys whichever side rose).
+- `copy_trading.copy.min_buy_price` (default 0.30) and `games_only` (default true).
 
 | Section | Field | Meaning |
 |---------|-------|---------|
