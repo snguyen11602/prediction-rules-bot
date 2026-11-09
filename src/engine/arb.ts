@@ -273,7 +273,8 @@ export async function discoverBaskets(input: DiscoverInput): Promise<Discovery> 
       if (blocked.has(key) || claimed.has(`kalshi:${e.kalshi.id}`) || claimed.has(`${venue}:${e.us.id}`)) continue;
       claimed.add(`kalshi:${e.kalshi.id}`);
       claimed.add(`${venue}:${e.us.id}`);
-      baskets.push(...crossBaskets(e.kalshi, e.us, false, e.kind === "game" ? "exact" : "election", undefined, e.how));
+      // Games and their spread / total lines trade like confirmed pairs; election races only alert.
+      baskets.push(...crossBaskets(e.kalshi, e.us, e.invert ?? false, e.kind === "election" ? "election" : "exact", undefined, e.how));
     }
 
     if (cfg.cross_platform.auto_match) {

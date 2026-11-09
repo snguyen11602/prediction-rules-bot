@@ -76,6 +76,15 @@ export interface PaperPosition {
     price: number;
     at: string;
   };
+  /** When the game starts, for bets placed before it (closing-price tracking). */
+  startsAt?: string;
+  /**
+   * The held side's mid price just before the game started (`final` once it has). Compared with
+   * `entryPrice`: paying less than the close is the early sign of a real edge.
+   */
+  closing?: { price: number; at: string; source: "check" | "hourly"; final?: boolean };
+  /** No closing price could be found (in-play bet, or no price near the start). */
+  closingMissed?: boolean;
   hypothetical: true;
 }
 
@@ -548,6 +557,8 @@ export interface RuleSummary {
   feesUsd: number;
   consecutiveLosses: number;
   pausedUntil?: string;
+  /** Closing-price record: bets with a known close, average close − price paid, how many beat it. */
+  clv?: { n: number; avg: number; beat: number };
 }
 
 export function summarizeLedger(ledger: PaperLedger): { rules: RuleSummary[]; total: RuleSummary } {
@@ -619,6 +630,11 @@ export function summarizeLedger(ledger: PaperLedger): { rules: RuleSummary[]; to
     if ((g.realizedPnlUsd ?? 0) > 0) s.wins += 1;
     else if ((g.realizedPnlUsd ?? 0) < 0) s.losses += 1;
   }
+  const clvOf = (ps: PaperPosition[]) => {
+    const xs = ps.filter((p) => p.closing?.final && !p.groupId).map((p) => p.closing!.price - p.entryPrice);
+    return xs.length ? { n: xs.length, avg: Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 1e4) / 1e4, beat: xs.filter((x) => x > 1e-9).length } : undefined;
+  };
+  for (const s of by.values()) s.clv = clvOf(ledger.positions.filter((p) => p.ruleId === s.ruleId));
   const rules = [...by.values()].map(roundSummary).sort((a, b) => a.ruleId.localeCompare(b.ruleId));
   const total = rules.reduce<RuleSummary>(
     (t, s) => ({
@@ -634,6 +650,7 @@ export function summarizeLedger(ledger: PaperLedger): { rules: RuleSummary[]; to
     }),
     { ...blank("TOTAL"), consecutiveLosses: 0, pausedUntil: undefined },
   );
+  total.clv = clvOf(ledger.positions);
   return { rules, total: roundSummary(total) };
 }
 

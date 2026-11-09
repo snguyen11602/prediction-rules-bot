@@ -2,6 +2,7 @@
 /** Offline paper ledger report — no network, no writes. Marks are as of the last paper run. */
 import { parseArgs } from "./args.js";
 import { defaultLedgerPath, loadLedger, summarizeLedger } from "../ledger/paper.js";
+import { closingLine } from "../engine/closing.js";
 
 function money(n: number): string {
   return `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
@@ -61,6 +62,11 @@ async function main() {
         `${s.wins}W/${s.losses}L (${winRate}) rPnL ${money(s.realizedPnlUsd).padStart(9)} fees ${money(s.feesUsd)}` +
         (s.ruleId !== "TOTAL" ? ` streak ${s.consecutiveLosses}${paused}` : ""),
     );
+  }
+
+  console.log("\nVS THE CLOSING PRICE (bets placed before a game; + means bought cheaper than the price at the start)");
+  for (const s of [...summary.rules, summary.total]) {
+    if (s.clv?.n) console.log(`  ${pad(s.ruleId, 26)} ${closingLine(s.clv)}${s.clv.n < 30 ? "  (too few to judge)" : ""}`);
   }
 }
 

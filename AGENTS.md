@@ -132,6 +132,25 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 - Stops: `evaluateExit(…, stopPrice)` compares the mid; the paper session confirms a loss exit on a second
   check ≥ 20s later (`exitPending` on the position) and never sells into a book wider than 10¢.
 
+## Sharp lines, closing prices, alerts
+
+- `src/sharp/`: `sharp.ts` (pure: margin removal, team-name matching, `fairFor`), `odds-api.ts` (the
+  one outside odds source, read-only), `runtime.ts` (request budget + cache next to the ledger). The
+  key (`ODDS_API_KEY`) travels in the request URL, so never log a URL or pass a fetch error's message
+  on: `fetchOdds` throws its own `OddsApiError` text. Matching must stay strict (league, start time,
+  both teams, exactly one game); a wrong match looks like a huge edge.
+- A stale line also looks like an edge. Keep `max_line_age_minutes` and `max_edge` enforced, and keep
+  the docs calling this a paper test until closing-price results say otherwise.
+- `src/engine/closing.ts`: closing-price tracking on `PaperPosition` (`startsAt`, `closing`,
+  `closingMissed`). In-play prices must never overwrite a closing price.
+- `src/engine/notify.ts`: phone alerts. The webhook URL is a secret (from `.env` only, never logged,
+  errors never include it), alerts are off in demo, and only the alert text is sent.
+- Spread / total arbitrage pairs (`gameTwins`, `matchLines` in `exact-pairs.ts`) must match the game,
+  the kind of line, the number and the team exactly, full-game only. Polymarket US lists halves,
+  quarters and team totals under the same market types: the slug must have nothing between the date
+  and the line. Add a test to `line-pairs.test.ts` for any new league or line type.
+- `risk.max_loss_per_trade_usd` sizes on the worst case (`worstLossFraction`), not the planned stop.
+
 ## Strategy league and backtests
 
 - `src/league/`: `personas.ts` (names + traits, seeded), `genome.ts` (rookie rules per family, `mutate`,

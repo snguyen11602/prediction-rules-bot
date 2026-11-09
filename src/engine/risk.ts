@@ -33,6 +33,30 @@ export function positionSizeUsd(risk: RiskConfig): number {
   return frac;
 }
 
+/** Stops fill worse than their trigger: the planned loss is scaled by this for sizing. */
+export const STOP_GAP_FACTOR = 1.5;
+
+/** Worst-case loss as a share of the stake, from the rule's stop (if any) and the price paid. */
+export function worstLossFraction(exit: Rule["exit"], entryPrice?: number): { fraction: number; why: string } {
+  const planned: number[] = [];
+  if (exit?.stop_loss_pct != null) planned.push(exit.stop_loss_pct);
+  if (exit?.stop_loss_price != null && entryPrice != null && entryPrice > 0) planned.push(Math.max(0, (entryPrice - exit.stop_loss_price) / entryPrice));
+  if (!planned.length) return { fraction: 1, why: "no stop loss: the whole stake is at risk" };
+  const p = Math.min(...planned);
+  const fraction = Math.min(1, p * STOP_GAP_FACTOR);
+  return { fraction, why: `stop at −${(p * 100).toFixed(0)}%, sized for −${(fraction * 100).toFixed(0)}% (stops often fill worse)` };
+}
+
+/** Possible gain ÷ possible loss per contract, for a buy at `entryPrice`. */
+export function rewardRisk(exit: Rule["exit"], entryPrice: number): number {
+  const targets = [1];
+  if (exit?.take_profit_price != null) targets.push(exit.take_profit_price);
+  if (exit?.take_profit_pct != null) targets.push(entryPrice * (1 + exit.take_profit_pct));
+  const gain = Math.max(0, Math.min(...targets) - entryPrice);
+  const loss = entryPrice * worstLossFraction(exit, entryPrice).fraction;
+  return loss > 0 ? gain / loss : Infinity;
+}
+
 export interface RiskCheckResult {
   ok: boolean;
   reason?: string;
@@ -49,6 +73,8 @@ export function checkEntryRisk(
   rule: Rule,
   state: RiskState,
   now = new Date(),
+  /** Price that would be paid for the held side (0–1), when known: used by the per-trade loss cap. */
+  entryPrice?: number,
 ): RiskCheckResult {
   const risk = rule.risk;
   const checks: Check[] = [];
@@ -79,7 +105,22 @@ export function checkEntryRisk(
     if (hit) return block(`daily loss cap $${risk.daily_loss_cap_usd} hit (pnl=${state.dayPnlUsd.toFixed(2)})`);
   }
 
-  const sizeUsd = positionSizeUsd(risk);
+  if (risk.min_reward_risk != null && entryPrice != null) {
+    const rr = rewardRisk(rule.exit, entryPrice);
+    const ok = rr + 1e-9 >= risk.min_reward_risk;
+    add("Reward vs risk", ok, `could gain ${rr.toFixed(2)}× what it could lose ${ok ? "≥" : "<"} ${risk.min_reward_risk}×`);
+    if (!ok) return block(`reward:risk ${rr.toFixed(2)} is below ${risk.min_reward_risk}`);
+  }
+
+  let sizeUsd = positionSizeUsd(risk);
+  let lossNote = "";
+  if (risk.max_loss_per_trade_usd != null) {
+    const { fraction, why } = worstLossFraction(rule.exit, entryPrice);
+    const most = risk.max_loss_per_trade_usd / fraction;
+    const cut = most < sizeUsd - 1e-9;
+    if (cut) sizeUsd = most;
+    lossNote = `; ${cut ? `cut to ${usd(sizeUsd)} so` : "already within"} the most it can lose is ${usd(sizeUsd * fraction)} ≤ ${usd(risk.max_loss_per_trade_usd)} (${why})`;
+  }
   if (state.openExposureUsd != null) {
     const equity = risk.bankroll_usd + (state.realizedPnlUsd ?? 0);
     const over = state.openExposureUsd + sizeUsd > equity + 1e-9;
@@ -88,7 +129,7 @@ export function checkEntryRisk(
       return block(`insufficient bankroll: $${state.openExposureUsd.toFixed(2)} open + $${sizeUsd.toFixed(2)} new > $${equity.toFixed(2)} equity`);
     }
   }
-  add("Position size", true, `${(risk.position_size_fraction * 100).toFixed(0)}% of ${usd(risk.bankroll_usd)}${risk.max_position_usd != null ? `, capped at ${usd(risk.max_position_usd)}` : ""} = ${usd(sizeUsd)}`);
+  add("Position size", true, `${(risk.position_size_fraction * 100).toFixed(0)}% of ${usd(risk.bankroll_usd)}${risk.max_position_usd != null ? `, capped at ${usd(risk.max_position_usd)}` : ""} = ${usd(positionSizeUsd(risk))}${lossNote}`);
   return { ok: true, sizeUsd, checks };
 }
 

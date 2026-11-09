@@ -103,6 +103,20 @@ export const EntryConditionsSchema = z.object({
     })
     .optional(),
   /**
+   * Sharp-line edge: a sharp sportsbook's line, with its margin removed, says this side is worth at
+   * least `min_edge` more than it costs here after the fee. With side: yes / no that side must be
+   * the cheap one; with_move buys whichever side is. Needs the `sharp_lines` block and
+   * ODDS_API_KEY in .env. A paper test: a stale line looks exactly like an edge, so old lines are
+   * refused and an edge above `max_edge` is treated as a mismatch, not a gift.
+   */
+  sharp_edge: z
+    .object({
+      min_edge: z.number().min(0.005).max(0.5).default(0.03),
+      max_edge: z.number().min(0.01).max(1).default(0.15),
+      max_line_age_minutes: z.number().positive().default(60),
+    })
+    .optional(),
+  /**
    * Side when entering. yes / no, or relative to the price move:
    * with_move = buy YES after a rise, NO after a drop; against_move = the opposite (buy the dip).
    */
@@ -159,6 +173,18 @@ export const RiskSchema = z.object({
   bankroll_usd: z.number().positive().default(1000),
   /** Don't re-enter the same market for this many hours after an exit. */
   reentry_cooldown_hours: z.number().nonnegative().default(24),
+  /**
+   * The most one trade may lose (USD). The size is cut so the worst case fits: the whole stake when
+   * the rule holds to the result; with a stop loss, 1.5× the planned loss (stops often fill well
+   * below their trigger in thin or in-play books), never more than the stake.
+   */
+  max_loss_per_trade_usd: z.number().positive().optional(),
+  /**
+   * Skip a trade whose possible gain is less than this many times its possible loss (reward : risk).
+   * Gain = the take-profit price (else $1) minus the price paid; loss = the worst case above.
+   * A 90¢ favorite held to the result is 0.11 : 1, so only set this on rules meant to pass it.
+   */
+  min_reward_risk: z.number().positive().optional(),
 });
 
 /** Paper-fill realism knobs. Platform fee models live in the adapters. */
@@ -223,6 +249,12 @@ export const ArbitrageSchema = z.object({
        * year and party, alert until you confirm them (the sites word the payout differently).
        */
       exact_match: z.boolean().default(true),
+      /**
+       * Also pair a game's full-game point spreads and totals (same game, same number, same team).
+       * Both sites count overtime and settle to a fair price if the game isn't played, and .5 lines
+       * can't push, so these trade like the game pairs. Only games that haven't started.
+       */
+      line_match: z.boolean().default(true),
       /**
        * Paper-trade automatic pairs too. Off by default: a wrong match is two bets that can
        * both lose, so automatic pairs only alert until you confirm them (npm run arb:confirm).
@@ -494,9 +526,30 @@ export const LeagueSchema = z.object({
   evolve_every_hours: z.number().positive().default(24),
 });
 
+/**
+ * Sharp sportsbook lines for `entry.sharp_edge` rules, from The Odds API (key: ODDS_API_KEY in
+ * .env). Defaults fit the free plan (500 requests a month): a league is only requested when one of
+ * its games starts within `window_hours`, at most every `refresh_minutes`, never more than
+ * `max_credits_per_day` requests a day.
+ */
+export const SharpLinesSchema = z.object({
+  enabled: z.boolean().default(true),
+  /** The book treated as sharp; when it has no line, the median of 4+ other books is used and labelled. */
+  bookmaker: z.string().default("pinnacle"),
+  /** Provider region that includes that book (Pinnacle is in "eu"). One region = 1 credit per request. */
+  region: z.string().default("eu"),
+  window_hours: z.number().positive().max(48).default(2),
+  refresh_minutes: z.number().min(1).default(60),
+  max_credits_per_day: z.number().int().positive().default(16),
+  /** Override a league's provider sport key, e.g. { basketball_ncaab: basketball_ncaab }. */
+  sports: z.record(z.string()).optional(),
+});
+export type SharpLinesConfig = z.infer<typeof SharpLinesSchema>;
+
 export const RulesFileSchema = z.object({
   version: z.literal(1).default(1),
   rules: z.array(RuleSchema).min(1),
+  sharp_lines: SharpLinesSchema.optional(),
   arbitrage: ArbitrageSchema.optional(),
   copy_trading: CopyTradingSchema.optional(),
   league: LeagueSchema.optional(),
@@ -519,7 +572,7 @@ export const RulesFileSchema = z.object({
   file.rules.forEach((r, i) => {
     const relative = r.entry.side === "with_move" || r.entry.side === "against_move";
     const hasMove =
-      r.entry.unusual_move?.mode === "require" || r.entry.yes_price_move_abs != null || r.entry.yes_price_move_pct != null || r.entry.pregame_move != null;
+      r.entry.unusual_move?.mode === "require" || r.entry.yes_price_move_abs != null || r.entry.yes_price_move_pct != null || r.entry.pregame_move != null || r.entry.sharp_edge != null;
     if (relative && !hasMove) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

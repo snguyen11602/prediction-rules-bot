@@ -321,11 +321,14 @@ export async function findOpportunities(args: {
     try {
       exact = await findExactPairs(
         {
+          kalshiEvent: fn(k, "getEventMarkets"),
           kalshiSeries: fn(k, "listSeriesMarkets"),
           kalshiTickers: fn(k, "getMarkets"),
           usSlugs: fn(u, "getMarketsBySlug"),
         },
         args.markets,
+        300,
+        cfg.cross_platform.line_match ? { now } : undefined,
       );
       for (const e of exact) for (const m of [e.kalshi, e.us]) fresh.set(`${m.platform}:${m.id}`, m);
     } catch (err) {

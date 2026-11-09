@@ -45,6 +45,7 @@ arbitrage:
     scan_limit: 400          # markets per platform to look through for pairs
     pairs_file: arb-pairs.yaml
     with: polymarket_us      # which Polymarket to pair with Kalshi (polymarket = the global site)
+    line_match: true         # also pair full-game spreads and totals (same game, same number, same team)
   same_platform:
     enabled: true
     scan_events: 100
@@ -174,6 +175,19 @@ league:
   test_share: 0.3            # the last 30% is held out: winners must make money there too
   markets_per_platform: 120  # markets with price history to replay per platform
   evolve_every_hours: 24
+
+# Sharp sportsbook lines, for rules with entry.sharp_edge (below: sharp-line-paper).
+# Needs a free key from the-odds-api.com in .env as ODDS_API_KEY; without it the rule just waits.
+# The free plan is 500 requests a month, so by default a league is only asked for when one of its
+# games starts within 2 hours, at most once an hour, and never more than 16 times a day.
+# On a paid plan, lower refresh_minutes (5) and raise max_credits_per_day.
+sharp_lines:
+  enabled: true
+  bookmaker: pinnacle        # the book treated as sharp (4+ other books' median if it has no line)
+  region: eu                 # the provider region with that book; one region = 1 request credit
+  window_hours: 2
+  refresh_minutes: 60
+  max_credits_per_day: 16
 
 rules:
   # ── Alerts ────────────────────────────────────────────────────────────────
@@ -393,6 +407,42 @@ rules:
       fire_after_n_losses: 2
       pause_hours_after_losses: 48
       daily_loss_cap_usd: 75
+      reentry_cooldown_hours: 48
+    paper:
+      slippage: 0.005
+      include_fees: true
+
+  # Sharp line: buy a game side when a sharp sportsbook's line (margin removed) says it's worth 3¢+
+  # more than it costs here after the fee. This is how professionals look for an edge, but it is a
+  # paper test, not a proven one: the free plan's lines can be up to an hour old, and a stale line
+  # looks exactly like an edge. Lines older than 60 minutes are refused, an "edge" above 15¢ is
+  # treated as a mismatch, and the size is small. Judge it by the "vs closing price" column.
+  - id: sharp-line-paper
+    name: Sharp line (cheaper here than the sharp book says), hold to the result
+    enabled: true
+    action: paper
+    filters:
+      platforms: [kalshi, polymarket_us]
+      market_types: [game_winner]
+      min_price: 0.15
+      max_price: 0.90
+      max_spread: 0.04
+      pre_game_only: true
+    entry:
+      side: with_move              # buys whichever side is the cheap one
+      sharp_edge:
+        min_edge: 0.03             # worth at least 3¢ more than it costs, after the fee
+        max_edge: 0.15             # more than that is a wrong match or old news
+        max_line_age_minutes: 60
+      max_buy_price: 0.90
+    risk:
+      position_size_fraction: 0.025
+      bankroll_usd: 1000
+      max_position_usd: 25
+      max_loss_per_trade_usd: 25
+      max_open_positions: 8
+      fire_after_n_losses: 0       # never pauses: pausing would spoil the test
+      daily_loss_cap_usd: 100
       reentry_cooldown_hours: 48
     paper:
       slippage: 0.005

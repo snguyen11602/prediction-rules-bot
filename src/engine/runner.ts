@@ -7,6 +7,10 @@ import { traceEntry, type PriorPrice } from "./evaluate.js";
 import { stageReached, type Check, type Decision, type FunnelRow, type ScanSample, type ScanTrace } from "./trace.js";
 import { SeriesStore, type Tick } from "./series.js";
 import { loadHourly } from "./pregame.js";
+import path from "node:path";
+import { loadSharp, sharpPathFor } from "../sharp/runtime.js";
+import type { Fair } from "../sharp/sharp.js";
+import { buyPrice } from "./pricing.js";
 import { checkEntryRisk, defaultRiskState, type RiskState } from "./risk.js";
 import type { EventSink } from "./events.js";
 import { consoleSink } from "./events.js";
@@ -133,6 +137,9 @@ export interface EvaluateOptions {
   series?: SeriesStore;
   /** Hourly platform prices by market key, for pregame_move rules. */
   hourly?: Map<string, Tick[]>;
+  /** Sharp-book fair values by market key (and why a market has none), for sharp_edge rules. */
+  fair?: Map<string, Fair>;
+  fairWhy?: Map<string, string>;
   onSignal?: RunnerOptions["onSignal"];
 }
 
@@ -192,7 +199,7 @@ export async function evaluateRules(
     for (const market of markets) {
       const key = marketKey(market);
       row.scanned += 1;
-      const t = traceEntry(rule, market, priors.get(key), now, { series: opts.series?.get(key), hourly: opts.hourly?.get(key) });
+      const t = traceEntry(rule, market, priors.get(key), now, { series: opts.series?.get(key), hourly: opts.hourly?.get(key), fair: opts.fair?.get(key), fairWhy: opts.fairWhy?.get(key) });
       const checks = [...t.checks];
       const match = t.match;
       const filtersOk = checks.every((c) => c.stage !== "filters" || c.ok);
@@ -239,7 +246,7 @@ export async function evaluateRules(
         side: match.side,
       });
 
-      const gate = checkEntryRisk(rule, riskState, now);
+      const gate = checkEntryRisk(rule, riskState, now, buyPrice(market, match.side, rule.paper.slippage));
       checks.push(...gate.checks);
       if (!gate.ok) {
         sample();
@@ -380,6 +387,9 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
 
   opts.series?.record(markets, now);
   const hourly = await loadHourly(rules, markets, (id) => adapters.find((a) => a.id === id), now);
+  // Sharp lines share the paper ledger's cache, so scans don't spend extra requests.
+  const sharp = await loadSharp(file.sharp_lines, rules, markets, sharpPathFor(path.resolve("data/paper-ledger.json")), now, { key: opts.demo ? "" : undefined });
+  for (const m of sharp.problems) await push({ at: now.toISOString(), type: "adapter_error", message: m });
   const { signals, suppressed } = await evaluateRules({
     rules,
     markets,
@@ -391,6 +401,8 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
     lastMatched: opts.lastMatched,
     series: opts.series,
     hourly,
+    fair: sharp.fair,
+    fairWhy: sharp.why,
     onSignal: opts.onSignal,
   });
 
