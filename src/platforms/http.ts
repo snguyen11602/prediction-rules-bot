@@ -8,11 +8,26 @@ const HEADERS = {
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Extra attempts after a timeout or network error (separate from the 429 / 5xx retries). */
+const NETWORK_RETRIES = 1;
 
 export async function getJson<T>(url: string | URL, label: string, opts: { retries?: number; timeoutMs?: number } = {}): Promise<{ status: number; data?: T }> {
   const retries = opts.retries ?? 3;
+  let networkTries = 0;
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000) });
+    let res: Response;
+    try {
+      res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000) });
+    } catch (err) {
+      // A timeout or dropped connection is usually a blip: try once more before giving up.
+      if (networkTries++ < NETWORK_RETRIES) {
+        await sleep(500);
+        attempt--;
+        continue;
+      }
+      const timedOut = (err as Error)?.name === "TimeoutError" || (err as Error)?.name === "AbortError";
+      throw new Error(`${label} ${timedOut ? "didn't answer in time" : "couldn't be reached"} (tried ${networkTries} times)`);
+    }
     if (res.status === 404) {
       await res.body?.cancel().catch(() => undefined);
       return { status: 404 };

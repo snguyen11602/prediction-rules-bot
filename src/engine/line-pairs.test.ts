@@ -102,3 +102,22 @@ test("finding line pairs: a few lookups per game, cached ten minutes, prices re-
   assert.equal((await findExactPairs(src, [], 0)).filter((p) => p.kind === "line").length, 0);
   assert.equal((await findExactPairs(src, [], 0, { now: new Date(Date.parse(START) + 60_000) })).filter((p) => p.kind === "line").length, 0);
 });
+
+test("one lookup timing out costs only its own part of the check, and says so", async () => {
+  clearLineCache();
+  const src = {
+    kalshiSeries: async (s: string) => {
+      if (s === "KXNHLGAME") throw new Error("Kalshi didn't answer in time (tried 2 times)");
+      return s === "KXNBAGAME" ? games : [];
+    },
+    kalshiTickers: async () => {
+      throw new Error("Kalshi didn't answer in time (tried 2 times)");
+    },
+    usSlugs: async (slugs: string[]) => [uMoney].filter((m) => slugs.includes((m.raw as { slug: string }).slug)),
+  };
+  const problems: string[] = [];
+  const race: NormalizedMarket = { platform: "polymarket_us", id: "9", title: "Senate", yesPrice: 0.5, raw: { slug: "ewc-usse-ak-2026-11-03-rep" } };
+  const pairs = await findExactPairs(src, [race], 0, undefined, problems);
+  assert.deepEqual(pairs.map((p) => p.kind), ["game"], "the NBA game is still matched");
+  assert.deepEqual(problems, ["NHL games: Kalshi didn't answer in time (tried 2 times)", "election races: Kalshi didn't answer in time (tried 2 times)"]);
+});

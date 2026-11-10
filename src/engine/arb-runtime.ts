@@ -318,6 +318,7 @@ export async function findOpportunities(args: {
     const k = unwrap(adapters.find((a) => a.id === "kalshi"));
     const u = unwrap(adapters.find((a) => a.id === "polymarket_us"));
     const fn = <T>(o: Record<string, unknown> | undefined, name: string) => (typeof o?.[name] === "function" ? ((o[name] as (...x: unknown[]) => T).bind(o)) : undefined);
+    const problems: string[] = [];
     try {
       exact = await findExactPairs(
         {
@@ -329,8 +330,14 @@ export async function findOpportunities(args: {
         args.markets,
         300,
         cfg.cross_platform.line_match ? { now } : undefined,
+        problems,
       );
       for (const e of exact) for (const m of [e.kalshi, e.us]) fresh.set(`${m.platform}:${m.id}`, m);
+      if (problems.length) {
+        // Part of the lookup failed: use what was found, and don't treat a missing pair as gone.
+        complete = false;
+        await push({ at: now.toISOString(), type: "adapter_error", ruleId: "arbitrage", message: `Arbitrage pair lookup incomplete this check (${problems.join("; ")}). Nothing is lost: open trades are still watched and it tries again on the next check.` });
+      }
     } catch (err) {
       complete = false;
       await push({ at: now.toISOString(), type: "adapter_error", ruleId: "arbitrage", message: `Exact game / race matching skipped: ${(err as Error).message}` });
