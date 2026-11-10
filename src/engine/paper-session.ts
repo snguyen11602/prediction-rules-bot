@@ -7,6 +7,7 @@ import {
   findOpenPosition,
   lastExitAt,
   loadLedger,
+  resetLedger,
   markPosition,
   openPosition,
   openPositions,
@@ -239,7 +240,17 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
   const arbRule = arbitrageAsRule(arbManageCfg);
 
   return withLedgerLock(opts.ledgerPath, async () => {
+    // "Reset portfolio" on the dashboard: archive the ledger and start a new one, once per request.
+    let resetNote: string | undefined;
+    if (controls.resetRequestedAt) {
+      const before = await loadLedger(opts.ledgerPath, { demo });
+      if (before.resetFrom?.request !== controls.resetRequestedAt) {
+        const r = await resetLedger(opts.ledgerPath, { demo, now, request: controls.resetRequestedAt });
+        resetNote = `Portfolio reset: starting over at $0. ${r.closed} closed and ${r.open} open paper trade(s) (${r.pnlUsd >= 0 ? "+" : "−"}$${Math.abs(r.pnlUsd).toFixed(2)})${r.archive ? ` saved to ${r.archive}` : ""}.`;
+      }
+    }
     const ledger = await loadLedger(opts.ledgerPath, { demo });
+    if (resetNote) await push({ at: now.toISOString(), type: "info", message: resetNote });
     let opened = 0;
     let closed = 0;
     let realized = 0;

@@ -23,7 +23,8 @@ import { applyControl, controlsPathFor, isStopped, loadControls, saveControls, t
  * Local paper-trading dashboard. Serves one page plus a JSON snapshot of the
  * paper ledger. Binds to 127.0.0.1 only; never places orders and never writes
  * the ledger (the optional paper loop lives in the CLI). The one thing it can
- * change is the bots' start / stop switches (POST /api/control).
+ * change is the controls file (POST /api/control): the bots' start / stop switches, and a request
+ * to reset the paper portfolio, which the next paper cycle carries out.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -300,6 +301,9 @@ export async function buildState(opts: DashboardOptions) {
       updatedAt: fileInfo?.mtime.toISOString(),
       createdAt: ledger.createdAt,
       migratedFromV1: ledger.migratedFromV1,
+      /** How the last reset went, and whether one has been asked for but not carried out yet. */
+      resetFrom: ledger.resetFrom,
+      resetPending: !!controls.resetRequestedAt && ledger.resetFrom?.request !== controls.resetRequestedAt,
     },
     totals: summary.total,
     rules,
@@ -522,6 +526,13 @@ async function control(opts: DashboardOptions, req: http.IncomingMessage, res: h
     body = (await readJson(req)) as typeof body;
   } catch {
     return reply(400, { ok: false, error: "bad request" });
+  }
+  if (body?.action === "reset") {
+    // Only a request: the paper cycle (the ledger's one writer) archives the ledger and starts over.
+    const file = controlsPathFor(opts.ledgerPath);
+    const next = applyControl(await loadControls(file), { action: "reset" }, new Date());
+    await saveControls(file, next);
+    return reply(200, { ok: true, resetRequestedAt: next.resetRequestedAt });
   }
   const action = body?.action === "start" || body?.action === "stop" ? body.action : undefined;
   const all = body?.all === true;

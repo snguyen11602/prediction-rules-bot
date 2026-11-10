@@ -254,7 +254,8 @@ async function main() {
   }
   const emit = async (e: EngineEvent) => {
     remember(e);
-    if (QUIET_TYPES.has(e.type) || (e.type === "risk_block" && /pause armed/i.test(e.message))) consoleSink(e);
+    // Also each sharp-line request (a few an hour at most) and a portfolio reset, so they're visible.
+    if (QUIET_TYPES.has(e.type) || (e.type === "risk_block" && /pause armed/i.test(e.message)) || (e.type === "info" && /^(Sharp lines|Portfolio reset):/.test(e.message))) consoleSink(e);
     for (const sink of extraSinks) {
       try {
         await sink(e);

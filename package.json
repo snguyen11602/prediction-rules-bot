@@ -13,6 +13,7 @@
     "paper": "tsx src/cli/paper.ts",
     "paper:report": "tsx src/cli/paper-report.ts",
     "paper:close": "tsx src/cli/paper-close.ts",
+    "paper:reset": "tsx src/cli/paper-reset.ts",
     "paper:watch": "tsx src/cli/dashboard.ts --paper",
     "paper:fast": "tsx src/cli/dashboard.ts --paper --fast",
     "dashboard": "tsx src/cli/dashboard.ts",

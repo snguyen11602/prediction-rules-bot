@@ -453,6 +453,16 @@ dashboard page itself. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C 
 and exits. Don't run `paper:watch` and `paper -- --loop` at the same time; the second one just waits
 for the lock.
 
+**Reset.** On the Overview page, **Reset** (next to the "since" date) starts the paper portfolio over
+at $0 after asking you to confirm. Profit and loss, the chart, win rate, trade history and loss pauses go
+back to zero; open paper trades are dropped; strategies and their switches stay. The current trades are
+copied to `data/archive/paper-ledger-<time>.json` first and never deleted, so you can put a file back by
+copying it over `data/paper-ledger.json` while the bot is stopped. The button only records the request;
+the bot carries it out at its next check (a few seconds in fast mode). With the bot stopped you can do
+the same from the terminal: `npm run paper:reset` shows what would happen and
+`npm run paper:reset -- --yes` does it. After a reset the strategies simply start trading again, so
+they may re-buy markets they held before.
+
 **How the bot decides.** While `paper:watch` runs, the Activity page shows the last check as a
 funnel: every market × strategy → passed filters → entry signal → position OK → risk OK → traded or
 alerted. A replay strip steps through that check market by market and shows where each one dropped

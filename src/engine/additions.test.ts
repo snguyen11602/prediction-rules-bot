@@ -194,3 +194,93 @@ test("paper: a bet's closing price is recorded as the game starts", async () => 
   const s = summarizeLedger(ledger).rules[0].clv!;
   assert.deepEqual([s.n, s.beat, +s.avg.toFixed(2)], [1, 1, 0.09]);
 });
+
+// ---------- reset ----------
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { readdir } from "node:fs/promises";
+import { applyControl, controlsPathFor, emptyControls, loadControls, saveControls } from "./controls.js";
+import { loadLedger, resetLedger, withLedgerLock } from "../ledger/paper.js";
+import { createDashboardServer } from "../dashboard/server.js";
+
+async function resetSetup() {
+  const dir = await mkdtemp(path.join(tmpdir(), "prb-reset-"));
+  const rules = path.join(dir, "rules.yaml");
+  await writeFile(rules, `rules:\n  - id: buyer\n    name: Buyer\n    action: paper\n    filters: { platforms: [kalshi] }\n    entry: { side: yes, yes_price_above: 0.5 }\n    risk: { fire_after_n_losses: 0, reentry_cooldown_hours: 0 }\n`);
+  const fixture = path.join(dir, "k.json");
+  const ledgerPath = path.join(dir, "ledger.json");
+  const run = async (now: Date, markets: NormalizedMarket[]) => {
+    await writeFile(fixture, JSON.stringify(markets));
+    return runPaperCycle({ rulesPath: rules, ledgerPath, demo: true, now, emit: () => undefined, adapters: [new DemoAdapter("kalshi", { fixturePath: fixture, now: () => now })] });
+  };
+  return { dir, rules, ledgerPath, run };
+}
+
+test("reset: the ledger is archived and a new one starts at zero; nothing is deleted", async () => {
+  const s = await resetSetup();
+  await s.run(NOW, [game()]);
+  const before = await readFile(s.ledgerPath, "utf8");
+  assert.equal((JSON.parse(before) as PaperLedger).positions.length, 1);
+  const r = await withLedgerLock(s.ledgerPath, () => resetLedger(s.ledgerPath, { demo: true, now: new Date(NOW.getTime() + 60_000) }));
+  assert.deepEqual([r.open, r.closed], [1, 0]);
+  assert.match(r.archive!, /^archive[\\/]ledger-2026-11-10T22-01-00Z\.json$/);
+  assert.equal(await readFile(path.join(s.dir, r.archive!), "utf8"), before, "the backup is the old file, byte for byte");
+  const fresh = await loadLedger(s.ledgerPath, { demo: true });
+  assert.deepEqual([fresh.positions.length, fresh.fills.length, Object.keys(fresh.ruleState).length], [0, 0, 0]);
+  assert.equal(summarizeLedger(fresh).total.realizedPnlUsd, 0);
+  // Resetting an empty portfolio makes no backup file.
+  const again = await withLedgerLock(s.ledgerPath, () => resetLedger(s.ledgerPath, { demo: true, now: new Date(NOW.getTime() + 120_000) }));
+  assert.equal(again.archive, undefined);
+  assert.equal((await readdir(path.join(s.dir, "archive"))).length, 1);
+});
+
+test("reset from the dashboard: one request, carried out once by the next paper check, and trading goes on", async () => {
+  const s = await resetSetup();
+  await s.run(NOW, [game()]);
+  const file = controlsPathFor(s.ledgerPath);
+  await saveControls(file, applyControl({ ...emptyControls(), stopped: { other: "x" } }, { action: "reset" }, new Date(NOW.getTime() + 30_000)));
+  const kept = await loadControls(file);
+  assert.equal(kept.stopped.other, "x", "switches are untouched");
+  assert.equal(kept.resetRequestedAt, new Date(NOW.getTime() + 30_000).toISOString());
+  // The next check resets, then trades as usual on the fresh portfolio.
+  const other = game({ id: "KXNBAGAME-26NOV10LALGSW-LAL", eventId: "KXNBAGAME-26NOV10LALGSW", title: "LA wins" });
+  const r = await s.run(new Date(NOW.getTime() + 60_000), [other]);
+  assert.ok(r.events.some((e) => /^Portfolio reset: starting over at \$0\. 0 closed and 1 open paper trade\(s\)/.test(e.message)));
+  let ledger = await loadLedger(s.ledgerPath, { demo: true });
+  assert.deepEqual(ledger.positions.map((p) => p.marketId), [other.id], "only the trade made after the reset");
+  assert.equal(ledger.resetFrom?.request, kept.resetRequestedAt);
+  // Later checks don't reset again.
+  await s.run(new Date(NOW.getTime() + 120_000), [other]);
+  ledger = await loadLedger(s.ledgerPath, { demo: true });
+  assert.equal(ledger.positions.length, 1);
+  assert.equal((await readdir(path.join(s.dir, "archive"))).length, 1);
+});
+
+test("the dashboard's reset only records a request; the page shows it as pending until a check carries it out", async () => {
+  const s = await resetSetup();
+  await s.run(NOW, [game()]);
+  const server = createDashboardServer({ ledgerPath: s.ledgerPath, rulesPath: s.rules, demo: true });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const post = (headers: Record<string, string>) =>
+    new Promise<number>((resolve, reject) => {
+      const u = new URL(`${base}/api/control`);
+      const req = http.request({ host: u.hostname, port: u.port, path: u.pathname, method: "POST", headers: { Host: u.host, ...headers } }, (res) => (res.resume(), resolve(res.statusCode ?? 0)));
+      req.on("error", reject);
+      req.end(JSON.stringify({ action: "reset" }));
+    });
+  try {
+    assert.equal(await post({ "Content-Type": "application/json", Origin: "https://evil.example" }), 403, "another site can't reset it");
+    assert.equal(await post({ "Content-Type": "text/plain" }), 415);
+    assert.equal(await post({ "Content-Type": "application/json", Origin: base }), 200);
+    let state = await (await fetch(`${base}/api/state`)).json();
+    assert.equal(state.ledger.resetPending, true);
+    assert.equal(state.open.length, 1, "the ledger itself is untouched until the bot's next check");
+    await s.run(new Date(Date.now() + 1000), []);
+    state = await (await fetch(`${base}/api/state`)).json();
+    assert.equal(state.ledger.resetPending, false);
+    assert.deepEqual([state.open.length, state.totals.closed, state.ledger.resetFrom.open], [0, 0, 1]);
+  } finally {
+    server.close();
+  }
+});
