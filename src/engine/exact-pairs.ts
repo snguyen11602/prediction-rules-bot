@@ -178,32 +178,51 @@ export interface ExactSources {
 }
 
 /** Look both kinds up. `usListed` are Polymarket US markets already fetched this cycle (for races). */
-export async function findExactPairs(src: ExactSources, usListed: NormalizedMarket[], pauseMs = 300, lines?: { now: Date }): Promise<ExactPair[]> {
+/**
+ * Each lookup stands alone: one league, the spread / total lines or the election races failing
+ * (a timeout, a rate limit) costs only that part of this check. What failed is added to
+ * `problems`, so the caller knows the list is incomplete and doesn't treat a missing pair as gone.
+ */
+export async function findExactPairs(src: ExactSources, usListed: NormalizedMarket[], pauseMs = 300, lines?: { now: Date }, problems: string[] = []): Promise<ExactPair[]> {
   const out: ExactPair[] = [];
+  const why = (err: unknown) => (err instanceof Error ? err.message : String(err));
   if (src.kalshiSeries && src.usSlugs) {
     const kalshi: NormalizedMarket[] = [];
     for (const series of Object.keys(GAME_SERIES)) {
-      kalshi.push(...(await src.kalshiSeries(series)));
+      try {
+        kalshi.push(...(await src.kalshiSeries(series)));
+      } catch (err) {
+        problems.push(`${GAME_SERIES[series]?.toUpperCase() ?? series} games: ${why(err)}`);
+      }
       if (pauseMs) await new Promise((r) => setTimeout(r, pauseMs));
     }
     const events = new Map<string, string[]>();
     for (const m of kalshi) if (m.eventId) events.set(m.eventId, [...(events.get(m.eventId) ?? []), codeOf(m)]);
     const slugs = [...events].flatMap(([e, codes]) => (codes.length === 2 ? usSlugsForGame(e, codes) : []));
-    const us = slugs.length ? await src.usSlugs(slugs) : [];
-    out.push(...matchGames(kalshi, us));
+    let us: NormalizedMarket[] = [];
+    try {
+      us = slugs.length ? await src.usSlugs(slugs) : [];
+      out.push(...matchGames(kalshi, us));
+    } catch (err) {
+      problems.push(`games on Polymarket US: ${why(err)}`);
+    }
     if (lines && src.kalshiEvent && src.kalshiTickers) {
       try {
         out.push(...(await findLinePairs(src, kalshi, us, lines.now, pauseMs)));
-      } catch {
-        // A failed line lookup (rate limit, timeout) must not cost this cycle its game pairs.
+      } catch (err) {
+        problems.push(`spreads and totals: ${why(err)}`);
       }
     }
   }
   if (src.kalshiTickers) {
-    const races = usListed.filter((m) => m.platform === "polymarket_us" && parseUsRace(usRaw(m).slug ?? ""));
-    const tickers = [...new Set(races.flatMap((m) => kalshiTickersForRace(parseUsRace(usRaw(m).slug!)!)))];
-    const kalshi = tickers.length ? await src.kalshiTickers(tickers) : [];
-    out.push(...matchElections(races, kalshi));
+    try {
+      const races = usListed.filter((m) => m.platform === "polymarket_us" && parseUsRace(usRaw(m).slug ?? ""));
+      const tickers = [...new Set(races.flatMap((m) => kalshiTickersForRace(parseUsRace(usRaw(m).slug!)!)))];
+      const kalshi = tickers.length ? await src.kalshiTickers(tickers) : [];
+      out.push(...matchElections(races, kalshi));
+    } catch (err) {
+      problems.push(`election races: ${why(err)}`);
+    }
   }
   return out;
 }
@@ -406,19 +425,24 @@ export async function findLinePairs(src: ExactSources, kalshiGames: NormalizedMa
       .slice(0, LINE_MAX_GAMES);
     const pairs: NonNullable<typeof lineCache>["pairs"] = [];
     for (const twin of twins) {
-      const series = LINE_SERIES[twin.league];
-      const kLines: NormalizedMarket[] = [];
-      for (const s of [series.spread, series.total]) {
-        kLines.push(...(await src.kalshiEvent!(`${s}-${twin.matchCode}`)));
+      // One game's lookup failing (a timeout, a rate limit) only costs that game until the next refresh.
+      try {
+        const series = LINE_SERIES[twin.league];
+        const kLines: NormalizedMarket[] = [];
+        for (const s of [series.spread, series.total]) {
+          kLines.push(...(await src.kalshiEvent!(`${s}-${twin.matchCode}`)));
+          await pause();
+        }
+        // Only lines someone is actually quoting on Kalshi.
+        const live = kLines.filter((k) => (k.status ?? "open") === "open" && k.yesBid != null && k.yesAsk != null && k.yesBid > 0 && k.yesAsk < 1 && k.yesAsk - k.yesBid <= LINE_MAX_SPREAD);
+        const slugs = lineSlugs(twin, live);
+        if (!slugs.length) continue;
+        const usLines = await src.usSlugs!(slugs);
         await pause();
+        for (const p of matchLines(twin, live, usLines)) pairs.push({ kalshiId: p.kalshi.id, usSlug: usRaw(p.us).slug!, invert: p.invert, how: p.how, startsAt: Date.parse(twin.startsAt!) });
+      } catch {
+        continue;
       }
-      // Only lines someone is actually quoting on Kalshi.
-      const live = kLines.filter((k) => (k.status ?? "open") === "open" && k.yesBid != null && k.yesAsk != null && k.yesBid > 0 && k.yesAsk < 1 && k.yesAsk - k.yesBid <= LINE_MAX_SPREAD);
-      const slugs = lineSlugs(twin, live);
-      if (!slugs.length) continue;
-      const usLines = await src.usSlugs!(slugs);
-      await pause();
-      for (const p of matchLines(twin, live, usLines)) pairs.push({ kalshiId: p.kalshi.id, usSlug: usRaw(p.us).slug!, invert: p.invert, how: p.how, startsAt: Date.parse(twin.startsAt!) });
     }
     lineCache = { at: nowMs, pairs };
   }
