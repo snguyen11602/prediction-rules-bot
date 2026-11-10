@@ -16,10 +16,10 @@
     --axis: #cbd0d9;
     --border: #e4e7ec;
     --series-1: #2b55e0;
-    --up: #0b8a5c;
+    --up: #00836b;
     --down: #d2364b;
     --warn: #e8a317;
-    --good: #12a56f;
+    --good: #00836b;
     --hover: rgba(16, 22, 35, 0.04);
     --badge: #eef0f4;
     --accent: #2b55e0;
@@ -36,11 +36,11 @@
       --grid: #232c39;
       --axis: #334052;
       --border: #232c39;
-      --series-1: #7c9bff;
-      --up: #2cc58b;
-      --down: #f26b7e;
+      --series-1: #6a8af5;
+      --up: #19a79a;
+      --down: #e8605c;
       --warn: #f0b93a;
-      --good: #2cc58b;
+      --good: #19a79a;
       --hover: rgba(255, 255, 255, 0.05);
       --badge: #1f2835;
       --accent: #7c9bff;
@@ -57,11 +57,11 @@
     --grid: #232c39;
     --axis: #334052;
     --border: #232c39;
-    --series-1: #7c9bff;
-    --up: #2cc58b;
-    --down: #f26b7e;
+    --series-1: #6a8af5;
+    --up: #19a79a;
+    --down: #e8605c;
     --warn: #f0b93a;
-    --good: #2cc58b;
+    --good: #19a79a;
     --hover: rgba(255, 255, 255, 0.05);
     --badge: #1f2835;
     --accent: #7c9bff;
@@ -118,7 +118,7 @@
   .gridline { stroke: var(--grid); stroke-width: 1; }
   .zero { stroke: var(--axis); stroke-width: 1; }
   .line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; }
-  .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+  .cross { stroke: var(--muted); stroke-width: 1; }
   .marker { fill: var(--series-1); stroke: var(--surface); stroke-width: 2; }
   .tip {
     position: absolute; pointer-events: none; display: none; z-index: 2;
@@ -148,12 +148,12 @@
   .feed li { display: grid; grid-template-columns: 68px 1fr; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--grid); }
   .feed li:last-child { border-bottom: none; }
   .feed .when { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .feed .kind { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-2); }
   .feed .msg { font-size: 13px; overflow-wrap: anywhere; }
 
   .arb-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 12px; }
   .arb-head h2 { margin: 0; }
   .arb-note { color: var(--muted); font-size: 12.5px; }
+  .lede { margin: 0; color: var(--ink-2); max-width: 78ch; }
   .sub-h { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin: 16px 0 6px; }
   .legs { margin: 4px 0 0; padding: 0; list-style: none; }
   .legs li { color: var(--ink-2); font-size: 12px; overflow-wrap: anywhere; }
@@ -182,9 +182,7 @@
   .btn { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
   .btn:hover { background: var(--hover); }
   .btn.ctl { white-space: nowrap; }
-  .btn.ctl.go { background: color-mix(in srgb, var(--good) 22%, var(--surface)); }
   .btn.ctl:disabled { opacity: .55; cursor: wait; }
-  @media (max-width: 560px) { #rulesBody .btn.ctl .word { display: none; } #rulesBody .btn.ctl { padding: 4px 8px; } }
   .badge.stopped { background: var(--warn); color: #0b0b0b; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .why { font-size: 12px; padding: 2px 8px; }
@@ -211,7 +209,7 @@
   .story h3 { margin: 0 0 2px; font-size: 16px; }
   .story .close { position: absolute; top: 10px; right: 12px; }
   .story-stage { margin-top: 14px; }
-  .story-stage h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); }
+  .story-stage h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
   .chk { display: grid; grid-template-columns: 22px 150px 1fr; gap: 6px; padding: 4px 0; font-size: 13px; }
   @media (max-width: 560px) { .chk { grid-template-columns: 22px 1fr; } .chk .d { grid-column: 2; } }
   .chk .i { font-weight: 700; }
@@ -282,7 +280,6 @@
   }
 
   footer { color: var(--muted); font-size: 12px; margin-top: 24px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
-  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
   /* ================= App shell (2026-11 redesign) ================= */
   body { font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
@@ -416,6 +413,109 @@
     td:first-child, th:first-child { padding-left: 0; }
     td:last-child, th:last-child { padding-right: 0; }
   }
+
+  /* ================= Backtest lab ================= */
+  .btn.primary { background: var(--ink); border-color: var(--ink); color: var(--surface); padding: 8px 16px; font-size: 13.5px; }
+  .btn.primary:hover { background: color-mix(in srgb, var(--ink) 86%, var(--surface)); }
+  .btn.primary:disabled { opacity: .6; cursor: wait; }
+  .lab-empty { max-width: 620px; }
+  .lab-empty p { color: var(--ink-2); margin: 6px 0 14px; }
+  .lab-progress { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .lab-progress .bar { flex: 1; max-width: 260px; height: 6px; border-radius: 999px; background: var(--badge); overflow: hidden; }
+  .lab-progress .bar i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--series-1); transition: width .3s; }
+  .lab { display: grid; grid-template-columns: 284px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .lab-controls { position: sticky; top: 18px; max-height: calc(100vh - 36px); overflow-y: auto; padding: 14px 16px 16px; }
+  .lab-toggle { display: none; width: 100%; }
+  .lab-controls fieldset { border: 0; border-top: 1px solid var(--grid); margin: 14px 0 0; padding: 12px 0 0; min-width: 0; }
+  .lab-controls legend, .field-head { padding: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+  .lab-controls legend { float: left; width: 100%; margin-bottom: 8px; }
+  .lab-controls legend + * { clear: both; }
+  .field { display: block; margin-top: 9px; }
+  .field > span, .field.two span { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 3px; }
+  .field.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  .field.two > label { min-width: 0; }
+  .lab-controls select, .lab-controls input { font: inherit; font-size: 13.5px; width: 100%; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--axis); border-radius: 7px; background: var(--surface); color: var(--ink); font-variant-numeric: tabular-nums; }
+  .lab-controls input[type="date"] { padding: 0 4px; font-size: 12.5px; }
+  .lab-controls select:hover, .lab-controls input:hover { border-color: var(--muted); }
+  .pair { display: flex; align-items: center; gap: 6px; }
+  .pair i { font-style: normal; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  .pair input { flex: 1 1 56px; }
+  .pair select { flex: 2 1 110px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font: inherit; font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--axis); background: var(--surface); color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+  .chip:hover { background: var(--hover); color: var(--ink); }
+  .chip[aria-pressed="true"] { background: var(--select); border-color: var(--accent); color: var(--ink); font-weight: 500; }
+  .lab-controls > .lab-fields > .btn { margin-top: 16px; width: 100%; padding: 6px 10px; }
+  .lab-results.busy { opacity: .6; transition: opacity .15s .2s; }
+  .lab-head { padding: 18px 22px 16px; margin-bottom: 16px; }
+  .lab-plain { margin: 0 0 14px; color: var(--ink-2); max-width: 70ch; }
+  .lab-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .lab-top .label { color: var(--muted); font-size: 13px; }
+  .lab-top .value { font-size: 36px; line-height: 1.15; font-weight: 650; letter-spacing: -0.025em; margin-top: 2px; }
+  .lab-top .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .lab-verdict { max-width: 300px; padding: 10px 12px; border-radius: 8px; background: var(--page); font-size: 13px; color: var(--ink-2); }
+  .lab-verdict strong { display: block; color: var(--ink); font-size: 14px; margin-bottom: 2px; }
+  #labStats, #labMcStats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 0; }
+  #labStats > div:nth-child(3n + 1), #labMcStats > div:nth-child(3n + 1) { padding-left: 0; border-left: 0; }
+  #labStats .note, #labMcStats .note { white-space: normal; }
+  #labMcStats { border-top: 0; padding-top: 0; margin: 10px 0 4px; }
+  @media (min-width: 1500px) {
+    #labStats, #labMcStats { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    #labStats > div:nth-child(3n + 1), #labMcStats > div:nth-child(3n + 1) { padding-left: 14px; border-left: 1px solid var(--grid); }
+    #labStats > div:first-child, #labMcStats > div:first-child { padding-left: 0; border-left: 0; }
+  }
+  .lab-more { margin-top: 12px; padding: 6px 14px; }
+  .lab-notes { margin: 14px 0 0; padding: 10px 12px 10px 28px; border-radius: 8px; background: color-mix(in srgb, var(--warn) 12%, var(--surface)); color: var(--ink-2); font-size: 13px; }
+  .lab-notes li { margin: 2px 0; }
+  .lab-lede { margin: 2px 0 0; max-width: 78ch; }
+  .lab-chart { height: 250px; margin-top: 6px; }
+  .lab-chart .empty { padding-top: 90px; }
+  .lab-two { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 22px; margin: 14px 0 12px; }
+  .lab-two > div { position: relative; min-width: 0; }
+  .lab-two h3 { margin: 0; font-size: 13px; font-weight: 500; color: var(--ink-2); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12.5px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .key { display: inline-block; flex: none; }
+  .key.line { width: 14px; height: 0; border-top: 2px solid var(--series-1); }
+  .key.thin { width: 14px; height: 0; border-top: 1px solid var(--muted); }
+  .key.band { width: 12px; height: 10px; border-radius: 2px; background: var(--series-1); }
+  .key.bar { width: 8px; height: 10px; border-radius: 2px 2px 0 0; background: var(--series-1); }
+  .area { fill: var(--series-1); opacity: .1; stroke: none; }
+  .band-wide { fill: var(--series-1); opacity: .13; stroke: none; }
+  .band-mid { fill: var(--series-1); opacity: .2; stroke: none; }
+  .path-sample { fill: none; stroke: var(--muted); stroke-width: 1; opacity: .35; }
+  .hbar { fill: var(--series-1); }
+  .hbar.hot { fill: color-mix(in srgb, var(--series-1) 78%, var(--ink)); }
+  .enddot { fill: var(--series-1); stroke: var(--surface); stroke-width: 2; }
+  .mark-label { fill: var(--ink-2); font-size: 11.5px; }
+  .tip .row { display: flex; justify-content: space-between; gap: 14px; }
+  .tip .row b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tip .t { color: var(--muted); margin-bottom: 3px; }
+  .lab-table td { vertical-align: middle; }
+  .dbar { display: inline-grid; grid-template-columns: 1fr 1fr; width: 96px; height: 10px; vertical-align: middle; margin-right: 8px; position: relative; }
+  .dbar::before { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--axis); }
+  .dbar i { display: block; height: 100%; }
+  .dbar .neg { justify-self: end; background: var(--down); border-radius: 3px 0 0 3px; }
+  .dbar .pos { justify-self: start; background: var(--up); border-radius: 0 3px 3px 0; grid-column: 2; }
+  .lab-yaml { margin: 8px 0 0; padding: 12px 14px; border-radius: 8px; background: var(--page); font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-x: auto; color: var(--ink); }
+  .lab-data { margin-top: 18px; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--badge); padding: 1px 5px; border-radius: 4px; }
+  @media (max-width: 980px) {
+    .lab { grid-template-columns: minmax(0, 1fr); }
+    .lab-controls { position: static; max-height: none; }
+    .lab-toggle { display: block; }
+    .lab-controls:not(.open) .lab-fields { display: none; }
+    .lab-controls.open .lab-fields { margin-top: 12px; }
+    .lab-two { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 760px) {
+    #labStats, #labMcStats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #labStats > div, #labMcStats > div, #labStats > div:nth-child(3n + 1), #labMcStats > div:nth-child(3n + 1) { padding: 0 12px 0 0; border-left: 0; }
+    .lab-top .value { font-size: 30px; }
+    .lab-head { padding: 16px 16px 14px; }
+    .dbar { width: 56px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .lab-progress .bar i, .lab-results.busy { transition: none; } }
 </style>
 </head>
 <body>
@@ -430,12 +530,12 @@
     <a href="#/trades" data-page="trades">Trades <span class="count" id="navOpen"></span></a>
     <a href="#/strategies" data-page="strategies">Strategies</a>
     <a href="#/activity" data-page="activity">Activity</a>
+    <a href="#/backtest" data-page="backtest">Backtest lab</a>
     <div class="group">More</div>
     <a href="#/arbitrage" data-page="arbitrage" id="navArb">Arbitrage</a>
     <a href="#/copy" data-page="copy" id="navCopy">Copy trading</a>
     <a href="#/moves" data-page="moves">Unusual moves</a>
     <a href="#/leaderboard" data-page="league">League</a>
-    <a href="#/backtest" data-page="backtest">Backtests</a>
     <a href="#/live" data-page="live" class="off">Live money (off)</a>
   </nav>
   <div class="rail-foot">Pretend money only. Nothing here places real orders.</div>
@@ -510,8 +610,7 @@
 
   <section data-pages="arbitrage" class="card section" id="arbSection" hidden>
     <div class="arb-head">
-      <h2>Arbitrage</h2>
-      <span class="arb-note">Buys sets of contracts that pay a guaranteed amount, for less than that amount (after fees).</span>
+      <p class="lede">Buys sets of contracts that pay a guaranteed amount, for less than that amount after fees.</p>
     </div>
     <div class="sub-h" id="oppTitle">Opportunities right now</div>
     <div class="tablewrap"><table>
@@ -532,8 +631,7 @@
 
   <section data-pages="moves" class="card section" id="unusualSection">
     <div class="arb-head">
-      <h2>Unusual moves</h2>
-      <span class="arb-note">Sharp moves on a volume spike that haven't reversed — what informed trading often looks like. Public data only; news and big traders cause it too.</span>
+      <p class="lede">Sharp moves on a volume spike that haven't reversed, which is what informed trading often looks like. Public data only; news and big traders cause it too.</p>
     </div>
     <div class="meta" id="historyNote" style="margin-bottom:8px"></div>
     <div class="tablewrap"><table>
@@ -544,7 +642,7 @@
 
   <section data-pages="copy" class="card section" id="copySection" hidden>
     <div class="arb-head">
-      <h2>Copy trading</h2>
+      <h2>Who is being copied</h2>
       <span class="arb-note" id="copyNote">Top global-Polymarket traders, copied onto the same market where you can trade (Polymarket US / Kalshi). A leaderboard is partly luck.</span>
     </div>
     <div class="grid2" style="margin-bottom:0">
@@ -614,7 +712,7 @@
     <div class="arb-head">
       <h2>How the bot decides</h2>
       <span class="arb-note" id="decideNote">Every check, every market, every time. Click any trade below (or a signal here) to see why it was taken.</span>
-      <button class="btn" id="replayBtn" style="margin-left:auto">▶ Replay last scan</button>
+      <button class="btn" id="replayBtn" style="margin-left:auto">Replay the last check</button>
     </div>
     <div class="pipeline" id="pipeline"></div>
     <div class="scanner" id="scanner" aria-live="off"></div>
@@ -661,7 +759,7 @@
         <label><input type="checkbox" id="lgRetired"> Show retired</label>
       </div>
       <div class="tablewrap"><table class="board">
-        <thead><tr><th class="num">#</th><th>Strategy</th><th class="num"><span class="long">Steady score</span><span class="short">Score</span></th><th class="num">Profit</th><th class="num opt">Win rate</th><th class="num opt">Trades</th><th class="num opt">Worst drop</th><th class="opt" title="Work ethic · Creativity · Knowledge">Work · Create · Know</th></tr></thead>
+        <thead><tr><th class="num">#</th><th>Strategy</th><th class="num"><span class="long">Steady score</span><span class="short">Score</span></th><th class="num">Profit</th><th class="num opt">Win rate</th><th class="num opt">Trades</th><th class="num opt">Worst drop</th><th class="opt" title="Work ethic, Creativity, Knowledge">Work / Create / Know</th></tr></thead>
         <tbody id="lgBody"></tbody>
       </table></div>
       <p class="meta" id="lgFoot"></p>
@@ -680,6 +778,7 @@
           <li>The worst get a <b>diagnosis</b> (why it didn't work) and retire. Rookies take their place.</li>
           <li><b>Work ethic</b> = how busy it is. <b>Creativity</b> = how different its clones are. <b>Knowledge</b> = how many safety checks it uses.</li>
         </ul>
+        <p class="meta"><a href="#/league-backtest">See the last backtest round</a> and the evolution log.</p>
       </section>
     </div>
   </main>
@@ -720,6 +819,149 @@
     </section>
   </main>
 
+  <main id="viewLab" hidden>
+    <section class="card section lab-empty" id="labEmpty" hidden>
+      <h2>No game history on this computer yet</h2>
+      <p>The lab tests ideas against Kalshi's settled games: who won, and what each side cost every hour before the start. The first download covers the last 90 days and takes a few minutes. It only reads public data.</p>
+      <button class="btn primary" type="button" id="labGet">Download game history</button>
+      <div class="lab-progress" id="labProgress" hidden><div class="bar"><i id="labBar"></i></div><span class="meta" id="labProgressText"></span></div>
+    </section>
+
+    <div class="lab" id="labMain" hidden>
+      <form class="card lab-controls" id="labForm" autocomplete="off">
+        <button class="btn lab-toggle" type="button" id="labToggle" aria-expanded="false">Change settings</button>
+        <div class="lab-fields">
+          <div class="field-head">Start from an idea</div>
+          <div class="chips" id="labPresets"></div>
+
+          <fieldset>
+            <legend>What to buy</legend>
+            <label class="field"><span>Side of the game</span>
+              <select id="lfPick">
+                <option value="favorite">The favorite</option>
+                <option value="underdog">The underdog</option>
+                <option value="riser">The side whose price rose</option>
+                <option value="faller">The side whose price fell</option>
+                <option value="all">Every side in the price range</option>
+              </select></label>
+            <div class="field"><span id="lfPriceLabel">Price when bought</span>
+              <div class="pair"><input type="number" id="lfMin" min="1" max="99" step="1" inputmode="numeric" aria-label="Lowest price in cents"><i>to</i><input type="number" id="lfMax" min="1" max="99" step="1" inputmode="numeric" aria-label="Highest price in cents"><i>¢</i></div></div>
+            <label class="field"><span>Buy</span><select id="lfEntry"></select></label>
+            <div class="field" id="lfMoveRow"><span>Moved at least</span>
+              <div class="pair"><input type="number" id="lfMove" min="0.5" max="50" step="0.5" inputmode="decimal" aria-label="Smallest move in cents"><i>¢ since</i><select id="lfFrom" aria-label="Compared with the price"></select></div></div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Which games</legend>
+            <div class="chips" id="lfLeagues"></div>
+            <div class="field two"><label><span>From</span><input type="date" id="lfStart"></label><label><span>To</span><input type="date" id="lfEnd"></label></div>
+          </fieldset>
+
+          <fieldset>
+            <legend>How it trades</legend>
+            <label class="field"><span>Order</span>
+              <select id="lfExec"><option value="taker">Buy right away at the ask</option><option value="maker">Rest an order at the bid</option></select></label>
+            <label class="field"><span>Exit</span>
+              <select id="lfExit"><option value="result">Hold to the result</option><option value="pregame">Sell before the game</option></select></label>
+            <label class="field" id="lfExitRow"><span>Sell</span><select id="lfExitH"></select></label>
+            <div class="field"><span>Skip prices from a book wider than</span>
+              <div class="pair"><input type="number" id="lfSpread" min="1" max="20" step="1" inputmode="numeric" aria-label="Widest bid-ask gap in cents"><i>¢</i></div></div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Money</legend>
+            <div class="field"><span>Bankroll</span><div class="pair"><i>$</i><input type="number" id="lfBank" min="10" step="50" inputmode="numeric" aria-label="Starting bankroll in dollars"></div></div>
+            <label class="field"><span>Bet size</span>
+              <select id="lfStake"><option value="flat">The same amount every bet</option><option value="percent">A share of the bankroll</option></select></label>
+            <div class="field" id="lfSizeRow"><span>Each bet</span><div class="pair"><i>$</i><input type="number" id="lfSize" min="1" step="5" inputmode="numeric" aria-label="Dollars per bet"></div></div>
+            <div class="field" id="lfPctRow"><span>Each bet</span><div class="pair"><input type="number" id="lfPct" min="0.1" max="100" step="0.5" inputmode="decimal" aria-label="Percent of the bankroll per bet"><i>% of the bankroll</i></div></div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Simulation</legend>
+            <label class="field"><span>Futures to simulate</span>
+              <select id="lfRuns"><option value="1000">1,000</option><option value="2000">2,000</option><option value="5000">5,000</option><option value="10000">10,000</option></select></label>
+            <label class="field"><span>Bets in each future</span>
+              <select id="lfHorizon"><option value="0">As many as the test made</option><option value="50">50</option><option value="100">100</option><option value="250">250</option><option value="500">500</option><option value="1000">1,000</option></select></label>
+            <div class="field"><span>Count it as ruin when it loses</span><div class="pair"><input type="number" id="lfRuin" min="5" max="95" step="5" inputmode="numeric" aria-label="Percent of the bankroll lost"><i>% of the bankroll</i></div></div>
+          </fieldset>
+          <button class="btn" type="button" id="labDefaults">Back to the starting settings</button>
+        </div>
+      </form>
+
+      <div class="lab-results" id="labResults" aria-live="polite">
+        <section class="card lab-head">
+          <p class="lab-plain" id="labPlain"></p>
+          <div class="lab-top">
+            <div>
+              <div class="label">Profit / loss in the test</div>
+              <div class="value" id="labPnl">—</div>
+              <div class="sub" id="labPnlSub"></div>
+            </div>
+            <div class="lab-verdict" id="labVerdict"></div>
+          </div>
+          <dl class="stats" id="labStats"></dl>
+          <ul class="lab-notes" id="labNotes" hidden></ul>
+        </section>
+
+        <section class="card section">
+          <div class="card-head"><h2>Profit and loss, bet by bet</h2><span class="meta" id="labEquityNote"></span></div>
+          <div class="chartbox lab-chart" id="labEquity" role="img" aria-label="Profit and loss through the test, bet by bet. The figures are in the tiles above and the tables below."></div>
+          <div class="tip" id="labEquityTip"></div>
+        </section>
+
+        <section class="card section" id="labMcCard">
+          <div class="card-head"><h2>What could happen next</h2><button class="why" type="button" id="labReroll" title="Draw a fresh set of random futures">Run it again</button></div>
+          <p class="meta lab-lede" id="labMcLede"></p>
+          <dl class="stats" id="labMcStats"></dl>
+          <div class="lab-two">
+            <div>
+              <h3>The range of outcomes as the bets add up</h3>
+              <div class="chartbox lab-chart" id="labFan" role="img" aria-label="The range of simulated profit and loss as the bets add up. The figures are in the tiles above."></div>
+              <div class="tip" id="labFanTip"></div>
+              <div class="legend" id="labFanLegend"></div>
+            </div>
+            <div>
+              <h3>Where the futures ended</h3>
+              <div class="chartbox lab-chart" id="labHist" role="img" aria-label="How many simulated futures ended in each profit range. The figures are in the tiles above."></div>
+              <div class="tip" id="labHistTip"></div>
+              <div class="legend"><span><i class="key bar"></i>Share of futures ending in each profit range</span></div>
+            </div>
+          </div>
+          <p class="meta" id="labMcNote">Each future draws bets at random from the test's own results and runs them through the same bet sizing. It shows how wide luck can swing if the next bets look like these. It can't know whether they will, and it treats every bet as independent.</p>
+        </section>
+
+        <section class="card section">
+          <div class="card-head"><h2>Where it won and lost</h2>
+            <div class="seg" id="labSlice" role="group" aria-label="Break the results down by"><button type="button" data-v="byLeague">League</button><button type="button" data-v="byMonth">Month</button><button type="button" data-v="byPrice">Price</button></div></div>
+          <div class="tablewrap"><table class="lab-table">
+            <thead><tr><th id="labSliceHead">League</th><th class="num">Bets</th><th class="num opt">Won</th><th class="num opt">Paid on average</th><th class="num opt" title="Win rate minus the average price paid. Above zero means the side won more often than its price said.">Won vs price</th><th class="num">Return per $1</th><th class="num">Profit / loss</th></tr></thead>
+            <tbody id="labSliceBody"></tbody>
+          </table></div>
+        </section>
+
+        <section class="card section">
+          <div class="card-head"><h2>The bets</h2><span class="meta" id="labTradesNote"></span></div>
+          <div class="tablewrap"><table class="lab-table">
+            <thead><tr><th>Bet</th><th class="opt">Game started</th><th class="num">Paid</th><th>Outcome</th><th class="num opt">Stake</th><th class="num">Profit / loss</th></tr></thead>
+            <tbody id="labTradesBody"></tbody>
+          </table></div>
+          <button class="btn lab-more" type="button" id="labMore" hidden>Show 25 more</button>
+        </section>
+
+        <section class="card section" id="labYamlCard" hidden>
+          <div class="card-head"><h2>Run this as a paper strategy</h2><button class="why" type="button" id="labCopy">Copy</button></div>
+          <p class="meta">Paste this under <code>rules:</code> in <code>rules/example.yaml</code> and restart the bot. It trades in paper only.</p>
+          <pre class="lab-yaml" id="labYaml"></pre>
+        </section>
+
+        <p class="meta lab-data" id="labData"></p>
+        <div class="lab-progress" id="labProgress2" hidden><div class="bar"><i id="labBar2"></i></div><span class="meta" id="labProgressText2"></span></div>
+        <p class="meta"><a href="#/league-backtest">League backtests</a> replay the bot's own strategies on the prices this computer recorded.</p>
+      </div>
+    </div>
+  </main>
+
   <main id="viewBacktest" hidden>
     <section class="card section">
       <div class="arb-head"><h2>Last backtest</h2><span class="arb-note">Real past prices, replayed hour by hour through the same rules, checks and fees. Pretend money.</span></div>
@@ -741,9 +983,8 @@
 
   <main id="viewLive" hidden>
     <section class="card section">
-      <h2>Live money</h2>
-      <p>Live trading is <b>off</b>. Nothing in this bot places real orders.</p>
-      <p class="meta">This tab will show real-money trades side by side with paper and backtest results once you ask to turn live trading on. Until then every number on this dashboard is pretend money.</p>
+      <h2>Live trading is off</h2>
+      <p class="lede">Nothing in this bot places real orders, and every number on this dashboard is pretend money. If live trading is ever turned on, real trades will show here next to the paper and backtest results.</p>
     </section>
   </main>
 
@@ -865,21 +1106,21 @@
       const last = loop.lastRunAt ? `last check ${ago(loop.lastRunAt)}` : "";
       const f = loop.fast;
       const live = f && f.streams && f.streams.length
-        ? `Live prices: ${f.streams.map((s) => `${platformLabel(s.platform)} ${s.state === "live" ? "✓" : s.state === "auth_failed" ? "✗ key rejected" : "…"}`).join(" · ")} · quick check every ${f.tickSec}s · `
+        ? `Live prices: ${f.streams.map((s) => `${platformLabel(s.platform)} ${s.state === "live" ? "✓" : s.state === "auth_failed" ? "✗ key rejected" : "…"}`).join(", ")}, quick check every ${f.tickSec}s, `
         : "";
       text.textContent = secs == null
-        ? `${live}Running · ${last}`
-        : `${live}Running · next full check in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}${last ? ` · ${last}` : ""}`;
+        ? `${live}Running, ${last}`
+        : `${live}Running, next full check in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}${last ? `, ${last}` : ""}`;
       return;
     }
     const updated = state.ledger.updatedAt;
     const staleMin = updated ? (nowMs() - new Date(updated).getTime()) / 60000 : Infinity;
     if (staleMin > 20) {
       dot.classList.add("stale");
-      text.textContent = updated ? `Not trading · last update ${ago(updated)}` : "Not trading yet";
+      text.textContent = updated ? `Not trading, last update ${ago(updated)}` : "Not trading yet";
     } else {
       dot.classList.add("live");
-      text.textContent = `Watching · last update ${ago(updated)}`;
+      text.textContent = `Watching, last update ${ago(updated)}`;
     }
   }
   setInterval(renderStatus, 1000);
@@ -965,7 +1206,7 @@
   }
   function shortUsd(v) {
     const a = Math.abs(v);
-    const body = a >= 1000 ? `$${(a / 1000).toFixed(a >= 10000 ? 0 : 1)}k` : `$${a % 1 ? a.toFixed(2) : a}`;
+    const body = a >= 1000 ? `$${(a / 1000).toFixed(a >= 10000 ? 0 : 1).replace(/\.0$/, "")}k` : `$${a % 1 ? a.toFixed(2) : a}`;
     return (v < 0 ? MINUS : "") + body;
   }
   function renderChart() {
@@ -1096,18 +1337,6 @@
       if (btn) btn.disabled = false;
     }
   }
-  function ctlButton(r) {
-    const paused = r.pausedUntil && new Date(r.pausedUntil).getTime() > nowMs();
-    const start = r.stopped || paused;
-    const b = el("button", {
-      class: `btn ctl${start ? " go" : ""}`,
-      type: "button",
-      title: start ? (paused && !r.stopped ? "Lift the loss pause and trade again" : "Trade again") : "No new trades (open ones are still managed)",
-    }, start ? "▶" : "⏹", el("span", { class: "word", text: start ? " Start" : " Stop" }));
-    b.setAttribute("aria-label", `${start ? "Start" : "Stop"} ${r.name}`);
-    b.addEventListener("click", () => sendControl({ action: start ? "start" : "stop", id: r.ruleId }, b));
-    return b;
-  }
   /** On = trading. Off = no new trades (open ones are still managed). A loss pause counts as off. */
   function ctlSwitch(r) {
     const paused = r.pausedUntil && new Date(r.pausedUntil).getTime() > nowMs();
@@ -1135,13 +1364,13 @@
     all.hidden = !bots.length;
     all.disabled = false;
     all.className = `btn ctl${c.allStopped ? " go" : ""}`;
-    all.textContent = c.allStopped ? "▶ Start all" : "⏹ Stop all";
+    all.textContent = c.allStopped ? "Start all" : "Stop all";
     all.title = c.allStopped ? "Every bot trades again (loss pauses lifted)" : "No new trades anywhere (open trades are still managed)";
     all.onclick = () => sendControl({ action: c.allStopped ? "start" : "stop", all: true }, all);
     $("ctlNote").textContent = c.allStopped
       ? `All bots stopped ${c.allStoppedAt ? ago(c.allStoppedAt) : ""}: no new trades. Open trades still sell at their exits and settle.`
       : nStopped || nPaused
-        ? `${bots.length - nStopped - nPaused} of ${bots.length} trading · ${nStopped} stopped · ${nPaused} paused after losses. Stop = no new trades (open ones are still managed); Start lifts a pause.`
+        ? `${bots.length - nStopped - nPaused} of ${bots.length} trading, ${nStopped} stopped, ${nPaused} paused after losses. Switching a strategy off stops new trades (open ones are still managed); switching it on lifts a pause.`
         : `All ${bots.length} trading.`;
   }
 
@@ -1442,7 +1671,7 @@
       const isK = l.source === "kalshi";
       const pr = l.parlays && (l.parlays.won + l.parlays.lost) > 0 ? `parlays ${l.parlays.won}W / ${l.parlays.lost}L` : "";
       lb.append(el("tr", null,
-        el("td", null, el("div", { text: l.name }), el("div", { class: "meta", text: isK ? "Kalshi" : `Polymarket · ${l.wallet.slice(0, 6)}…${l.wallet.slice(-4)}` })),
+        el("td", null, el("div", { text: l.name }), el("div", { class: "meta", text: isK ? "Kalshi" : `Polymarket, ${l.wallet.slice(0, 6)}…${l.wallet.slice(-4)}` })),
         isK
           ? el("td", { class: "num" }, "n/a", el("div", { class: "meta", text: pr || "Kalshi doesn't publish it" }))
           : el("td", { class: "num" }, `${Math.round(l.winRate * 100)}%`, el("div", { class: "meta", text: `of ${l.decided}` })),
@@ -1461,8 +1690,8 @@
       ul.append(el("li", { style: "cursor:default" },
         el("span", { class: `outcome ${k}`, text: label }),
         el("div", null,
-          el("div", { text: `${d.leader} bought ${d.outcome} · ${d.title}` }),
-          el("div", { class: "meta", text: `${cents(d.price)} · ${compactUsd(d.usd).replace("+", "")} · ${ago(d.at)}${detail ? ` — ${detail}` : ""}` }))));
+          el("div", { text: `${d.leader} bought ${d.outcome} in ${shortMarket(d.title).name}` }),
+          el("div", { class: "meta", text: `${cents(d.price)}, ${compactUsd(d.usd).replace("+", "")}, ${ago(d.at)}${detail ? ` — ${detail}` : ""}` }))));
     }
   }
 
@@ -1485,7 +1714,7 @@
         const href = safeUrl(l.url);
         const name = href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: l.title }) : el("span", { text: l.title });
         const st = l.status === "open" ? (l.lastPrice != null ? `now ${cents(l.lastPrice)}` : "open") : l.status;
-        ul.append(el("li", null, el("span", { class: "side", text: String(l.side).toUpperCase() }), `${cents(l.entryPrice)} · `, name, ` · ${st}`));
+        ul.append(el("li", null, el("span", { class: "side", text: String(l.side).toUpperCase() }), `${cents(l.entryPrice)}, `, name, `, ${st}`));
       }
       return ul;
     };
@@ -1493,9 +1722,9 @@
       const [k, label] = p.status === "won" ? ["ok", "Won"] : p.status === "lost" ? ["no", "Lost"] : p.status === "void" ? ["info", "Void"] : ["info", "Open"];
       const from = p.leader ? `copied from ${p.leader.name} (${compactUsd(p.leader.usd).replace("+", "")} at ${cents(p.leader.price)})` : "built from leaders' bets";
       const money = p.status === "open"
-        ? `$${p.stakeUsd.toFixed(2)} to win $${p.payoutUsd.toFixed(2)} · worth now ~$${(p.markValueUsd ?? p.stakeUsd).toFixed(2)}`
+        ? `$${p.stakeUsd.toFixed(2)} to win $${p.payoutUsd.toFixed(2)}, worth now ~$${(p.markValueUsd ?? p.stakeUsd).toFixed(2)}`
         : `$${p.stakeUsd.toFixed(2)} → `;
-      const meta = el("div", { class: "meta" }, `${platformLabel(p.platform)} · ${cents(p.price)} (pays ${(1 / p.price).toFixed(1)}×) · ${from} · ${ago(p.openedAt)} · ${money}`);
+      const meta = el("div", { class: "meta" }, `${platformLabel(p.platform)}, ${cents(p.price)} (pays ${(1 / p.price).toFixed(1)}×), ${from}, ${ago(p.openedAt)}, ${money}`);
       if (p.status !== "open") meta.append(pnlNode(p.realizedPnlUsd || 0));
       return el("li", { style: "cursor:default" }, el("span", { class: `outcome ${k}`, text: label }), el("div", null, el("div", { text: `${p.legs.length}-leg parlay` }), meta, legsOf(p)));
     };
@@ -1510,9 +1739,9 @@
     fill("parlayPool", (v ? v.pool : []).slice(0, 15).map((l) => el("li", { style: "cursor:default" },
       el("span", { class: "outcome info", text: cents(l.leaderPrice) }),
       el("div", null,
-        el("div", { text: `${String(l.side).toUpperCase()} · ${l.title}` }),
-        el("div", { class: "meta", text: `${platformLabel(l.platform)} · ${compactUsd(l.backingUsd).replace("+", "")} from ${l.leaders.join(", ")} · ${ago(l.lastAt)}` +
-          (v && l.backingUsd < v.minBackingUsd ? ` · needs ${compactUsd(v.minBackingUsd).replace("+", "")} of backing` : v && (l.leaderPrice < v.minLegPrice || l.leaderPrice > v.maxLegPrice) ? ` · bought at ${cents(l.leaderPrice)}; legs must cost ${cents(v.minLegPrice)}–${cents(v.maxLegPrice)}` : v ? ` · waiting for ${v.legsPerParlay} legs on one exchange` : "") })))),
+        el("div", { text: `${String(l.side).toUpperCase()}: ${l.title}` }),
+        el("div", { class: "meta", text: `${platformLabel(l.platform)}, ${compactUsd(l.backingUsd).replace("+", "")} from ${l.leaders.join(", ")}, ${ago(l.lastAt)}` +
+          (v && l.backingUsd < v.minBackingUsd ? `, needs ${compactUsd(v.minBackingUsd).replace("+", "")} of backing` : v && (l.leaderPrice < v.minLegPrice || l.leaderPrice > v.maxLegPrice) ? `, bought at ${cents(l.leaderPrice)}; legs must cost ${cents(v.minLegPrice)}–${cents(v.maxLegPrice)}` : v ? `, waiting for ${v.legsPerParlay} legs on one exchange` : "") })))),
       v ? `No leader bets on ${platformLabel("kalshi")} / ${platformLabel("polymarket_us")} yet.` : "Shows while npm run paper:watch is running.");
     const BADGE = { opened: ["ok", "Placed"], alerted: ["info", "Idea"], skipped: ["info", "Skipped"] };
     fill("parlayRecent", (v ? v.recent : []).slice(0, 15).map((d) => {
@@ -1520,7 +1749,7 @@
       const who = d.kind === "leader" ? `${d.leader}'s parlay` : "Built parlay";
       return el("li", { style: "cursor:default" }, el("span", { class: `outcome ${k}`, text: label }),
         el("div", null,
-          el("div", { text: `${who}${d.legs ? ` · ${d.legs} legs` : ""}${d.usd ? ` · ${compactUsd(d.usd).replace("+", "")}` : ""}${d.price != null ? ` · ${cents(d.price)}` : ""}` }),
+          el("div", { text: `${who}${d.legs ? `, ${d.legs} legs` : ""}${d.usd ? `, ${compactUsd(d.usd).replace("+", "")}` : ""}${d.price != null ? `, ${cents(d.price)}` : ""}` }),
           el("div", { class: "meta", text: `${ago(d.at)} — ${d.reason || d.title}` })));
     }), "No parlays yet.");
   }
@@ -1545,7 +1774,7 @@
         ? `Paper ${String(u.side).toUpperCase()} (${(state.ruleNames || {})[u.ruleId] || rulesById[u.ruleId]?.name || u.ruleId})`
         : `Alert — would ${m.direction === "up" ? "buy YES" : "buy NO"}`;
       body.append(el("tr", null,
-        el("td", { class: "title" }, title, el("div", { class: "meta", text: `${platformLabel(u.platform)} · now ${cents(u.yesPrice)}` })),
+        el("td", { class: "title" }, title, el("div", { class: "meta", text: `${platformLabel(u.platform)}, now ${cents(u.yesPrice)}` })),
         el("td", { class: "num" }, el("span", { class: m.direction === "up" ? "pos" : "neg", text: `${m.direction === "up" ? "+" : MINUS}${(Math.abs(m.move) * 100).toFixed(1)}¢` }), el("div", { class: "meta", text: `${cents(m.from)} → ${cents(m.to)} in ${m.windowMinutes}m` })),
         el("td", { class: "num", text: `${m.zscore}σ` }),
         el("td", { class: "num", text: m.volumeRatio != null ? `${m.volumeRatio}×` : "—" }),
@@ -1556,7 +1785,7 @@
 
   // ---------- how the bot decides ----------
   const STAGE_LABEL = { filters: "Filters", signal: "Signal", position: "Position", risk: "Risk", fill: "Trade" };
-  const STAGE_TITLE = { filters: "1 · Market filters", signal: "2 · Entry signal", position: "3 · Position", risk: "4 · Risk limits", fill: "5 · Trade" };
+  const STAGE_TITLE = { filters: "1. Market filters", signal: "2. Entry signal", position: "3. Position", risk: "4. Risk limits", fill: "5. Trade" };
   const STAGE_ORDER = ["filters", "signal", "position", "risk", "fill"];
   const OUTCOME = {
     traded: ["ok", "Traded"], alerted: ["info", "Alert"], risk_blocked: ["no", "Blocked by risk"],
@@ -1595,35 +1824,35 @@
     const rule = rulesById[p.ruleId]?.name || p.ruleId;
     const head = [
       el("h3", { text: p.title }),
-      el("div", { class: "meta", text: `${rule} · ${platformLabel(p.platform)} · ${p.side.toUpperCase()} · opened ${new Date(p.entryAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }),
+      el("div", { class: "meta", text: `${rule}, ${platformLabel(p.platform)}, ${p.side.toUpperCase()}, opened ${new Date(p.entryAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }),
     ];
     const after = el("div", { class: "story-stage" });
     if (p.status === "open") {
       const pnl = p.unrealizedPnlUsd || 0;
-      after.append(el("h4", { text: "6 · Since then" }),
+      after.append(el("h4", { text: "6. Since then" }),
         el("div", { class: "chk ok" }, el("span", { class: "i", text: "•" }), el("span", { class: "n", text: "Worth now" }),
-          el("span", { class: "d" }, `${cents(p.lastMarkPrice)} (bought at ${cents(p.entryPrice)}) · P/L `, pnlNode(pnl))));
+          el("span", { class: "d" }, `${cents(p.lastMarkPrice)} (bought at ${cents(p.entryPrice)}), P/L `, pnlNode(pnl))));
       if (p.peakMarkPrice != null) after.append(el("div", { class: "chk ok" }, el("span", { class: "i", text: "•" }), el("span", { class: "n", text: "Best price so far" }), el("span", { class: "d", text: cents(p.peakMarkPrice) })));
       after.append(el("p", { class: "meta", text: "Each check the bot re-prices this at the bid and tests its exits (stop loss, trailing stop, take profit, time limits) before looking for new trades." }));
     } else {
-      after.append(el("h4", { text: "6 · How it closed" }),
+      after.append(el("h4", { text: "6. How it closed" }),
         el("div", { class: `chk ${(p.realizedPnlUsd || 0) >= 0 ? "ok" : "bad"}` }, el("span", { class: "i", text: (p.realizedPnlUsd || 0) >= 0 ? "✓" : "✗" }),
           el("span", { class: "n", text: REASONS[p.exitReason] || p.exitReason || "Closed" }),
-          el("span", { class: "d" }, `${p.exitDetail ? p.exitDetail + " · " : ""}${cents(p.entryPrice)} → ${cents(p.exitPrice)} · P/L `, pnlNode(p.realizedPnlUsd || 0))));
+          el("span", { class: "d" }, `${p.exitDetail ? p.exitDetail + ", " : ""}${cents(p.entryPrice)} → ${cents(p.exitPrice)}, P/L `, pnlNode(p.realizedPnlUsd || 0))));
     }
     openStory(head, p.entryTrace, [after]);
   }
   function arbStory(a) {
-    const head = [el("h3", { text: a.title }), el("div", { class: "meta", text: `${a.kindLabel} · opened ${new Date(a.openedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` })];
-    const after = el("div", { class: "story-stage" }, el("h4", { text: a.status === "open" ? "6 · Since then" : "6 · How it closed" }));
+    const head = [el("h3", { text: a.title }), el("div", { class: "meta", text: `${a.kindLabel}, opened ${new Date(a.openedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` })];
+    const after = el("div", { class: "story-stage" }, el("h4", { text: a.status === "open" ? "6. Since then" : "6. How it closed" }));
     after.append(el("div", { class: "chk ok" }, el("span", { class: "i", text: "•" }), el("span", { class: "n", text: a.status === "open" ? "Locked in" : "Result" }),
-      el("span", { class: "d" }, a.status === "open" ? "" : `${REASONS[a.closeReason] || a.closeReason} · `, pnlNode(a.status === "open" ? a.expectedProfitUsd : a.realizedPnlUsd || 0), a.status === "open" ? " if every leg settles as expected" : ` (expected ${usd(a.expectedProfitUsd)})`)));
+      el("span", { class: "d" }, a.status === "open" ? "" : `${REASONS[a.closeReason] || a.closeReason}, `, pnlNode(a.status === "open" ? a.expectedProfitUsd : a.realizedPnlUsd || 0), a.status === "open" ? " if every leg settles as expected" : ` (expected ${usd(a.expectedProfitUsd)})`)));
     openStory(head, a.entryTrace, [after]);
   }
   function decisionStory(d, rulesById) {
     const rule = rulesById[d.ruleId]?.name || (state.ruleNames || {})[d.ruleId] || d.ruleId;
     const [k, label] = OUTCOME[d.outcome] || ["info", d.outcome];
-    openStory([el("h3", { text: d.market.title }), el("div", { class: "meta" }, `${rule} · ${platformLabel(d.market.platform)} · YES ${cents(d.market.yesPrice)} · `, el("span", { class: `outcome ${k}`, text: label }))], d.checks);
+    openStory([el("h3", { text: d.market.title }), el("div", { class: "meta" }, `${rule}, ${platformLabel(d.market.platform)}, YES ${cents(d.market.yesPrice)}, `, el("span", { class: `outcome ${k}`, text: label }))], d.checks);
   }
 
   let replayToken = 0;
@@ -1647,7 +1876,7 @@
         dots.append(el("span", { class: c }, (i < upto || (i === upto && !failed)) && i <= reach ? "✓ " : failed && i === upto ? "✗ " : "", STAGE_LABEL[st]));
       });
       box.replaceChildren(
-        el("div", { class: "scan-head" }, el("span", { class: "scan-title", text: s.title }), el("span", { class: "meta", text: `${rule} · ${platformLabel(s.platform)}` })),
+        el("div", { class: "scan-head" }, el("span", { class: "scan-title", text: s.title }), el("span", { class: "meta", text: `${rule}, ${platformLabel(s.platform)}` })),
         dots,
         el("div", { class: "scan-reason", text: failed ? `Dropped: ${s.fail || ""}` : upto >= reach && s.passed ? "Passed every check → trade / alert" : "" }),
       );
@@ -1700,7 +1929,7 @@
       ["Entry signal", sum("signals"), "the strategy's trigger"],
       ["Position OK", sum("passedPosition"), "not held, no cool-down"],
       ["Risk OK", sum("passedRisk"), "pause, caps, bankroll"],
-      ["Done", paperDone + alertDone, `${paperDone} paper trade${paperDone === 1 ? "" : "s"} · ${alertDone} alert${alertDone === 1 ? "" : "s"}`],
+      ["Done", paperDone + alertDone, `${paperDone} paper trade${paperDone === 1 ? "" : "s"}, ${alertDone} alert${alertDone === 1 ? "" : "s"}`],
     ];
     const top = stages[0][1] || 1;
     stages.forEach(([lbl, n, sub], i) => {
@@ -1769,8 +1998,8 @@
     set(k, v) { try { localStorage.setItem("pb." + k, v); } catch { /* private window */ } },
   };
   const ui = { src: pref.get("src", "backtest"), sort: pref.get("sort", "score"), retired: pref.get("retired", "0") === "1", chartSrc: "backtest", tradeSrc: "backtest", range: pref.get("range", "all") };
-  const STATUS_LABEL = { champion: "🏆 Champion", rookie: "Rookie", retired: "Retired", house: "Your rule", active: "" };
-  const EVENT_ICON = { born: "✦", cloned: "⧉", retired: "✕", champion: "🏆", round: "↻" };
+  const STATUS_LABEL = { champion: "Champion", rookie: "Rookie", retired: "Retired", house: "Your rule", active: "" };
+  const EVENT_ICON = { born: "✦", cloned: "⧉", retired: "✕", champion: "★", round: "↻" };
   const ROMAN_N = { II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10 };
   /** "Blaze" → "B", "Blaze III" → "B3". */
   function initials(name) {
@@ -1797,13 +2026,13 @@
     }
   }
   function traitBars(t) {
-    const row = el("div", { class: "traits", title: `Work ethic ${pct(t.hustle)} · Creativity ${pct(t.creativity)} · Knowledge ${pct(t.knowledge)}` });
+    const row = el("div", { class: "traits", title: `Work ethic ${pct(t.hustle)}, Creativity ${pct(t.creativity)}, Knowledge ${pct(t.knowledge)}` });
     for (const v of [t.hustle, t.creativity, t.knowledge]) row.append(el("div", { class: "trait" }, el("i", { style: `width:${Math.round(v * 100)}%` })));
     return row;
   }
   function whoCell(p) {
-    const sub = (p.house ? `${p.ruleName}` : `${p.style}${p.generation > 1 ? ` · gen ${p.generation}` : ""}${p.parentName ? ` · child of ${p.parentName}` : ""}`) +
-      (p.benched ? ` · benched: ${p.benched}` : "");
+    const sub = (p.house ? `${p.ruleName}` : `${p.style}${p.generation > 1 ? `, gen ${p.generation}` : ""}${p.parentName ? `, child of ${p.parentName}` : ""}`) +
+      (p.benched ? `, benched: ${p.benched}` : "");
     return el("td", null, el("div", { class: "who" }, avatar(p), el("div", null, el("div", null, el("span", { class: "nm", text: p.name }), statusTag(p)), el("div", { class: "meta", text: sub }))));
   }
   function rankList(src, sort, withRetired) {
@@ -1837,7 +2066,7 @@
       : loopL && loopL.running
         ? `Round ${lg.round + 1} is running now (backtest + evolution)… ${loopL.lastLine || ""}`
         : lg.round
-          ? `Round ${lg.round}${lr ? ` · backtested ${ago(lr.at)}` : ""}${next != null ? ` · next round ${next > 0 ? `in ${Math.max(1, Math.round(next / 3600000))}h` : "soon"}` : ""}`
+          ? `Round ${lg.round}${lr ? `, backtested ${ago(lr.at)}` : ""}${next != null ? `, next round ${next > 0 ? `in ${Math.max(1, Math.round(next / 3600000))}h` : "soon"}` : ""}`
           : "No rounds yet. The first one starts with npm run paper:watch (or run npm run league).";
     const rows = rankList(ui.src, ui.sort, ui.retired);
     if (!rows.length) body.append(emptyRow(8, "No strategies yet."));
@@ -1903,7 +2132,7 @@
     loadStrategy(id);
     const life = p.house
       ? `Your rule "${p.ruleName}"`
-      : `${p.style} — ${p.idea}. Generation ${p.generation}${p.bornAt ? ` · joined ${ago(p.bornAt)}` : ""}${p.retiredAt ? ` · retired ${ago(p.retiredAt)}` : ""}`;
+      : `${p.style} — ${p.idea}. Generation ${p.generation}${p.bornAt ? `, joined ${ago(p.bornAt)}` : ""}${p.retiredAt ? `, retired ${ago(p.retiredAt)}` : ""}`;
     const parent = p.parentId ? el("div", { class: "meta" }, "Cloned from ", el("a", { href: `#/s/${encodeURIComponent(p.parentId)}`, text: p.parentName || p.parentId })) : null;
     const bench = p.benched ? el("div", { class: "meta" }, `Benched (no paper trades) until its backtest passes: ${p.benched}.`) : null;
     prof.replaceChildren(avatar(p, true), el("div", null, el("h2", null, p.name, statusTag(p)), el("div", { class: "meta", text: life }), parent, bench));
@@ -1911,9 +2140,9 @@
     const bt = p.backtest && p.backtest.all, test = p.backtest && p.backtest.test, pa = p.paper;
     $("sKpis").replaceChildren(
       kpi("Steady score", el("span", { class: p.ranked ? cls(p.score) : "", text: p.ranked ? score(p.score) : "—" }), p.ranked ? "used for its rank" : `needs ${state.league.minTrades} finished trades`),
-      kpi("Backtest profit", bt ? pnlNode(bt.pnlUsd) : el("span", { text: "—" }), bt ? `${bt.trades} trades · ${bt.wins + bt.losses ? pct(bt.winRate) : "—"} won${bt.open ? ` · ${bt.open} still open` : ""}` : "not tested yet"),
+      kpi("Backtest profit", bt ? pnlNode(bt.pnlUsd) : el("span", { text: "—" }), bt ? `${bt.trades} trades, ${bt.wins + bt.losses ? pct(bt.winRate) : "—"} won${bt.open ? `, ${bt.open} still open` : ""}` : "not tested yet"),
       kpi("Held-out last part", test ? pnlNode(test.pnlUsd) : el("span", { text: "—" }), test ? `${test.trades + test.open} trades bought then` : ""),
-      kpi("Paper profit", pnlNode(pa.pnlUsd), `${pa.trades} closed · ${pa.open} open`),
+      kpi("Paper profit", pnlNode(pa.pnlUsd), `${pa.trades} closed, ${pa.open} open`),
       kpi("Fees paid", el("span", { text: usd((bt ? bt.feesUsd : 0) + pa.feesUsd) }), "backtest + paper"),
     );
 
@@ -2028,8 +2257,455 @@
   }
 
   // ---------- pages ----------
+
+  // ================= Backtest lab =================
+  // Settings live here and in the address of each /api/lab/run request; the server does the maths.
+  const LAB_DEFAULT = { pick: "favorite", min: 85, max: 95, entry: 1, from: 12, move: 2, spread: 5, leagues: [], start: "", end: "", exec: "taker", exit: "result", exitH: 1, stake: "flat", size: 25, pct: 2, bank: 1000, runs: 2000, horizon: 0, ruin: 50, seed: 1 };
+  const LAB_PRESETS = [
+    { name: "Favorites 85–95¢", set: { pick: "favorite", min: 85, max: 95, entry: 1, exec: "taker", exit: "result" } },
+    { name: "All favorites", set: { pick: "favorite", min: 50, max: 95, entry: 1, exec: "taker", exit: "result" } },
+    { name: "Late movers", set: { pick: "riser", min: 30, max: 95, entry: 1, from: 12, move: 2, exec: "taker", exit: "result" } },
+    { name: "Buy the dip", set: { pick: "faller", min: 30, max: 95, entry: 1, from: 12, move: 2, exec: "taker", exit: "result" } },
+    { name: "Long shots", set: { pick: "underdog", min: 5, max: 30, entry: 1, exec: "taker", exit: "result" } },
+    { name: "Buy early, sell before the game", set: { pick: "favorite", min: 55, max: 90, entry: 24, exec: "taker", exit: "pregame", exitH: 1 } },
+  ];
+  const lab = { p: { ...LAB_DEFAULT }, status: null, result: null, slice: "byLeague", shown: 25, booted: false, seq: 0, runTimer: 0, pollTimer: 0, error: "" };
+  try { Object.assign(lab.p, JSON.parse(pref.get("lab", "{}"))); } catch { /* start from the defaults */ }
+  if (!Array.isArray(lab.p.leagues)) lab.p.leagues = [];
+  const hoursBefore = (h) => (h === 0 ? "at the start" : `${h} hour${h === 1 ? "" : "s"} before the start`);
+  const signedPct = (x, digits = 1) => `${x > 0 ? "+" : x < 0 ? MINUS : ""}${Math.abs(x * 100).toFixed(digits)}%`;
+  /** A chance as a whole percent; "never" and "always" aren't claimed from a sample. */
+  const wholePct = (x) => `${x < 0.005 ? "<1" : x > 0.995 ? ">99" : Math.round(x * 100)}%`;
+  const dayText = (ms) => new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
+  /** Settings are whole dollars: "$1,000", not "$1,000.00". */
+  const usd0 = (n) => (Number.isInteger(n) ? `$${n.toLocaleString()}` : usd(n));
+
+  function labBoot() {
+    lab.booted = true;
+    const fill = (id, hours) => $(id).replaceChildren(...hours.map((h) => el("option", { value: String(h), text: hoursBefore(h) })));
+    fill("lfEntry", [1, 2, 3, 6, 12, 24]);
+    fill("lfFrom", [3, 6, 12, 24]);
+    fill("lfExitH", [0, 1, 2, 3, 6, 12]);
+    for (const preset of LAB_PRESETS) {
+      const b = el("button", { class: "chip", type: "button", text: preset.name });
+      b.addEventListener("click", () => { Object.assign(lab.p, preset.set); labSync(); labChanged(false); });
+      $("labPresets").append(b);
+    }
+    for (const node of $("labForm").querySelectorAll("select, input")) node.addEventListener("change", () => labChanged(true));
+    $("labForm").addEventListener("submit", (ev) => ev.preventDefault());
+    $("labToggle").addEventListener("click", () => {
+      const open = $("labForm").classList.toggle("open");
+      $("labToggle").setAttribute("aria-expanded", String(open));
+      $("labToggle").textContent = open ? "Hide settings" : "Change settings";
+    });
+    $("labDefaults").addEventListener("click", () => { lab.p = { ...LAB_DEFAULT, leagues: [] }; labSync(); labChanged(false); });
+    $("labReroll").addEventListener("click", () => { lab.p.seed = Math.floor(Math.random() * 1e9); labChanged(false); });
+    $("labGet").addEventListener("click", labDownload);
+    $("labMore").addEventListener("click", () => { lab.shown += 25; renderLabTrades(); });
+    $("labCopy").addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText($("labYaml").textContent); $("labCopy").textContent = "Copied"; } catch { $("labCopy").textContent = "Select the text and copy it"; }
+      setTimeout(() => { $("labCopy").textContent = "Copy"; }, 1800);
+    });
+    labSync();
+  }
+  /** Settings → the form. */
+  function labSync() {
+    const p = lab.p;
+    const set = (id, v) => { $(id).value = String(v); };
+    set("lfPick", p.pick); set("lfMin", p.min); set("lfMax", p.max); set("lfEntry", p.entry); set("lfMove", p.move); set("lfFrom", p.from);
+    set("lfStart", p.start || ""); set("lfEnd", p.end || ""); set("lfExec", p.exec); set("lfExit", p.exit); set("lfExitH", p.exitH); set("lfSpread", p.spread);
+    set("lfBank", p.bank); set("lfStake", p.stake); set("lfSize", p.size); set("lfPct", p.pct); set("lfRuns", p.runs); set("lfHorizon", p.horizon); set("lfRuin", p.ruin);
+    $("lfMoveRow").hidden = p.pick !== "riser" && p.pick !== "faller";
+    $("lfExitRow").hidden = p.exit !== "pregame";
+    $("lfSizeRow").hidden = p.stake !== "flat";
+    $("lfPctRow").hidden = p.stake !== "percent";
+    for (const [i, b] of [...$("labPresets").children].entries()) {
+      const s0 = LAB_PRESETS[i].set;
+      b.setAttribute("aria-pressed", String(Object.keys(s0).every((k) => String(p[k]) === String(s0[k]))));
+    }
+    // Leagues: nothing picked means all of them.
+    const box = $("lfLeagues");
+    box.replaceChildren();
+    const leagues = (lab.status && lab.status.dataset.leagues) || [];
+    const all = el("button", { class: "chip", type: "button", text: "All leagues", "aria-pressed": String(!p.leagues.length) });
+    all.addEventListener("click", () => { p.leagues = []; labSync(); labChanged(false); });
+    box.append(all);
+    for (const lg of leagues) {
+      const on = p.leagues.includes(lg.series);
+      const b = el("button", { class: "chip", type: "button", text: lg.label, title: `${lg.games.toLocaleString()} games`, "aria-pressed": String(on) });
+      b.addEventListener("click", () => { p.leagues = on ? p.leagues.filter((x) => x !== lg.series) : [...p.leagues, lg.series]; labSync(); labChanged(false); });
+      box.append(b);
+    }
+  }
+  /** The form → settings (kept inside what the server accepts). */
+  function labRead() {
+    const p = lab.p;
+    const num = (id, lo, hi, d) => { const v = Number($(id).value); return Number.isFinite(v) && $(id).value !== "" ? Math.min(hi, Math.max(lo, v)) : d; };
+    p.pick = $("lfPick").value; p.min = num("lfMin", 0, 100, 85); p.max = num("lfMax", 0, 100, 95);
+    p.entry = num("lfEntry", 0, 24, 1); p.move = num("lfMove", 0.5, 50, 2); p.from = num("lfFrom", 1, 26, 12);
+    p.start = $("lfStart").value; p.end = $("lfEnd").value; p.exec = $("lfExec").value; p.exit = $("lfExit").value; p.exitH = num("lfExitH", 0, 23, 1); p.spread = num("lfSpread", 1, 20, 5);
+    p.bank = num("lfBank", 10, 1e7, 1000); p.stake = $("lfStake").value; p.size = num("lfSize", 1, 1e5, 25); p.pct = num("lfPct", 0.1, 100, 2);
+    p.runs = num("lfRuns", 100, 10000, 2000); p.horizon = num("lfHorizon", 0, 5000, 0); p.ruin = num("lfRuin", 5, 95, 50);
+  }
+  function labChanged(fromForm) {
+    if (fromForm) labRead();
+    labSync();
+    pref.set("lab", JSON.stringify(lab.p));
+    clearTimeout(lab.runTimer);
+    lab.shown = 25;
+    lab.runTimer = setTimeout(labRun, 180);
+  }
+  async function labRun() {
+    if (!lab.status || !lab.status.dataset.games) return;
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(lab.p)) if (v !== "" && v != null) q.set(k, Array.isArray(v) ? v.join(",") : String(v));
+    const seq = ++lab.seq;
+    $("labResults").classList.add("busy");
+    try {
+      const res = await fetch(`/api/lab/run?${q}`, { cache: "no-store" });
+      const data = await res.json();
+      if (seq !== lab.seq) return; // a newer run is on its way
+      lab.error = data.ok ? "" : data.error || `HTTP ${res.status}`;
+      if (data.ok) lab.result = data;
+    } catch (err) {
+      if (seq !== lab.seq) return;
+      lab.error = "Couldn't reach the dashboard. Is the bot still running?";
+    }
+    $("labResults").classList.remove("busy");
+    renderLab();
+  }
+  async function labStatus() {
+    try {
+      const res = await fetch("/api/lab/status", { cache: "no-store" });
+      const data = await res.json();
+      const had = lab.status && lab.status.dataset.markets;
+      const wasRunning = lab.status && lab.status.update.running;
+      lab.status = data;
+      const has = data.dataset.games > 0;
+      $("labEmpty").hidden = has;
+      $("labMain").hidden = !has;
+      labProgress(data.update);
+      if (has && (!lab.result || had !== data.dataset.markets || (wasRunning && !data.update.running))) { labSync(); labRun(); }
+      else if (has) renderLabData();
+      clearTimeout(lab.pollTimer);
+      if (data.update.running) lab.pollTimer = setTimeout(labStatus, 1500);
+    } catch { /* the next visit tries again */ }
+  }
+  function labProgress(u) {
+    const p = u.progress;
+    const share = !u.running ? 0 : !p ? 0.02 : p.stage === "games" ? 0.1 * (p.done / Math.max(1, p.total)) : 0.1 + 0.9 * (p.done / Math.max(1, p.total));
+    const text = !u.running ? (u.error ? `The download stopped: ${u.error}` : "") : !p || p.stage === "games" ? `Finding games${p && p.note ? `: ${p.note}` : ""}…` : `Reading prices: ${p.done.toLocaleString()} of ${p.total.toLocaleString()} markets`;
+    for (const [wrap, bar, label] of [["labProgress", "labBar", "labProgressText"], ["labProgress2", "labBar2", "labProgressText2"]]) {
+      $(wrap).hidden = !u.running && !u.error;
+      $(bar).style.width = `${Math.round(share * 100)}%`;
+      $(bar).parentElement.hidden = !u.running;
+      $(label).textContent = text;
+    }
+    $("labGet").disabled = !!u.running;
+  }
+  async function labDownload() {
+    $("labGet").disabled = true;
+    try { await fetch("/api/lab/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", cache: "no-store" }); } catch { /* status says what happened */ }
+    labStatus();
+  }
+  function labOpen() {
+    if (!lab.booted) labBoot();
+    labStatus();
+  }
+
+  /** The settings as one plain sentence, so it's clear what is being tested. */
+  function labSentence(p) {
+    const range = `${p.min}–${p.max}¢`;
+    const what = {
+      favorite: `the favorite when it costs ${range}`,
+      underdog: `the underdog when it costs ${range}`,
+      riser: `the side whose price rose ${p.move}¢ or more since ${hoursBefore(p.from).replace(" the start", "")}, when it costs ${range}`,
+      faller: `the side whose price fell ${p.move}¢ or more since ${hoursBefore(p.from).replace(" the start", "")}, when it costs ${range}`,
+      all: `every side that costs ${range}`,
+    }[p.pick];
+    const how = p.exec === "maker" ? "with an order resting at the bid" : "at the ask";
+    const out = p.exit === "pregame" ? `sells ${hoursBefore(p.exitH)}` : "holds to the result";
+    const money = p.stake === "flat" ? `${usd0(p.size)} a bet` : `${p.pct}% of the bankroll a bet`;
+    const leagues = (lab.status ? lab.status.dataset.leagues : []).filter((l) => p.leagues.includes(l.series)).map((l) => l.label);
+    const which = !leagues.length ? "" : leagues.length > 3 ? `${leagues.length} leagues` : leagues.length === 1 ? leagues[0] : `${leagues.slice(0, -1).join(", ")} and ${leagues[leagues.length - 1]}`;
+    const noon = (d) => dayText(Date.parse(`${d}T12:00:00`));
+    const span = p.start && p.end ? `from ${noon(p.start)} to ${noon(p.end)}` : p.start ? `from ${noon(p.start)} on` : p.end ? `up to ${noon(p.end)}` : "";
+    const only = which ? ` ${which} games only${span ? `, ${span}` : ""}.` : span ? ` Games ${span} only.` : "";
+    return `Buys ${what}, ${hoursBefore(p.entry)}, ${how}, and ${out}. ${money[0].toUpperCase()}${money.slice(1)} from a ${usd0(p.bank)} bankroll.${only}`;
+  }
+  function statTile(label, value, note, tone) {
+    return el("div", null, el("dt", { text: label }), el("dd", { class: tone || "", text: value }), el("div", { class: "note", text: note || "", title: note || "" }));
+  }
+  function renderLab() {
+    const r = lab.result;
+    const p = lab.p;
+    $("labPlain").textContent = labSentence(p);
+    const notes = $("labNotes");
+    notes.replaceChildren(...[lab.error ? `This run failed: ${lab.error}` : "", ...((r && r.notes) || [])].filter(Boolean).map((t) => el("li", { text: t })));
+    notes.hidden = !notes.children.length;
+    if (!r) return;
+    const st = r.stats;
+    const pnl = $("labPnl");
+    pnl.textContent = usd(st.pnl, true);
+    pnl.className = `value ${cls(st.pnl)}`;
+    $("labPnlSub").textContent = st.bets ? `on ${usd0(Math.round(st.staked))} staked across ${st.bets.toLocaleString()} bets` : "nothing matched these settings";
+    const verdict = r.verdict[0].toUpperCase() + r.verdict.slice(1);
+    const often = r.luck < 0.005 ? "less than 1%" : r.luck > 0.995 ? "more than 99%" : `about ${Math.round(r.luck * 100)}%`;
+    const luck = !st.bets ? "Widen the price range, pick more leagues or change the timing." : st.bets < 100 ? "With fewer than 100 bets, a good or bad result says very little."
+      : `A strategy with no edge at all would look at least this ${st.ret > 0 ? "good" : "bad"} ${often} of the time.`;
+    $("labVerdict").replaceChildren(el("strong", { text: verdict }), luck);
+    $("labStats").replaceChildren(
+      statTile("Return per $1 staked", st.bets ? signedPct(st.ret) : "—", st.bets ? `give or take ${(st.retSe * 100).toFixed(1)}` : "", cls(st.ret)),
+      statTile("Bets won", st.bets ? `${Math.round(st.winRate * 100)}%` : "—", st.bets ? `paid ${cents(st.avgPrice)} on average` : ""),
+      statTile("Won vs price", st.bets ? `${st.edgePts > 0 ? "+" : st.edgePts < 0 ? MINUS : ""}${Math.abs(st.edgePts).toFixed(1)} pts` : "—", "above zero beats the price", st.bets ? cls(st.edgePts) : ""),
+      statTile("Biggest drop", st.bets ? usd(-st.maxDrawdown, true) : "—", st.bets ? `${Math.round(st.maxDrawdownPct * 100)}% down from its peak` : ""),
+      statTile("Longest losing run", st.bets ? `${st.longestLosing} bet${st.longestLosing === 1 ? "" : "s"}` : "—", st.bets ? `worst day ${usd(st.worstDay, true)}` : ""),
+      statTile("Bets a day", st.bets ? st.betsPerDay.toFixed(1) : "—", st.bets ? `on ${st.days} days with a bet` : ""),
+    );
+    $("labEquityNote").textContent = r.equity.length ? `${dayText(r.equity[0][0])} to ${dayText(r.equity[r.equity.length - 1][0])}` : "";
+    drawLabEquity();
+    renderLabMc();
+    renderLabSlices();
+    renderLabTrades();
+    $("labYamlCard").hidden = !r.yaml;
+    $("labYaml").textContent = r.yaml || "";
+    renderLabData();
+  }
+  function renderLabData() {
+    const d = lab.status && lab.status.dataset;
+    if (!d || !d.games) return;
+    const node = $("labData");
+    node.replaceChildren(`Tested on ${d.games.toLocaleString()} settled Kalshi games from ${dayText(Date.parse(d.from))} to ${dayText(Date.parse(d.to))}, with the price of each side every hour before the start. Last updated ${ago(d.fetchedAt)}. `);
+    const b = el("button", { class: "why", type: "button", text: "Check for new games" });
+    b.disabled = !!(lab.status.update && lab.status.update.running);
+    b.addEventListener("click", () => { b.disabled = true; labDownload(); });
+    node.append(b);
+  }
+
+  // ---- lab charts (one hue; hover shows the numbers; the tables and tiles carry the same values) ----
+  function labFrame(box, m) {
+    box.replaceChildren();
+    const W = box.clientWidth || 600, H = box.clientHeight || 250;
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, "aria-hidden": "true" });
+    box.append(svg);
+    return { W, H, svg, x0: m.l, x1: W - m.r, y0: m.t, y1: H - m.b };
+  }
+  function svgText(svg, cls0, x, y, anchor, str) {
+    const t = s("text", { class: cls0, x, y, "text-anchor": anchor });
+    t.textContent = str;
+    svg.append(t);
+    return t;
+  }
+  function yGrid(f, ticks, y) {
+    for (const v of ticks) {
+      f.svg.append(s("line", { class: v === 0 ? "zero" : "gridline", x1: f.x0, x2: f.x1, y1: y(v), y2: y(v) }));
+      svgText(f.svg, "tick", f.x0 - 8, y(v) + 4, "end", shortUsd(v));
+    }
+  }
+  function labTip(tip, box, px, py, title, rows) {
+    tip.replaceChildren(el("div", { class: "t", text: title }), ...rows.map(([k, v]) => el("div", { class: "row" }, el("span", { text: k }), el("b", { text: v }))));
+    tip.style.display = "block";
+    const left = box.offsetLeft + px + 14;
+    const flip = left + tip.offsetWidth > box.offsetLeft + box.clientWidth;
+    tip.style.left = `${flip ? box.offsetLeft + px - tip.offsetWidth - 14 : left}px`;
+    tip.style.top = `${Math.max(box.offsetTop, box.offsetTop + py - tip.offsetHeight / 2)}px`;
+  }
+  const pathOf = (pts) => pts.map(([px, py], i) => `${i ? "L" : "M"}${px.toFixed(1)} ${py.toFixed(1)}`).join("");
+
+  function drawLabEquity() {
+    const box = $("labEquity"), tip = $("labEquityTip");
+    tip.style.display = "none";
+    const eq = (lab.result && lab.result.equity) || [];
+    if (eq.length < 2) { box.replaceChildren(el("div", { class: "empty", text: eq.length ? "One bet isn't a line yet." : "No bets matched these settings." })); return; }
+    const f = labFrame(box, { l: 54, r: 58, t: 12, b: 26 });
+    const t0 = eq[0][0], t1 = eq[eq.length - 1][0] || t0 + 1;
+    const vs = eq.map((d) => d[1]);
+    const ticks = niceTicks(Math.min(0, ...vs), Math.max(0, ...vs), 4);
+    const lo = ticks[0], hi = ticks[ticks.length - 1];
+    const x = (t) => f.x0 + ((t - t0) / Math.max(1, t1 - t0)) * (f.x1 - f.x0);
+    const y = (v) => f.y0 + (1 - (v - lo) / (hi - lo)) * (f.y1 - f.y0);
+    yGrid(f, ticks, y);
+    const pts = [[x(t0), y(0)], ...eq.map((d) => [x(d[0]), y(d[1])])];
+    f.svg.append(s("path", { class: "area", d: `${pathOf(pts)}L${f.x1} ${y(0)}L${f.x0} ${y(0)}Z` }));
+    f.svg.append(s("path", { class: "line", d: pathOf(pts) }));
+    const last = eq[eq.length - 1];
+    f.svg.append(s("circle", { class: "enddot", cx: x(last[0]), cy: y(last[1]), r: 4 }));
+    svgText(f.svg, "mark-label", f.x1 + 8, y(last[1]) + 4, "start", shortUsd(last[1]));
+    const xt = f.W < 460 ? [t0, t1] : [t0, (t0 + t1) / 2, t1];
+    xt.forEach((t, i) => svgText(f.svg, "tick", x(t), f.H - 6, i === 0 ? "start" : i === xt.length - 1 ? "end" : "middle", dayText(t)));
+    const cross = s("line", { class: "cross", y1: f.y0, y2: f.y1, visibility: "hidden" });
+    const dot = s("circle", { class: "enddot", r: 4, visibility: "hidden" });
+    f.svg.append(cross, dot);
+    const move = (ev) => {
+      const rect = box.getBoundingClientRect();
+      const t = t0 + ((ev.clientX - rect.left - f.x0) / (f.x1 - f.x0)) * (t1 - t0);
+      let best = eq[0];
+      for (const d of eq) if (Math.abs(d[0] - t) < Math.abs(best[0] - t)) best = d;
+      cross.setAttribute("x1", x(best[0])); cross.setAttribute("x2", x(best[0])); cross.setAttribute("visibility", "visible");
+      dot.setAttribute("cx", x(best[0])); dot.setAttribute("cy", y(best[1])); dot.setAttribute("visibility", "visible");
+      labTip(tip, box, x(best[0]), y(best[1]), new Date(best[0]).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }), [["Profit so far", usd(best[1], true)]]);
+    };
+    box.onpointermove = move;
+    box.onpointerleave = () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); };
+  }
+
+  function renderLabMc() {
+    const mc = lab.result && lab.result.mc;
+    const p = lab.p;
+    $("labReroll").hidden = !mc;
+    $("labMcNote").hidden = !mc;
+    if (!mc) {
+      $("labMcLede").textContent = "The simulation needs at least five bets to draw from.";
+      $("labMcStats").replaceChildren();
+      for (const id of ["labFan", "labHist"]) $(id).replaceChildren(el("div", { class: "empty", text: "Nothing to simulate yet." }));
+      $("labFanLegend").replaceChildren();
+      return;
+    }
+    $("labMcLede").textContent = `${mc.runs.toLocaleString()} possible futures of ${mc.horizon.toLocaleString()} bets each, starting from ${usd0(p.bank)} with ${p.stake === "flat" ? `${usd0(p.size)} a bet` : `${p.pct}% of the bankroll a bet`}.`;
+    $("labMcStats").replaceChildren(
+      statTile("Ended ahead", wholePct(mc.profitChance), "share of the futures"),
+      statTile("Hit ruin", wholePct(mc.ruinChance), `lost ${p.ruin}% of the bankroll at some point`),
+      statTile("Typical biggest drop", `${Math.round(mc.drawdown.p50 * 100)}%`, `1 in 20 dropped ${Math.round(mc.drawdown.p95 * 100)}% or more`),
+      statTile("A bad run", usd(mc.final.p5, true), "1 in 20 ended below this", cls(mc.final.p5)),
+      statTile("Middle future", usd(mc.final.p50, true), "half did better, half worse", cls(mc.final.p50)),
+      statTile("A good run", usd(mc.final.p95, true), "1 in 20 ended above this", cls(mc.final.p95)),
+    );
+    $("labFanLegend").replaceChildren(
+      el("span", null, el("i", { class: "key line" }), "Middle future"),
+      el("span", null, el("i", { class: "key band", style: "opacity:.38" }), "Half of all futures"),
+      el("span", null, el("i", { class: "key band", style: "opacity:.16" }), "9 in 10 futures"),
+      el("span", null, el("i", { class: "key thin" }), "A few single futures"),
+    );
+    drawLabFan(mc);
+    drawLabHist(mc);
+  }
+  function drawLabFan(mc) {
+    const box = $("labFan"), tip = $("labFanTip");
+    tip.style.display = "none";
+    const f = labFrame(box, { l: 54, r: 12, t: 12, b: 26 });
+    const b = mc.bands;
+    const xs = [0, ...b.x];
+    const col = (k) => [0, ...b[k]];
+    // The single futures are real runs: the axis makes room for them rather than cutting them off.
+    const runs = mc.samples.slice(0, 8);
+    const ticks = niceTicks(Math.min(0, ...b.p5, ...runs.flat()), Math.max(0, ...b.p95, ...runs.flat()), 4);
+    const lo = ticks[0], hi = ticks[ticks.length - 1];
+    const x = (n) => f.x0 + (n / mc.horizon) * (f.x1 - f.x0);
+    const y = (v) => f.y0 + (1 - (v - lo) / (hi - lo)) * (f.y1 - f.y0);
+    yGrid(f, ticks, y);
+    const band = (top, bottom) => `${pathOf(xs.map((n, i) => [x(n), y(top[i])]))}${pathOf(xs.map((n, i) => [x(n), y(bottom[i])]).reverse()).replace(/^M/, "L")}Z`;
+    f.svg.append(s("path", { class: "band-wide", d: band(col("p95"), col("p5")) }));
+    f.svg.append(s("path", { class: "band-mid", d: band(col("p75"), col("p25")) }));
+    for (const run of runs) f.svg.append(s("path", { class: "path-sample", d: pathOf([[x(0), y(0)], ...run.map((v, i) => [x(b.x[i]), y(v)])]) }));
+    f.svg.append(s("path", { class: "line", d: pathOf(xs.map((n, i) => [x(n), y(col("p50")[i])])) }));
+    const xt = [0, Math.round(mc.horizon / 2), mc.horizon];
+    xt.forEach((n, i) => svgText(f.svg, "tick", x(n), f.H - 6, i === 0 ? "start" : i === 2 ? "end" : "middle", i === 2 ? `${n.toLocaleString()} bets` : n.toLocaleString()));
+    const cross = s("line", { class: "cross", y1: f.y0, y2: f.y1, visibility: "hidden" });
+    f.svg.append(cross);
+    box.onpointermove = (ev) => {
+      const rect = box.getBoundingClientRect();
+      const n = ((ev.clientX - rect.left - f.x0) / (f.x1 - f.x0)) * mc.horizon;
+      let i = 0;
+      for (let k = 0; k < b.x.length; k++) if (Math.abs(b.x[k] - n) < Math.abs(b.x[i] - n)) i = k;
+      cross.setAttribute("x1", x(b.x[i])); cross.setAttribute("x2", x(b.x[i])); cross.setAttribute("visibility", "visible");
+      labTip(tip, box, x(b.x[i]), y(b.p50[i]), `After ${b.x[i].toLocaleString()} bets`, [["Best 1 in 20", usd(b.p95[i], true)], ["Upper quarter", usd(b.p75[i], true)], ["Middle", usd(b.p50[i], true)], ["Lower quarter", usd(b.p25[i], true)], ["Worst 1 in 20", usd(b.p5[i], true)]]);
+    };
+    box.onpointerleave = () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); };
+  }
+  function drawLabHist(mc) {
+    const box = $("labHist"), tip = $("labHistTip");
+    tip.style.display = "none";
+    const f = labFrame(box, { l: 12, r: 12, t: 22, b: 26 });
+    const { lo, hi, counts } = mc.hist;
+    const n = counts.length;
+    const top = Math.max(1, ...counts);
+    const slot = (f.x1 - f.x0) / n;
+    const bw = Math.max(2, Math.min(24, slot - 2));
+    const x = (v) => f.x0 + ((v - lo) / Math.max(1e-9, hi - lo)) * (f.x1 - f.x0);
+    f.svg.append(s("line", { class: "zero", x1: f.x0, x2: f.x1, y1: f.y1, y2: f.y1 }));
+    const bars = counts.map((c, i) => {
+      const h = (c / top) * (f.y1 - f.y0);
+      const bx = f.x0 + i * slot + (slot - bw) / 2;
+      const r = Math.min(4, bw / 2, h);
+      // Rounded at the data end, square on the baseline.
+      const bar = s("path", { class: "hbar", d: h <= 0 ? "" : `M${bx} ${f.y1}V${f.y1 - h + r}a${r} ${r} 0 0 1 ${r} ${-r}h${bw - 2 * r}a${r} ${r} 0 0 1 ${r} ${r}V${f.y1}Z` });
+      f.svg.append(bar);
+      return bar;
+    });
+    if (lo < 0 && hi > 0) {
+      f.svg.append(s("line", { class: "cross", x1: x(0), x2: x(0), y1: f.y0 - 6, y2: f.y1 }));
+      svgText(f.svg, "mark-label", x(0), f.y0 - 10, x(0) > f.W - 70 ? "end" : x(0) < 70 ? "start" : "middle", "break-even");
+    }
+    const ticks = niceTicks(lo, hi, f.W < 240 ? 2 : 4).filter((v) => v >= lo && v <= hi);
+    if (ticks.length >= 3) ticks.forEach((v) => svgText(f.svg, "tick", x(v), f.H - 6, "middle", shortUsd(v)));
+    else {
+      // Too narrow a range for round numbers: label the two ends instead.
+      svgText(f.svg, "tick", f.x0, f.H - 6, "start", shortUsd(Math.round(lo)));
+      svgText(f.svg, "tick", f.x1, f.H - 6, "end", shortUsd(Math.round(hi)));
+    }
+    const total = counts.reduce((a, c) => a + c, 0) || 1;
+    box.onpointermove = (ev) => {
+      const rect = box.getBoundingClientRect();
+      const i = Math.max(0, Math.min(n - 1, Math.floor((ev.clientX - rect.left - f.x0) / slot)));
+      bars.forEach((bar, k) => bar.classList.toggle("hot", k === i));
+      const from = lo + (i * (hi - lo)) / n, to = lo + ((i + 1) * (hi - lo)) / n;
+      labTip(tip, box, f.x0 + (i + 0.5) * slot, f.y1 - (counts[i] / top) * (f.y1 - f.y0), `${usd(from, true)} to ${usd(to, true)}`, [["Share of futures", `${((counts[i] / total) * 100).toFixed(1)}%`]]);
+    };
+    box.onpointerleave = () => { tip.style.display = "none"; bars.forEach((bar) => bar.classList.remove("hot")); };
+  }
+
+  function renderLabSlices() {
+    setSeg("labSlice", lab.slice, (v) => { lab.slice = v; renderLabSlices(); });
+    $("labSliceHead").textContent = { byLeague: "League", byMonth: "Month", byPrice: "Price paid" }[lab.slice];
+    const rows = (lab.result && lab.result[lab.slice]) || [];
+    const body = $("labSliceBody");
+    body.replaceChildren();
+    if (!rows.length) { body.append(emptyRow(7, "No bets matched these settings.")); return; }
+    const scale = Math.max(0.02, ...rows.map((r) => Math.abs(r.ret)));
+    for (const r of rows) {
+      const share = Math.min(1, Math.abs(r.ret) / scale) * 100;
+      // Direction from the centre line carries the sign; the number beside it says how much.
+      const bar = el("span", { class: "dbar", "aria-hidden": "true" }, el("i", { class: r.ret < 0 ? "neg" : "pos", style: `width:${share.toFixed(0)}%` }));
+      body.append(el("tr", null,
+        el("td", { text: r.label }),
+        el("td", { class: "num", text: r.bets.toLocaleString() }),
+        el("td", { class: "num opt", text: `${Math.round(r.winRate * 100)}%` }),
+        el("td", { class: "num opt", text: cents(r.avgPrice) }),
+        el("td", { class: "num opt", text: `${r.edgePts > 0 ? "+" : r.edgePts < 0 ? MINUS : ""}${Math.abs(r.edgePts).toFixed(1)} pts` }),
+        el("td", { class: "num", title: r.bets < 30 ? "Too few bets to read much into" : "" }, bar, el("span", { text: signedPct(r.ret), class: r.bets < 30 ? "meta" : "" })),
+        el("td", { class: "num" }, pnlNode(r.pnl)),
+      ));
+    }
+  }
+  function renderLabTrades() {
+    const r = lab.result;
+    const body = $("labTradesBody");
+    body.replaceChildren();
+    const trades = (r && r.trades) || [];
+    const shown = Math.min(trades.length, lab.shown);
+    $("labTradesNote").textContent = r && r.stats.bets > shown ? `the latest ${shown} of ${r.stats.bets.toLocaleString()}` : "";
+    const more = $("labMore");
+    more.hidden = shown >= trades.length;
+    more.textContent = `Show ${Math.min(25, trades.length - shown)} more`;
+    if (!trades.length) { body.append(emptyRow(6, "No bets matched these settings.")); return; }
+    const league = Object.fromEntries(((lab.status && lab.status.dataset.leagues) || []).map((l) => [l.series, l.label]));
+    for (const t of trades.slice(0, shown)) {
+      const sold = t.exit > 0 && t.exit < 1;
+      const outcome = sold ? `Sold at ${cents(t.exit)}` : t.won ? "Won" : "Lost";
+      const moved = t.move != null ? `, moved ${t.move > 0 ? "+" : MINUS}${Math.abs(t.move * 100).toFixed(1)}¢` : "";
+      body.append(el("tr", null,
+        el("td", { class: "title" }, el("div", { class: "name", text: t.side || "—" }), el("div", { class: "meta", text: `${t.game}, ${league[t.league] || t.league}${moved}` })),
+        el("td", { class: "opt", text: new Date(t.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) }),
+        el("td", { class: "num", text: cents(t.price) }),
+        el("td", { text: outcome }),
+        el("td", { class: "num opt", text: usd(t.stake) }),
+        el("td", { class: "num" }, pnlNode(t.pnl)),
+      ));
+    }
+  }
+
   const PAPER_PAGES = { "": "overview", trades: "trades", strategies: "strategies", activity: "activity", arbitrage: "arbitrage", copy: "copy", moves: "moves" };
-  const PAGE_TITLE = { overview: "Overview", trades: "Trades", strategies: "Strategies", activity: "Activity", arbitrage: "Arbitrage", copy: "Copy trading", moves: "Unusual moves", league: "League", backtest: "Backtests", live: "Live money", strategy: "Strategy" };
+  const PAGE_TITLE = { overview: "Overview", trades: "Trades", strategies: "Strategies", activity: "Activity", arbitrage: "Arbitrage", copy: "Copy trading", moves: "Unusual moves", league: "League", backtest: "Backtest lab", live: "Live money", strategy: "Strategy" };
   function route() {
     const h = location.hash.replace(/^#\/?/, "");
     if (h.startsWith("s/")) {
@@ -2038,18 +2714,20 @@
       return { view: "strategy", page: "strategy", id };
     }
     if (h === "leaderboard") return { view: "league", page: "league" };
-    if (h === "backtest") return { view: "backtest", page: "backtest" };
+    if (h === "backtest") return { view: "lab", page: "backtest" };
+    if (h === "league-backtest") return { view: "backtest", page: "league" };
     if (h === "live") return { view: "live", page: "live" };
     return { view: "paper", page: PAPER_PAGES[h] || "overview" };
   }
-  const VIEWS = { paper: "viewPaper", league: "viewLeague", strategy: "viewStrategy", backtest: "viewBacktest", live: "viewLive" };
+  const VIEWS = { paper: "viewPaper", league: "viewLeague", strategy: "viewStrategy", backtest: "viewBacktest", lab: "viewLab", live: "viewLive" };
   function showView() {
     const r = route();
     for (const [k, id] of Object.entries(VIEWS)) $(id).hidden = k !== r.view;
     for (const a of document.querySelectorAll(".tabs a")) a.classList.toggle("on", a.dataset.page === (r.page === "strategy" ? "league" : r.page));
     for (const n of document.querySelectorAll("[data-pages]")) n.classList.toggle("off-page", !n.dataset.pages.split(" ").includes(r.page));
     $("pageTitle").textContent = PAGE_TITLE[r.page] || "Overview";
-    document.title = `${PAGE_TITLE[r.page] || "Overview"} · Rules Bot`;
+    document.title = `${PAGE_TITLE[r.page] || "Overview"} | Rules Bot`;
+    if (r.view === "lab") labOpen();
   }
   window.addEventListener("hashchange", () => {
     showView();
@@ -2141,7 +2819,7 @@
     if (t) playReplay(t.sample, Object.fromEntries(state.rules.map((r) => [r.ruleId, r])));
   });
   let resizeTimer;
-  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => state && render(), 150); });
+  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (state) render(); if (route().view === "lab" && lab.result) { drawLabEquity(); renderLabMc(); } }, 150); });
   poll();
   setInterval(poll, POLL_MS);
 })();

@@ -19,6 +19,7 @@
     "dashboard": "tsx src/cli/dashboard.ts",
     "league": "tsx src/cli/league.ts",
     "study": "tsx src/cli/study.ts",
+    "lab:update": "tsx src/cli/lab-update.ts",
     "live": "tsx src/cli/live.ts",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",

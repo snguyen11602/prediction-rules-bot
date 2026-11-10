@@ -18,13 +18,16 @@ import { housePersonas } from "../league/personas.js";
 import { houseContestantRules } from "../league/evolve.js";
 import { testTradesNeeded } from "../backtest/run.js";
 import { applyControl, controlsPathFor, isStopped, loadControls, saveControls, type ControlAction } from "../engine/controls.js";
+import { labPathFor, type downloadLab } from "../lab/data.js";
+import { createLabService } from "../lab/api.js";
 
 /**
  * Local paper-trading dashboard. Serves one page plus a JSON snapshot of the
  * paper ledger. Binds to 127.0.0.1 only; never places orders and never writes
  * the ledger (the optional paper loop lives in the CLI). The one thing it can
  * change is the controls file (POST /api/control): the bots' start / stop switches, and a request
- * to reset the paper portfolio, which the next paper cycle carries out.
+ * to reset the paper portfolio, which the next paper cycle carries out. Separately, the backtest
+ * lab can download public game history into its own file (POST /api/lab/update).
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -81,6 +84,10 @@ export interface DashboardOptions {
   demo: boolean;
   getLoop?: () => LoopState;
   getEvents?: () => EngineEvent[];
+  /** The backtest lab's game-history file (default: lab-games.json next to the ledger). */
+  labPath?: string;
+  /** Test hook: the lab's downloader. */
+  labDownload?: typeof downloadLab;
 }
 
 function slimPosition(p: PaperPosition) {
@@ -507,11 +514,8 @@ async function readJson(req: http.IncomingMessage, max = 2048): Promise<unknown>
  * that without the browser asking first, and this server never says yes) and, when the browser
  * says where the request comes from, it must be this dashboard. Paper settings only; no orders.
  */
-async function control(opts: DashboardOptions, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const reply = (status: number, body: unknown) => {
-    res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify(body));
-  };
+/** A POST must be JSON and, when the browser says where it comes from, from this dashboard itself. */
+function postRefusal(req: http.IncomingMessage): { status: number; error: string } | undefined {
   const origin = req.headers.origin;
   let originHost: string | undefined;
   try {
@@ -519,8 +523,18 @@ async function control(opts: DashboardOptions, req: http.IncomingMessage, res: h
   } catch {
     originHost = "bad";
   }
-  if (origin && (!originHost || !hostAllowed(originHost) || originHost !== req.headers.host)) return reply(403, { ok: false, error: "not from this dashboard" });
-  if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) return reply(415, { ok: false, error: "send JSON" });
+  if (origin && (!originHost || !hostAllowed(originHost) || originHost !== req.headers.host)) return { status: 403, error: "not from this dashboard" };
+  if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) return { status: 415, error: "send JSON" };
+  return undefined;
+}
+
+async function control(opts: DashboardOptions, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const reply = (status: number, body: unknown) => {
+    res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(body));
+  };
+  const refused = postRefusal(req);
+  if (refused) return reply(refused.status, { ok: false, error: refused.error });
   let body: { action?: unknown; id?: unknown; all?: unknown };
   try {
     body = (await readJson(req)) as typeof body;
@@ -548,6 +562,7 @@ async function control(opts: DashboardOptions, req: http.IncomingMessage, res: h
 }
 
 export function createDashboardServer(opts: DashboardOptions): http.Server {
+  const lab = createLabService(opts.labPath ?? labPathFor(opts.ledgerPath), opts.labDownload);
   return http.createServer(async (req, res) => {
     try {
       if (!hostAllowed(req.headers.host)) {
@@ -559,9 +574,24 @@ export function createDashboardServer(opts: DashboardOptions): http.Server {
         await control(opts, req, res);
         return;
       }
+      const json = (status: number, body: unknown) => {
+        res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8" });
+        res.end(req.method === "HEAD" ? undefined : JSON.stringify(body));
+      };
+      if (req.method === "POST" && url.pathname === "/api/lab/update") {
+        // Downloads public game history into the lab's own file; it never touches the ledger.
+        const refused = postRefusal(req);
+        if (refused) return json(refused.status, { ok: false, error: refused.error });
+        return json(202, { ok: true, started: lab.update() });
+      }
       if (req.method !== "GET" && req.method !== "HEAD") {
-        res.writeHead(405, { Allow: "GET, HEAD", "Content-Type": "text/plain" }).end("Read-only dashboard (POST only to /api/control)");
+        res.writeHead(405, { Allow: "GET, HEAD", "Content-Type": "text/plain" }).end("Read-only dashboard (POST only to /api/control and /api/lab/update)");
         return;
+      }
+      if (url.pathname === "/api/lab/status") return json(200, { ok: true, ...(await lab.status()) });
+      if (url.pathname === "/api/lab/run") {
+        const out = await lab.run(url.searchParams);
+        return json(out.ok ? 200 : 400, out);
       }
       if (url.pathname === "/" || url.pathname === "/index.html") {
         res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "text/html; charset=utf-8" });
