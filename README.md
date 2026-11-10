@@ -424,16 +424,28 @@ npm run dashboard            # just the dashboard, if paper runs elsewhere (cron
 npm run paper:watch -- --demo --fixture fixtures/markets.later.json   # try it on demo data
 ```
 
-Tabs: **Paper trading** (below), **Leaderboard** and **Backtests** (see Strategy league), and **Live
-money** (off). The page refreshes every 5 seconds. It shows total, closed-trade and open-trade profit/loss, win rate,
-a chart of closed-trade profit/loss over time, each strategy (including loss-streak pauses), open and
-closed trades, and new alerts. It only listens on `127.0.0.1` and warns you when paper trading has
-stopped.
+The page refreshes every 5 seconds and only listens on `127.0.0.1`. A menu on the left (a strip of
+tabs on a phone) has one page per question:
 
-**Start / stop.** Each strategy (your rules, league strategies, copy trading, parlays, arbitrage) has a
-**Stop** / **Start** button in the Strategies table, and **Stop all** / **Start all** sits at the top of the
-page. A stopped bot makes no new trades; its open trades still sell at their exits and settle, so
-nothing is left unwatched. **Start** on a bot that's paused after a losing streak lifts the pause. The
+- **Overview**: the first place to look. Total profit and loss with a chart (today, 7 days or all
+  time), today's result, closed and open trades, win rate and fees; your strategies with an on / off
+  switch each; the newest open trades; and the latest few things the bot did. The top bar always shows
+  whether the bot is running and has **Stop all**.
+- **Trades**: every open trade and the last 60 closed ones. Market names are shortened ("LA Lakers vs
+  ATL Hawks") with the bet underneath ("NO on Lakers"); hover for the exchange's full wording. Click a
+  row to see why the bot took it.
+- **Strategies**: every strategy with its record, profit, closing-price result and switch, grouped
+  into yours, the league's bots, and ones that are turned off.
+- **Activity**: everything the bot bought, sold or flagged, then "How the bot decides" (below).
+- Under **More**: Arbitrage, Copy trading (with parlays), Unusual moves, League, Backtests and Live
+  money (off). These are the detail pages for each kind of strategy.
+
+It follows your computer's light or dark setting and warns you when paper trading has stopped.
+
+**Start / stop.** Each strategy (your rules, league strategies, copy trading, parlays, arbitrage) has an
+on / off switch on the Overview and Strategies pages, and **Stop all** / **Start all** sits at the top of
+every page. A switched-off bot makes no new trades; its open trades still sell at their exits and settle,
+so nothing is left unwatched. Switching on a bot that's paused after a losing streak lifts the pause. The
 switches are saved next to the ledger (`data/paper-ledger.controls.json`) and take effect on the next
 check (within 5 seconds in fast mode). Stopping copy trading still follows the leaders' sells for copies
 you hold. The buttons are the only thing the dashboard can change, and they only accept requests from the
@@ -441,13 +453,13 @@ dashboard page itself. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C 
 and exits. Don't run `paper:watch` and `paper -- --loop` at the same time; the second one just waits
 for the lock.
 
-**How the bot decides.** While `paper:watch` runs, the top of the page shows the last check as a
+**How the bot decides.** While `paper:watch` runs, the Activity page shows the last check as a
 funnel: every market × strategy → passed filters → entry signal → position OK → risk OK → traded or
 alerted. A replay strip steps through that check market by market and shows where each one dropped
 out (▶ Replay last scan to run it again). A per-strategy table lists the check that drops the most
 markets, and "Signals this check" lists every trade, alert, risk block, and near miss.
 
-Every trade has a **Why?** button. It opens the full checklist the bot passed for that trade, with
+Every trade has a **Why?** (or click its row). It opens the full checklist the bot passed for that trade, with
 the real numbers (for example "YES 89.5¢ is within 85–95¢" or "5% of $1,000, capped at $50 = $50"),
 the paper fill, and what has happened since. The engine records these checks from the same code
 that makes the decision (`src/engine/trace.ts`), so the dashboard can't drift from what the bot actually did.

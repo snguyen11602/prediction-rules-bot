@@ -47,7 +47,7 @@ test("dashboard serves the page and a ledger snapshot", async () => {
     const page = await fetch(`${base}/`);
     assert.equal(page.status, 200);
     assert.match(page.headers.get("content-security-policy") ?? "", /default-src 'none'/);
-    assert.match(await page.text(), /<title>Paper Trading<\/title>/);
+    assert.match(await page.text(), /<title>Rules Bot<\/title>/);
 
     const state = await (await fetch(`${base}/api/state`)).json();
     assert.equal(state.ok, true);
