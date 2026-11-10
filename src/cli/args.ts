@@ -31,6 +31,8 @@ export interface CliArgs {
   intervalSet: boolean;
   /** arb:confirm — Polymarket YES means Kalshi NO. */
   invert: boolean;
+  /** paper:reset — go ahead without the preview. */
+  yes: boolean;
   /** arb:find — also show weak near-misses. */
   all: boolean;
   /** Bare words after the command (e.g. the number for arb:confirm). */
@@ -66,6 +68,7 @@ export function parseArgs(argv: string[]): CliArgs {
     noOpen: false,
     intervalSet: process.env.POLL_INTERVAL_SEC != null,
     invert: false,
+    yes: false,
     all: false,
     positional: [],
     fast: false,
@@ -87,6 +90,7 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (a === "--fast") out.fast = true;
     else if (a === "--tick") out.tickSec = intArg("--tick", args[++i], 2);
     else if (a === "--invert") out.invert = true;
+    else if (a === "--yes") out.yes = true;
     else if (a === "--all") out.all = true;
     else if (a === "--log-file" && args[i + 1]) out.logFile = path.resolve(args[++i]);
     else if (a === "--webhook" && args[i + 1]) out.webhook = args[++i];

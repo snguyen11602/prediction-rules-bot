@@ -177,6 +177,9 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 
 ## Paper ledger
 
+- A reset (`resetLedger`) copies the ledger to `data/archive/` and starts an empty one. It must never
+  delete or overwrite a backup. The dashboard only records a request in the controls file
+  (`resetRequestedAt`); the paper cycle applies it once under the ledger lock (`resetFrom.request`).
 - `src/ledger/paper.ts` is the only writer of `data/paper-ledger*.json` (gitignored). Bump `version` and add a migration if you change its shape; v1 → v2 already exists.
 - `src/engine/paper-session.ts` runs one cycle: exits first, then entries. Paper risk state is rebuilt from the ledger each cycle — don't keep a second copy.
 - Exit and fill math stay platform-agnostic (`exits.ts`, `pricing.ts`). Platform fee models and contract rounding belong in adapters.

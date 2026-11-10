@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, rename, stat, unlink, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { RiskState } from "../engine/risk.js";
@@ -181,6 +181,11 @@ export interface PaperLedger {
   lastPrices: Record<string, { yesPrice: number; at: string }>;
   /** Set when this ledger was upgraded from v1; legacy fills stay in `fills` only. */
   migratedFromV1?: { at: string; legacyFills: number };
+  /**
+   * Set when this ledger was started over with a reset: when, which request it answered, where
+   * the previous trades were saved, and how that period ended.
+   */
+  resetFrom?: { at: string; request?: string; archive?: string; closed: number; open: number; pnlUsd: number };
   /** Arbitrage groups by id (optional; added with the arbitrage strategy). */
   arbGroups?: Record<string, ArbGroupRecord>;
   /** Paper parlays by id (optional; added with parlays). */
@@ -206,6 +211,38 @@ export function emptyLedger(demo: boolean, now = new Date()): PaperLedger {
     ruleState: {},
     lastPrices: {},
   };
+}
+
+/** Where a reset saves the ledger it replaces: `archive/<name>-<time>.json` next to it. */
+export function archivePathFor(filePath: string, now: Date): string {
+  const stamp = now.toISOString().replace(/[:.]/g, "-").replace(/-\d{3}Z$/, "Z");
+  return path.join(path.dirname(filePath), "archive", `${path.basename(filePath).replace(/\.json$/i, "")}-${stamp}.json`);
+}
+
+/**
+ * Start the paper portfolio over: the current ledger is copied to the archive folder (never
+ * deleted), then replaced by an empty one. Profit and loss, trade history, open paper trades and
+ * loss pauses all go back to zero. Call it under the ledger lock. `request` is the reset request
+ * this answers, so the same request is never applied twice.
+ */
+export async function resetLedger(filePath: string, opts: { demo: boolean; now?: Date; request?: string }): Promise<NonNullable<PaperLedger["resetFrom"]>> {
+  const now = opts.now ?? new Date();
+  const old = await loadLedger(filePath, { demo: opts.demo });
+  const total = summarizeLedger(old).total;
+  const info: NonNullable<PaperLedger["resetFrom"]> = { at: now.toISOString(), request: opts.request, closed: total.closed, open: total.open, pnlUsd: Math.round((total.realizedPnlUsd + total.unrealizedPnlUsd) * 100) / 100 };
+  const hadFile = await stat(filePath).then(() => true, () => false);
+  if (hadFile && (old.positions.length || old.fills.length || Object.keys(old.parlays ?? {}).length)) {
+    let target = archivePathFor(filePath, now);
+    await mkdir(path.dirname(target), { recursive: true });
+    // Two resets in the same second must not overwrite each other's backup.
+    for (let i = 2; await stat(target).then(() => true, () => false); i++) target = archivePathFor(filePath, now).replace(/\.json$/, `-${i}.json`);
+    await copyFile(filePath, target);
+    info.archive = path.relative(path.dirname(filePath), target);
+  }
+  const fresh = emptyLedger(opts.demo, now);
+  fresh.resetFrom = info;
+  await saveLedger(filePath, fresh);
+  return info;
 }
 
 /**

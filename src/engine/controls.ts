@@ -18,6 +18,12 @@ export interface Controls {
   stopped: Record<string, string>;
   /** Bot id → when Start was pressed (lifts a loss pause once). */
   resumed: Record<string, string>;
+  /**
+   * "Reset portfolio" was pressed at this time. The next paper cycle (the only writer of the
+   * ledger) archives the ledger and starts a new one, and notes this time on it so the same
+   * request is applied once.
+   */
+  resetRequestedAt?: string;
   updatedAt?: string;
 }
 
@@ -42,6 +48,7 @@ export async function loadControls(file: string): Promise<Controls> {
       allStoppedAt: typeof c.allStoppedAt === "string" ? c.allStoppedAt : undefined,
       stopped: map(c.stopped),
       resumed: map(c.resumed),
+      resetRequestedAt: typeof c.resetRequestedAt === "string" ? c.resetRequestedAt : undefined,
       updatedAt: c.updatedAt,
     };
   } catch {
@@ -60,12 +67,16 @@ export function isStopped(c: Controls, id: string): boolean {
   return c.allStopped || c.stopped[id] != null;
 }
 
-export type ControlAction = { action: "start" | "stop"; id?: string; all?: boolean };
+export type ControlAction = { action: "start" | "stop" | "reset"; id?: string; all?: boolean };
 
 /** Apply one button press. `all` switches every bot; Start also lifts loss pauses. */
 export function applyControl(c: Controls, a: ControlAction, now: Date, knownIds: string[] = []): Controls {
   const at = now.toISOString();
   const next: Controls = { ...c, stopped: { ...c.stopped }, resumed: { ...c.resumed }, updatedAt: at };
+  if (a.action === "reset") {
+    next.resetRequestedAt = at;
+    return next;
+  }
   if (a.all) {
     if (a.action === "stop") {
       next.allStopped = true;

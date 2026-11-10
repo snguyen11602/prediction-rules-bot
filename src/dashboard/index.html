@@ -377,6 +377,16 @@
   td.title a { color: var(--ink); }
   .why { font: inherit; font-size: 12.5px; padding: 3px 8px; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--accent); cursor: pointer; white-space: nowrap; }
   .why:hover { background: var(--hover); }
+  .confirm { max-width: 460px; }
+  .confirm p { margin: 8px 0 0; }
+  .confirm ul { margin: 12px 0 0; padding-left: 18px; }
+  .confirm li { margin: 4px 0; }
+  .confirm .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .confirm .btn { padding: 7px 14px; font-size: 13.5px; }
+  .btn.danger { background: var(--down); border-color: var(--down); color: #fff; }
+  .btn.danger:hover { background: color-mix(in srgb, var(--down) 88%, #000); }
+  .btn.danger:disabled { opacity: .6; cursor: wait; }
+  .hero .sub .why { padding: 1px 6px; margin-left: 2px; }
   tr.tap { cursor: pointer; }
   tr.tap:hover td { background: var(--hover); }
   td.title .meta .side { margin-right: 2px; font-size: 11px; }
@@ -448,7 +458,7 @@
       <div>
         <div class="label">Total profit / loss</div>
         <div class="value" id="kTotal">—</div>
-        <div class="sub" id="kTotalSub"></div>
+        <div class="sub"><span id="kTotalSub"></span> <button class="why" type="button" id="resetBtn" title="Start the paper portfolio over at $0">Reset</button></div>
       </div>
       <div class="seg" id="chartRange" role="group" aria-label="Chart range"><button type="button" data-v="1d">Today</button><button type="button" data-v="7d">7 days</button><button type="button" data-v="all">All</button></div>
     </div>
@@ -480,6 +490,23 @@
   </section>
 
   <dialog class="story" id="story"><div class="story-in" id="storyBody"></div></dialog>
+
+  <dialog class="story confirm" id="resetDialog" aria-labelledby="resetTitle">
+    <div class="story-in">
+      <h3 id="resetTitle">Reset the paper portfolio?</h3>
+      <p id="resetNow"></p>
+      <ul>
+        <li>Profit and loss, the chart, win rate and trade history start over at $0.</li>
+        <li>Your current trades are saved to a backup file first. Nothing is deleted.</li>
+        <li>Open paper trades are dropped. Strategies and their on / off switches stay as they are.</li>
+      </ul>
+      <p class="meta" id="resetWhen"></p>
+      <div class="actions">
+        <button class="btn" type="button" id="resetCancel">Cancel</button>
+        <button class="btn danger" type="button" id="resetGo">Reset portfolio</button>
+      </div>
+    </div>
+  </dialog>
 
   <section data-pages="arbitrage" class="card section" id="arbSection" hidden>
     <div class="arb-head">
@@ -894,7 +921,12 @@
   function renderKpis() {
     const t = state.totals;
     setKpi("kTotal", t.realizedPnlUsd + t.unrealizedPnlUsd);
-    $("kTotalSub").textContent = `since ${new Date(state.ledger.createdAt || nowMs()).toLocaleDateString([], { month: "short", day: "numeric" })}, closed and open trades together`;
+    const since = new Date(state.ledger.createdAt || nowMs()).toLocaleDateString([], { month: "short", day: "numeric" });
+    const loopOn = state.loop && state.loop.enabled;
+    $("kTotalSub").textContent = state.ledger.resetPending
+      ? `Reset requested: starts over at $0 ${loopOn ? "at the next check" : "the next time paper trading runs"}.`
+      : state.ledger.resetFrom ? `since the reset on ${since}, closed and open trades together` : `since ${since}, closed and open trades together`;
+    $("resetBtn").hidden = !!state.ledger.resetPending || !state.ledger.exists;
     // Today = trades closed since local midnight.
     const midnight = new Date(nowMs()); midnight.setHours(0, 0, 0, 0);
     const today = (state.pnlSeries || []).filter((d) => new Date(d.at).getTime() >= midnight.getTime());
@@ -2076,6 +2108,34 @@
       renderStatus();
     }
   }
+  // Reset: explain, confirm, then ask the bot to do it at its next check.
+  $("resetBtn").addEventListener("click", () => {
+    const t = state.totals;
+    $("resetNow").textContent = `Right now it shows ${usd(t.realizedPnlUsd + t.unrealizedPnlUsd, true)} from ${t.closed} closed and ${t.open} open paper trade${t.open === 1 ? "" : "s"}.`;
+    $("resetWhen").textContent = state.loop && state.loop.enabled
+      ? "The bot does this at its next check, usually within a few seconds."
+      : "Paper trading isn't running in this window, so the reset happens the next time it runs.";
+    $("resetGo").disabled = false;
+    $("resetDialog").showModal();
+    $("resetCancel").focus();
+  });
+  $("resetCancel").addEventListener("click", () => $("resetDialog").close());
+  $("resetGo").addEventListener("click", async () => {
+    const go = $("resetGo");
+    go.disabled = true;
+    try {
+      const res = await fetch("/api/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reset" }), cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      $("resetDialog").close();
+      await poll();
+    } catch (err) {
+      $("resetDialog").close();
+      const b = $("banner");
+      b.replaceChildren(el("strong", { text: "⚠ Couldn't reset:" }), String(err.message || err));
+      b.classList.add("show");
+    }
+  });
   $("replayBtn").addEventListener("click", () => {
     const t = state && state.loop && state.loop.trace;
     if (t) playReplay(t.sample, Object.fromEntries(state.rules.map((r) => [r.ruleId, r])));
