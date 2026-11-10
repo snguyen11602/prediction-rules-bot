@@ -19,7 +19,11 @@ import { houseContestantRules } from "../league/evolve.js";
 import { testTradesNeeded } from "../backtest/run.js";
 import { applyControl, controlsPathFor, isStopped, loadControls, saveControls, type ControlAction } from "../engine/controls.js";
 import { labPathFor, type downloadLab } from "../lab/data.js";
-import { createLabService } from "../lab/api.js";
+import { createLabService, type LabService } from "../lab/api.js";
+import {
+  activeStrategies, addStrategy, LabStrategyError, loadStrategies, MAX_LAB_STRATEGIES, parseSettings, removeStrategy, restoreStrategy, saveStrategies, snapshotOf, strategiesPathFor,
+  type LabStrategy,
+} from "../lab/strategies.js";
 
 /**
  * Local paper-trading dashboard. Serves one page plus a JSON snapshot of the
@@ -27,7 +31,8 @@ import { createLabService } from "../lab/api.js";
  * the ledger (the optional paper loop lives in the CLI). The one thing it can
  * change is the controls file (POST /api/control): the bots' start / stop switches, and a request
  * to reset the paper portfolio, which the next paper cycle carries out. Separately, the backtest
- * lab can download public game history into its own file (POST /api/lab/update).
+ * lab can download public game history into its own file (POST /api/lab/update) and add or remove
+ * its own paper strategies in theirs (POST /api/lab/strategy), which paper cycles read.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -197,6 +202,16 @@ export async function buildState(opts: DashboardOptions) {
     if (!ruleMeta.has(m.id)) ruleMeta.set(m.id, { name: `${m.name} — ${m.style}`, action: "paper", enabled: leagueOn && m.status !== "retired" && familyAllowed(m, file?.league) });
   }
 
+  // Lab strategies (tests added to paper trading from the backtest lab) trade under their own names too.
+  let labError: string | undefined;
+  const labFile = await loadStrategies(strategiesPathFor(opts.ledgerPath)).catch((err: Error) => {
+    labError = err.message;
+    return undefined;
+  });
+  for (const s of labFile?.strategies ?? []) {
+    if (!ruleMeta.has(s.id)) ruleMeta.set(s.id, { name: typeof s.name === "string" && s.name ? s.name : s.id, action: "paper", enabled: !s.removedAt });
+  }
+
   // Every paper rule appears, even before its first trade.
   const byId = new Map(summary.rules.map((s) => [s.ruleId, s]));
   for (const [id, meta] of ruleMeta) {
@@ -332,6 +347,8 @@ export async function buildState(opts: DashboardOptions) {
         .map(slimParlay),
     },
     league: { ...leagueView(league, ledger, file), error: leagueError },
+    /** Ids of the lab strategies trading on paper (the lab page has the details). */
+    lab: { strategies: labFile ? activeStrategies(labFile).map((s) => s.id) : [], error: labError },
     loop: opts.getLoop?.() ?? { enabled: false, running: false },
     events: (opts.getEvents?.() ?? []).slice(-80).reverse(),
   };
@@ -561,6 +578,64 @@ async function control(opts: DashboardOptions, req: http.IncomingMessage, res: h
   reply(200, { ok: true, controls: { allStopped: next.allStopped, stopped: next.stopped } });
 }
 
+function strategyView(s: LabStrategy) {
+  return { id: s.id, name: s.name, addedAt: s.addedAt, updatedAt: s.updatedAt, removedAt: s.removedAt, settings: s.settings, test: s.test, notes: s.notes ?? [], risk: s.rule?.risk };
+}
+
+async function labStrategyList(opts: DashboardOptions) {
+  const data = await loadStrategies(strategiesPathFor(opts.ledgerPath));
+  return { ok: true as const, max: MAX_LAB_STRATEGIES, strategies: data.strategies.map(strategyView) };
+}
+
+/**
+ * Add a lab test to paper trading, remove one, or undo a remove. Same guard as the other buttons.
+ * The browser only sends the lab's settings: the rule is built here, always as a paper rule, and
+ * the only file written is the lab's own strategies file.
+ */
+async function labStrategy(opts: DashboardOptions, lab: LabService, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const reply = (status: number, body: unknown) => {
+    res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(body));
+  };
+  const refused = postRefusal(req);
+  if (refused) return reply(refused.status, { ok: false, error: refused.error });
+  let body: { action?: unknown; id?: unknown; settings?: unknown };
+  try {
+    body = (await readJson(req, 4096)) as typeof body;
+  } catch {
+    return reply(400, { ok: false, error: "bad request" });
+  }
+  const file = strategiesPathFor(opts.ledgerPath);
+  const id = typeof body?.id === "string" && /^lab-[\w-]{1,80}$/.test(body.id) ? body.id : undefined;
+  try {
+    const data = await loadStrategies(file);
+    let outcome: string;
+    let strategy: LabStrategy | undefined;
+    if (body?.action === "add") {
+      const q = parseSettings(body.settings);
+      // Only the test's headline numbers are kept, so skip nearly all of the simulation.
+      const run = await lab.test({ ...q, runs: 100, horizon: 1 });
+      // A rule in the rules file with the same id would already be trading these games.
+      const taken = new Set((await loadRulesFile(opts.rulesPath).catch(() => undefined))?.rules.map((r) => r.id) ?? []);
+      const now = new Date();
+      ({ outcome, strategy } = addStrategy(data, q, { now, test: run ? snapshotOf(run, now) : undefined, taken }));
+    } else if (body?.action === "remove" && id) {
+      if (!removeStrategy(data, id, new Date())) return reply(404, { ok: false, error: "That strategy isn't trading." });
+      outcome = "removed";
+    } else if (body?.action === "restore" && id) {
+      strategy = restoreStrategy(data, id);
+      outcome = "restored";
+    } else {
+      return reply(400, { ok: false, error: "need action add (with settings), remove or restore (with an id)" });
+    }
+    if (outcome !== "unchanged") await saveStrategies(file, data);
+    reply(200, { ok: true, outcome, id: strategy?.id ?? id, max: MAX_LAB_STRATEGIES, strategies: data.strategies.map(strategyView) });
+  } catch (err) {
+    if (err instanceof LabStrategyError) return reply(409, { ok: false, error: err.message });
+    reply(500, { ok: false, error: (err as Error).message });
+  }
+}
+
 export function createDashboardServer(opts: DashboardOptions): http.Server {
   const lab = createLabService(opts.labPath ?? labPathFor(opts.ledgerPath), opts.labDownload);
   return http.createServer(async (req, res) => {
@@ -584,11 +659,22 @@ export function createDashboardServer(opts: DashboardOptions): http.Server {
         if (refused) return json(refused.status, { ok: false, error: refused.error });
         return json(202, { ok: true, started: lab.update() });
       }
+      if (req.method === "POST" && url.pathname === "/api/lab/strategy") {
+        await labStrategy(opts, lab, req, res);
+        return;
+      }
       if (req.method !== "GET" && req.method !== "HEAD") {
-        res.writeHead(405, { Allow: "GET, HEAD", "Content-Type": "text/plain" }).end("Read-only dashboard (POST only to /api/control and /api/lab/update)");
+        res.writeHead(405, { Allow: "GET, HEAD", "Content-Type": "text/plain" }).end("Read-only dashboard (POST only to /api/control, /api/lab/update and /api/lab/strategy)");
         return;
       }
       if (url.pathname === "/api/lab/status") return json(200, { ok: true, ...(await lab.status()) });
+      if (url.pathname === "/api/lab/strategies") {
+        try {
+          return json(200, await labStrategyList(opts));
+        } catch (err) {
+          return json(500, { ok: false, error: (err as Error).message });
+        }
+      }
       if (url.pathname === "/api/lab/run") {
         const out = await lab.run(url.searchParams);
         return json(out.ok ? 200 : 400, out);

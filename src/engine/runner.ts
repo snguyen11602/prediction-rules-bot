@@ -1,7 +1,7 @@
 import { enabledRules, loadRulesFile } from "../rules/loader.js";
 import type { Rule } from "../rules/schema.js";
 import { createAdapters, type PlatformAdapter } from "../platforms/index.js";
-import { DEFAULT_PLATFORMS, type EngineEvent, type NormalizedMarket, type PlatformId, type SignalSide } from "../types.js";
+import { DEFAULT_PLATFORMS, type EngineEvent, type LeagueId, type NormalizedMarket, type PlatformId, type SignalSide } from "../types.js";
 import { dayKeyLA } from "./clock.js";
 import { traceEntry, type PriorPrice } from "./evaluate.js";
 import { stageReached, type Check, type Decision, type FunnelRow, type ScanSample, type ScanTrace } from "./trace.js";
@@ -91,16 +91,34 @@ function describeError(err: unknown): string {
 }
 
 /** Fetch markets from every adapter; one failing adapter never stops the others. */
+/** The leagues some rule is limited to (`filters.leagues`): their games must never be cut from a listing. */
+export function leaguesWanted(rules: Rule[]): LeagueId[] {
+  return [...new Set(rules.flatMap((r) => r.filters.leagues ?? []))].sort();
+}
+
+/**
+ * What per-market rules look at: the first `limit` markets per platform, plus every fetched game
+ * in a league some rule is limited to (on a busy day those can sit past the cut).
+ */
+export function marketsForRules(fetched: NormalizedMarket[], limit: number, leagues: LeagueId[]): NormalizedMarket[] {
+  const head = slicePerPlatform(fetched, limit);
+  if (!leagues.length) return head;
+  const want = new Set(leagues);
+  const have = new Set(head.map((m) => `${m.platform}:${m.id}`));
+  return [...head, ...fetched.filter((m) => m.league != null && want.has(m.league) && !have.has(`${m.platform}:${m.id}`))];
+}
+
 export async function fetchMarkets(
   adapters: PlatformAdapter[],
   limit: number,
   push: (e: EngineEvent) => Promise<void>,
+  leagues: LeagueId[] = [],
 ): Promise<{ markets: NormalizedMarket[]; failed: Set<PlatformId> }> {
   const markets: NormalizedMarket[] = [];
   const failed = new Set<PlatformId>();
   for (const adapter of adapters) {
     try {
-      const batch = await adapter.listMarkets({ limit });
+      const batch = await adapter.listMarkets(leagues.length ? { limit, leagues } : { limit });
       markets.push(...batch);
       await push({
         at: new Date().toISOString(),
@@ -373,8 +391,9 @@ export async function runScan(opts: RunnerOptions): Promise<EngineEvent[]> {
   }
 
   const limit = opts.limitPerPlatform ?? 80;
-  const { markets: fetched } = await fetchMarkets(adapters, arbScanLimit(arbCfg, limit), push);
-  const markets = slicePerPlatform(fetched, limit);
+  const leagues = leaguesWanted(rules);
+  const { markets: fetched } = await fetchMarkets(adapters, arbScanLimit(arbCfg, limit), push, leagues);
+  const markets = marketsForRules(fetched, limit, leagues);
 
   if (markets.length === 0) {
     await push({

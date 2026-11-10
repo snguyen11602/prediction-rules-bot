@@ -1,4 +1,4 @@
-import type { NormalizedMarket } from "../types.js";
+import type { LeagueId, NormalizedMarket } from "../types.js";
 import type { EventGroup, ListMarketsOptions, PlatformAdapter } from "./types.js";
 import { getJson } from "./http.js";
 import type { Tick } from "../engine/series.js";
@@ -150,6 +150,7 @@ function normalize(m: KalshiMarket): NormalizedMarket | null {
     closesAt: m.close_time,
     ...kalshiTimes(m),
     marketType: isKalshiGameWinner(m.ticker) ? "game_winner" : "other",
+    league: kalshiLeague(m.ticker),
     createdAt: m.created_time ?? m.open_time,
     eventId: m.event_ticker,
     ...lifecycle,
@@ -161,6 +162,8 @@ function normalize(m: KalshiMarket): NormalizedMarket | null {
 
 /** Markets younger than this are left out of the listing (empty books, placeholder prices). */
 const MIN_AGE_SEC = 2 * 3600;
+/** How far ahead a league's games are always listed for rules limited to that league. */
+const LEAGUE_AHEAD_MS = 2 * 86_400_000;
 
 /** Game-winner series (moneylines); the same set the backtest replays. */
 export const KALSHI_GAME_SERIES = [
@@ -171,6 +174,19 @@ const GAME_SERIES = new Set(KALSHI_GAME_SERIES);
 
 export function isKalshiGameWinner(ticker: string): boolean {
   return GAME_SERIES.has(ticker.split("-")[0].toUpperCase());
+}
+
+const LEAGUE_BY_CODE: Record<string, LeagueId> = {
+  NFL: "nfl", NCAAF: "cfb", NBA: "nba", NCAAMB: "cbb", WNBA: "wnba", NHL: "nhl", MLB: "mlb", EPL: "epl", UCL: "ucl", LALIGA: "laliga", MLS: "mls",
+};
+
+/**
+ * The league of a game market, from its series: `KXNBAGAME-…` and the full-game lines
+ * (`KXNBASPREAD`, `KXNBATOTAL`, `KXUCLTEAMTOTAL`) → "nba" / "ucl". Anything else has no league.
+ */
+export function kalshiLeague(ticker: string): LeagueId | undefined {
+  const m = /^KX([A-Z]+?)(?:GAME|SPREAD|TOTAL|TEAMTOTAL)$/.exec(ticker.split("-")[0].toUpperCase());
+  return m ? LEAGUE_BY_CODE[m[1]] : undefined;
 }
 
 /** The date + teams part of a Kalshi sports ticker ("26NOV03VILPSG"), or undefined. */
@@ -279,7 +295,13 @@ export class KalshiAdapter implements PlatformAdapter {
     others.sort((a, b) => (b.volume24hUsd ?? 0) - (a.volume24hUsd ?? 0));
     // Up to half the slots go to games, the rest to the busiest other markets.
     const g = games.slice(0, Math.ceil(limit / 2));
-    return [...g, ...others].slice(0, limit);
+    const head = [...g, ...others].slice(0, limit);
+    if (!opts.leagues?.length) return head;
+    // A rule limited to a league must see all of its coming games, however many other games start first.
+    const want = new Set(opts.leagues);
+    const have = new Set(head.map((m) => m.id));
+    const extra = games.filter((m) => m.league != null && want.has(m.league) && !have.has(m.id) && soon(m) > now && soon(m) < now + LEAGUE_AHEAD_MS);
+    return [...head, ...extra];
   }
 
   /** Open, single markets (no parlays), `pages` pages of results. */

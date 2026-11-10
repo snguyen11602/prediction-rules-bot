@@ -468,6 +468,21 @@
   .lab-notes { margin: 14px 0 0; padding: 10px 12px 10px 28px; border-radius: 8px; background: color-mix(in srgb, var(--warn) 12%, var(--surface)); color: var(--ink-2); font-size: 13px; }
   .lab-notes li { margin: 2px 0; }
   .lab-lede { margin: 2px 0 0; max-width: 78ch; }
+  .lab-paper { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--grid); }
+  .lab-paper-text { margin: 0; flex: 1 1 260px; font-size: 13px; color: var(--ink-2); max-width: 70ch; }
+  .lab-paper-text a, .lab-mine a { color: var(--accent); }
+  .lab-mine { list-style: none; margin: 12px 0 0; padding: 0; }
+  .lab-mine li { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--grid); }
+  .lab-mine li:first-child { border-top: 0; padding-top: 4px; }
+  .lab-mine .what { flex: 1 1 320px; min-width: 0; }
+  .lab-mine .what strong { font-weight: 600; }
+  .lab-mine .what .meta { display: block; margin-top: 2px; }
+  .lab-mine .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .lab-mine .tag { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: var(--badge); color: var(--ink-2); font-size: 12px; font-weight: 500; }
+  .lab-undo { margin-top: 10px; }
+  .lab-rule { margin-top: 14px; border-top: 1px solid var(--grid); padding-top: 12px; }
+  .lab-rule summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+  .lab-rule .plain { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); }
   .lab-chart { height: 250px; margin-top: 6px; }
   .lab-chart .empty { padding-top: 90px; }
   .lab-two { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 22px; margin: 14px 0 12px; }
@@ -902,6 +917,10 @@
           </div>
           <dl class="stats" id="labStats"></dl>
           <ul class="lab-notes" id="labNotes" hidden></ul>
+          <div class="lab-paper" id="labPaper">
+            <button class="btn primary" type="button" id="labAdd" hidden>Add to paper trading</button>
+            <p class="lab-paper-text" id="labPaperText" role="status"></p>
+          </div>
         </section>
 
         <section class="card section">
@@ -949,10 +968,17 @@
           <button class="btn lab-more" type="button" id="labMore" hidden>Show 25 more</button>
         </section>
 
-        <section class="card section" id="labYamlCard" hidden>
-          <div class="card-head"><h2>Run this as a paper strategy</h2><button class="why" type="button" id="labCopy">Copy</button></div>
-          <p class="meta">Paste this under <code>rules:</code> in <code>rules/example.yaml</code> and restart the bot. It trades in paper only.</p>
-          <pre class="lab-yaml" id="labYaml"></pre>
+        <section class="card section" id="labMineCard">
+          <div class="card-head"><h2>Lab strategies in paper trading</h2><span class="meta" id="labMineNote"></span></div>
+          <p class="lede lab-lede" id="labMineLede"></p>
+          <ul class="lab-mine" id="labMine"></ul>
+          <p class="meta lab-undo" id="labUndo" role="status" hidden></p>
+          <details class="lab-rule" id="labRuleBox" hidden>
+            <summary>See the rule for the test on this page</summary>
+            <ul class="plain" id="labRuleNotes"></ul>
+            <p class="meta">The button adds exactly this, as a paper strategy. To keep it in your rules file instead, paste it under <code>rules:</code> in <code>rules/example.yaml</code> and restart the bot. <button class="why" type="button" id="labCopy">Copy</button></p>
+            <pre class="lab-yaml" id="labYaml"></pre>
+          </details>
         </section>
 
         <p class="meta lab-data" id="labData"></p>
@@ -2269,7 +2295,9 @@
     { name: "Long shots", set: { pick: "underdog", min: 5, max: 30, entry: 1, exec: "taker", exit: "result" } },
     { name: "Buy early, sell before the game", set: { pick: "favorite", min: 55, max: 90, entry: 24, exec: "taker", exit: "pregame", exitH: 1 } },
   ];
-  const lab = { p: { ...LAB_DEFAULT }, status: null, result: null, slice: "byLeague", shown: 25, booted: false, seq: 0, runTimer: 0, pollTimer: 0, error: "" };
+  const lab = { p: { ...LAB_DEFAULT }, status: null, result: null, slice: "byLeague", shown: 25, booted: false, seq: 0, runTimer: 0, pollTimer: 0, error: "", mine: null, mineMax: 12, mineError: "", painted: "", flash: "", undo: null, busy: false };
+  /** The settings that make a strategy (what a run sends, minus the test's dates and the simulation's). */
+  const LAB_KEPT = ["pick", "min", "max", "entry", "from", "move", "spread", "leagues", "exec", "exit", "exitH", "stake", "size", "pct", "bank"];
   try { Object.assign(lab.p, JSON.parse(pref.get("lab", "{}"))); } catch { /* start from the defaults */ }
   if (!Array.isArray(lab.p.leagues)) lab.p.leagues = [];
   const hoursBefore = (h) => (h === 0 ? "at the start" : `${h} hour${h === 1 ? "" : "s"} before the start`);
@@ -2302,6 +2330,7 @@
     $("labReroll").addEventListener("click", () => { lab.p.seed = Math.floor(Math.random() * 1e9); labChanged(false); });
     $("labGet").addEventListener("click", labDownload);
     $("labMore").addEventListener("click", () => { lab.shown += 25; renderLabTrades(); });
+    $("labAdd").addEventListener("click", labAddCurrent);
     $("labCopy").addEventListener("click", async () => {
       try { await navigator.clipboard.writeText($("labYaml").textContent); $("labCopy").textContent = "Copied"; } catch { $("labCopy").textContent = "Select the text and copy it"; }
       setTimeout(() => { $("labCopy").textContent = "Copy"; }, 1800);
@@ -2349,6 +2378,7 @@
   }
   function labChanged(fromForm) {
     if (fromForm) labRead();
+    lab.flash = "";
     labSync();
     pref.set("lab", JSON.stringify(lab.p));
     clearTimeout(lab.runTimer);
@@ -2410,7 +2440,164 @@
   }
   function labOpen() {
     if (!lab.booted) labBoot();
+    // A link can carry settings: #/backtest?pick=favorite&min=75&max=100… They are applied once.
+    const link = location.hash.split("?")[1];
+    if (link) {
+      labApply(Object.fromEntries(new URLSearchParams(link)));
+      history.replaceState(null, "", "#/backtest");
+    }
     labStatus();
+    labMineLoad();
+  }
+
+  // ---- lab strategies in paper trading ----
+  function labSettings() {
+    const o = {};
+    for (const k of LAB_KEPT) o[k] = Array.isArray(lab.p[k]) ? lab.p[k].join(",") : lab.p[k];
+    return o;
+  }
+  /** Put a strategy's (or a link's) settings into the lab. Anything the form can't show is ignored. */
+  function labApply(src) {
+    const p = lab.p;
+    const has = (k) => src[k] != null && src[k] !== "";
+    const num = (k, lo, hi) => { const v = Number(src[k]); if (has(k) && Number.isFinite(v)) p[k] = Math.min(hi, Math.max(lo, v)); };
+    const one = (k, allowed) => { const hit = allowed.find((a) => String(a) === String(src[k])); if (hit != null) p[k] = hit; };
+    one("pick", ["favorite", "underdog", "riser", "faller", "all"]); one("exec", ["taker", "maker"]); one("exit", ["result", "pregame"]); one("stake", ["flat", "percent"]);
+    one("entry", [1, 2, 3, 6, 12, 24]); one("from", [3, 6, 12, 24]); one("exitH", [0, 1, 2, 3, 6, 12]);
+    num("min", 0, 100); num("max", 0, 100); num("move", 0.5, 50); num("spread", 1, 20); num("size", 1, 1e5); num("pct", 0.1, 100); num("bank", 10, 1e7);
+    if (src.leagues != null) p.leagues = String(src.leagues).split(",").map((x) => x.trim()).filter((x) => /^[A-Z0-9]{3,24}$/.test(x));
+    p.start = ""; p.end = "";
+    labSync();
+    labChanged(false);
+  }
+  async function labMineLoad() {
+    try {
+      const res = await fetch("/api/lab/strategies", { cache: "no-store" });
+      const data = await res.json();
+      lab.mineError = data.ok ? "" : data.error || `HTTP ${res.status}`;
+      if (data.ok) { lab.mine = data.strategies; lab.mineMax = data.max || lab.mineMax; }
+    } catch { return; /* the next visit tries again */ }
+    renderLabPaper();
+  }
+  async function labPost(body) {
+    lab.busy = true;
+    renderLabPaper();
+    let out;
+    try {
+      const res = await fetch("/api/lab/strategy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
+      const data = await res.json();
+      if (data.ok) { lab.mine = data.strategies; lab.mineMax = data.max || lab.mineMax; lab.mineError = ""; }
+      out = data.ok ? data : { ok: false, error: data.error || `HTTP ${res.status}` };
+    } catch {
+      out = { ok: false, error: "Couldn't reach the dashboard. Is the bot still running?" };
+    }
+    lab.busy = false;
+    return out;
+  }
+  async function labAddCurrent() {
+    const out = await labPost({ action: "add", settings: labSettings() });
+    lab.undo = null;
+    lab.flash = !out.ok ? out.error : out.outcome === "updated" ? "Bet size updated." : out.outcome === "unchanged" ? "" : "Added. It starts at the bot's next check.";
+    renderLabPaper();
+    if (out.ok) poll();
+  }
+  async function labRemove(st) {
+    const out = await labPost({ action: "remove", id: st.id });
+    lab.flash = out.ok ? "" : out.error;
+    lab.undo = out.ok ? { id: st.id, name: st.name } : null;
+    renderLabPaper();
+    if (out.ok) poll();
+  }
+  async function labRestore(id) {
+    const out = await labPost({ action: "restore", id });
+    lab.undo = null;
+    lab.flash = out.ok ? "" : out.error;
+    renderLabPaper();
+    if (out.ok) poll();
+  }
+  const labMoney = (risk) => (risk ? `${usd0(risk.max_position_usd)} a bet from ${usd0(risk.bankroll_usd)}` : "");
+  /** How a strategy has done on paper, from the same numbers as the Strategies page. */
+  function labPaperSoFar(id) {
+    const r = state && state.ok && state.rules.find((x) => x.ruleId === id);
+    if (!r || (!r.open && !r.closed)) return "no bets yet";
+    const total = r.realizedPnlUsd + r.unrealizedPnlUsd;
+    const settled = r.closed ? `${r.closed} settled (${r.wins} won)` : "";
+    return `${[r.open ? `${r.open} open` : "", settled].filter(Boolean).join(", ")}, ${usd(total, true)}`;
+  }
+  function renderLabPaper() {
+    const r = lab.result;
+    const info = r && r.paper;
+    const active = (lab.mine || []).filter((x) => !x.removedAt);
+    const here = info && info.ok ? active.find((x) => x.id === info.id) : null;
+    const stopped = (id) => !!(state && state.ok && (state.rules.find((x) => x.ruleId === id) || {}).stopped);
+    // This runs on every refresh of the page's data: only touch the page when what it shows changed
+    // (so a button being pressed, or holding keyboard focus, isn't swapped out from under the reader).
+    const shown = JSON.stringify([lab.flash, lab.busy, info, lab.p.stake, lab.p.size, lab.p.pct, lab.p.bank, r && r.yaml, r && r.verdict, r && r.stats.bets, lab.mineError, lab.undo, lab.mineMax,
+      lab.status && lab.status.dataset.leagues.length, active.map((x) => [x.id, x.name, x.risk, x.settings, ago(x.addedAt), x.test, labPaperSoFar(x.id), stopped(x.id)])]);
+    if (shown === lab.painted) return;
+    lab.painted = shown;
+    const btn = $("labAdd"), text = $("labPaperText");
+    $("labPaper").hidden = !info;
+    if (info) {
+      const now = { max_position_usd: lab.p.stake === "flat" ? Math.min(lab.p.size, lab.p.bank) : lab.p.bank * lab.p.pct / 100, bankroll_usd: lab.p.bank };
+      const same = here && here.risk && Math.abs(here.risk.max_position_usd - now.max_position_usd) < 0.005 && here.risk.bankroll_usd === Math.round(now.bankroll_usd);
+      btn.hidden = !info.ok || !!same;
+      btn.disabled = lab.busy;
+      btn.textContent = here ? "Update the bet size" : "Add to paper trading";
+      const st = r.stats;
+      const care = st.bets < 100 ? `With ${st.bets} bet${st.bets === 1 ? "" : "s"}, the test says very little yet.`
+        : /unlikely to be luck/.test(r.verdict) ? (st.ret > 0 ? "" : "The test lost money, so expect the same on paper.")
+        : "The test is within luck, so treat it as an experiment.";
+      text.replaceChildren();
+      if (lab.flash) text.append(el("strong", { text: `${lab.flash} ` }));
+      if (!info.ok) text.append(info.why);
+      else if (same) text.append(`In paper trading as "${here.name}", ${labMoney(here.risk)}. So far: ${labPaperSoFar(here.id)}. `, el("a", { href: "#/strategies", text: "See it under Strategies" }), ".");
+      else if (here) text.append(`"${here.name}" is in paper trading with ${labMoney(here.risk)}. This changes it to ${labMoney(now)}.`);
+      else text.append(`Trades this test with pretend money, from the bot's next check, as "${info.name}". ${care}`);
+    }
+
+    // The list, and the rule behind the test on this page.
+    $("labMineNote").textContent = active.length ? `${active.length} trading (up to ${lab.mineMax})` : "";
+    const lede = $("labMineLede");
+    lede.replaceChildren();
+    if (lab.mineError) lede.append(`The list couldn't be read: ${lab.mineError}`);
+    else if (!active.length) lede.append("Nothing added yet. \"Add to paper trading\" at the top of this page trades a test with pretend money.");
+    else lede.append("Each one trades with pretend money and has its own on / off switch under ", el("a", { href: "#/strategies", text: "Strategies" }), ". Removing one stops new bets; open bets stay until they settle.");
+    const list = $("labMine");
+    list.replaceChildren();
+    for (const st of active) {
+      const p = { ...LAB_DEFAULT, ...st.settings, leagues: String(st.settings.leagues || "").split(",").filter(Boolean), start: "", end: "" };
+      const t = st.test;
+      const open = el("button", { class: "btn", type: "button", text: "Open in lab" });
+      open.addEventListener("click", () => { labApply(st.settings); window.scrollTo(0, 0); });
+      const remove = el("button", { class: "btn", type: "button", text: "Remove" });
+      remove.disabled = lab.busy;
+      remove.addEventListener("click", () => labRemove(st));
+      list.append(el("li", null,
+        el("div", { class: "what" },
+          el("strong", { text: st.name }),
+          info && info.ok && info.id === st.id ? el("span", { class: "tag", text: "The test on this page" }) : null,
+          stopped(st.id) ? el("span", { class: "tag", text: "Switched off" }) : null,
+          el("span", { class: "meta", text: labSentence(p) }),
+          el("span", { class: "meta", text: `Added ${ago(st.addedAt)}. ${t && t.bets ? `The test then: ${t.bets.toLocaleString()} bets, ${signedPct(t.ret)} per $1 (${t.verdict}).` : "No test result was kept."}` }),
+          el("span", { class: "meta", text: `On paper so far: ${labPaperSoFar(st.id)}.` }),
+        ),
+        el("div", { class: "acts" }, open, remove),
+      ));
+    }
+    const undo = $("labUndo");
+    undo.hidden = !lab.undo;
+    if (lab.undo) {
+      const b = el("button", { class: "why", type: "button", text: "Undo" });
+      b.disabled = lab.busy;
+      const u = lab.undo;
+      b.addEventListener("click", () => labRestore(u.id));
+      undo.replaceChildren(`Removed "${u.name}". Its open bets stay until they settle. `, b);
+    }
+    const box = $("labRuleBox");
+    box.hidden = !(r && r.yaml);
+    $("labYaml").textContent = (r && r.yaml) || "";
+    $("labRuleNotes").replaceChildren(...((info && info.ok && info.notes) || []).map((n) => el("li", { text: n })));
   }
 
   /** The settings as one plain sentence, so it's clear what is being tested. */
@@ -2467,8 +2654,7 @@
     renderLabMc();
     renderLabSlices();
     renderLabTrades();
-    $("labYamlCard").hidden = !r.yaml;
-    $("labYaml").textContent = r.yaml || "";
+    renderLabPaper();
     renderLabData();
   }
   function renderLabData() {
@@ -2707,7 +2893,7 @@
   const PAPER_PAGES = { "": "overview", trades: "trades", strategies: "strategies", activity: "activity", arbitrage: "arbitrage", copy: "copy", moves: "moves" };
   const PAGE_TITLE = { overview: "Overview", trades: "Trades", strategies: "Strategies", activity: "Activity", arbitrage: "Arbitrage", copy: "Copy trading", moves: "Unusual moves", league: "League", backtest: "Backtest lab", live: "Live money", strategy: "Strategy" };
   function route() {
-    const h = location.hash.replace(/^#\/?/, "");
+    const h = location.hash.replace(/^#\/?/, "").split("?")[0];
     if (h.startsWith("s/")) {
       let id = h.slice(2);
       try { id = decodeURIComponent(id); } catch { /* keep it as typed */ }
@@ -2747,7 +2933,8 @@
       else if (v === "strategy") renderStrategy();
       else if (v === "backtest") renderBacktest();
     }
-    if (v !== "paper") { $("demoBadge").hidden = !state.ledger.demo; renderBanner(); renderStatus(); return; }
+    if (v === "lab") renderLabPaper();
+    if (v !== "paper") { $("demoBadge").hidden = !state.ledger.demo; renderControls(); renderBanner(); renderStatus(); return; }
     const rulesById = Object.fromEntries(state.rules.map((r) => [r.ruleId, r]));
     $("demoBadge").hidden = !state.ledger.demo;
     $("ledgerPath").textContent = `Trade file: ${state.ledger.path}`;

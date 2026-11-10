@@ -76,7 +76,10 @@ export class DemoAdapter implements PlatformAdapter {
       const q = opts.query.toLowerCase();
       rows = rows.filter((m) => m.title.toLowerCase().includes(q));
     }
-    return rows.slice(0, opts.limit ?? 100);
+    const limit = opts.limit ?? 100;
+    // Like the real adapters: games in a league some rule is limited to are never cut off.
+    const want = new Set(opts.leagues ?? []);
+    return [...rows.slice(0, limit), ...rows.slice(limit).filter((m) => m.league != null && want.has(m.league))];
   }
 
   async getMarket(id: string): Promise<NormalizedMarket | null> {

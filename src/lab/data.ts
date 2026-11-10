@@ -1,7 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getJson } from "../platforms/http.js";
-import { KALSHI_GAME_SERIES, kalshiTimes } from "../platforms/kalshi.js";
+import { KALSHI_GAME_SERIES, kalshiLeague, kalshiTimes } from "../platforms/kalshi.js";
+import { LEAGUE_NAMES } from "../types.js";
 
 /**
  * The backtest lab's data: Kalshi's settled game-winner markets with their hourly pre-game quotes.
@@ -34,19 +35,13 @@ export interface LabData {
   markets: LabMarket[];
 }
 
-export const LEAGUE_LABEL: Record<string, string> = {
-  KXNFLGAME: "NFL",
-  KXNCAAFGAME: "College football",
-  KXNBAGAME: "NBA",
-  KXNCAAMBGAME: "College basketball",
-  KXWNBAGAME: "WNBA",
-  KXNHLGAME: "NHL",
-  KXMLBGAME: "MLB",
-  KXEPLGAME: "Premier League",
-  KXUCLGAME: "Champions League",
-  KXLALIGAGAME: "La Liga",
-  KXMLSGAME: "MLS",
-};
+/** Kalshi game series → league name (the same names rules and the dashboard use). */
+export const LEAGUE_LABEL: Record<string, string> = Object.fromEntries(
+  KALSHI_GAME_SERIES.flatMap((s) => {
+    const league = kalshiLeague(s);
+    return league ? [[s, LEAGUE_NAMES[league]] as [string, string]] : [];
+  }),
+);
 
 export function labPathFor(ledgerPath: string): string {
   return path.join(path.dirname(ledgerPath), "lab-games.json");

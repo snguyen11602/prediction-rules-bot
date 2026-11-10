@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PLATFORM_IDS } from "../types.js";
+import { LEAGUE_IDS, PLATFORM_IDS } from "../types.js";
 
 /** The Polymarket exchanges a cross-platform pair can use (the other side is always Kalshi). */
 export const POLYMARKET_VENUES = ["polymarket_us", "polymarket"] as const;
@@ -36,8 +36,20 @@ export const MarketFiltersSchema = z.object({
    * time (most non-sports) pass.
    */
   pre_game_only: z.boolean().optional(),
+  /**
+   * Only bet this long before the event starts: no earlier than `max_hours_to_start` and no later
+   * than `min_hours_to_start` (e.g. 2.5 and 3.5 = about three hours before a game). Markets
+   * without a start time, and events that have started, fail.
+   */
+  max_hours_to_start: z.number().positive().optional(),
+  min_hours_to_start: z.number().nonnegative().optional(),
   /** Only these kinds of market (game_winner = a game's moneyline / match winner). */
   market_types: z.array(z.enum(["game_winner", "other"])).optional(),
+  /**
+   * Only games in these leagues (nba, nfl, nhl, mlb, wnba, cbb, cfb, epl, ucl, laliga, mls).
+   * A market whose league the adapter can't tell (anything that isn't a game) fails this filter.
+   */
+  leagues: z.array(z.enum(LEAGUE_IDS)).optional(),
 });
 
 export const EntryConditionsSchema = z.object({

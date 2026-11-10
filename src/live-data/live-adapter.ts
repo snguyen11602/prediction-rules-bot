@@ -22,7 +22,7 @@ export interface LiveAdapterOptions {
 
 export class LiveQuoteAdapter implements PlatformAdapter {
   readonly id: PlatformId;
-  private listing?: { at: number; limit: number; query?: string; markets: NormalizedMarket[] };
+  private listing?: { at: number; limit: number; query?: string; leagues: string; markets: NormalizedMarket[] };
   private readonly byId = new Map<string, { at: number; market: NormalizedMarket | null }>();
   /** Anything cached before this time is re-read (set by refresh()). */
   private minAt = 0;
@@ -65,8 +65,12 @@ export class LiveQuoteAdapter implements PlatformAdapter {
 
   async listMarkets(opts: ListMarketsOptions = {}): Promise<NormalizedMarket[]> {
     const limit = opts.limit ?? 100;
+    const leagues = [...(opts.leagues ?? [])].sort().join(",");
     const l = this.listing;
-    if (!l || this.stale(l.at) || l.limit < limit || l.query !== opts.query) {
+    // Markets past a listing's own limit are league games that were asked for by name
+    // (`ListMarketsOptions.leagues`): they stay in, whatever this call's limit.
+    const cut = (x: NonNullable<typeof l>) => [...x.markets.slice(0, limit), ...x.markets.slice(Math.max(limit, x.limit))].map((m) => this.live(m));
+    if (!l || this.stale(l.at) || l.limit < limit || l.query !== opts.query || l.leagues !== leagues) {
       let markets: NormalizedMarket[];
       try {
         markets = await this.inner.listMarkets(opts);
@@ -74,13 +78,13 @@ export class LiveQuoteAdapter implements PlatformAdapter {
         // Keep the last listing rather than hitting REST again on every quick check.
         if (!l || l.query !== opts.query) throw err;
         l.at = this.now();
-        return l.markets.slice(0, limit).map((m) => this.live(m));
+        return cut(l);
       }
-      this.listing = { at: this.now(), limit, query: opts.query, markets };
+      this.listing = { at: this.now(), limit, query: opts.query, leagues, markets };
       for (const m of markets) this.byId.set(m.id, { at: this.listing.at, market: m });
       this.opts.watch?.(markets, "listing");
     }
-    return this.listing!.markets.slice(0, limit).map((m) => this.live(m));
+    return cut(this.listing!);
   }
 
   async getMarket(id: string): Promise<NormalizedMarket | null> {

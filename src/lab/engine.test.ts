@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backtest, DEFAULT_PARAMS, monteCarlo, mulberry32, pickBets, ruleYaml, verdictOf, type LabBet, type LabParams } from "./engine.js";
-import { downloadLab, pathFromCandles, summarizeLab, type LabData, type LabMarket } from "./data.js";
+import { backtest, DEFAULT_PARAMS, monteCarlo, mulberry32, pickBets, ruleBlocker, ruleFor, ruleYaml, verdictOf, type LabBet, type LabParams } from "./engine.js";
+import { downloadLab, LEAGUE_LABEL, pathFromCandles, summarizeLab, type LabData, type LabMarket } from "./data.js";
 import { parse as parseYaml } from "yaml";
-import { RulesFileSchema } from "../rules/schema.js";
+import { RuleSchema, RulesFileSchema } from "../rules/schema.js";
 
 const START = Date.parse("2026-11-01T00:00:00Z");
 const DAY = 86_400_000;
@@ -126,35 +126,77 @@ test("Monte Carlo: seeded, ordered percentiles, and honest about sure things and
   assert.ok(pctRun.final.min >= -1000);
 });
 
-test("a tested idea can be written out as a paper rule when the bot is able to run it", () => {
-  const fav = ruleYaml(P({ pick: "favorite", minPrice: 0.85, maxPrice: 0.95, size: 50 }))!;
-  assert.match(fav, /id: lab-favorite-85-95/);
-  assert.match(fav, /min_price: 0\.85\n\s+max_price: 0\.95/);
-  assert.match(fav, /max_position_usd: 50/);
-  const riser = ruleYaml(P({ pick: "riser", entryH: 1, fromH: 12, minMove: 0.02 }))!;
-  assert.match(riser, /pregame_move: \{ min_move: 0\.02, lookback_hours: 11, max_hours_to_start: 1 \}/);
-  assert.match(fav, /max_hours_to_resolve: 4\n/, "favorites are bought in the last hour before the start, like the test");
-  // Every snippet must load as a real rule, whatever the settings.
+test("a tested idea becomes a paper rule when the bot is able to run it", () => {
+  // The strategy from the lab: NBA + La Liga favorites at 75–100¢, three hours before the start, $500 from $5,000.
+  const { rule, notes } = ruleFor(P({ pick: "favorite", minPrice: 0.75, maxPrice: 1, entryH: 3, leagues: ["KXNBAGAME", "KXLALIGAGAME"], bankroll: 5000, size: 500 }))!;
+  assert.match(rule.id, /^lab-favorite-75-100-[a-z0-9]{6}$/);
+  assert.equal(rule.name, "Lab favorites 75–100¢, La Liga + NBA");
+  assert.deepEqual(rule.filters, {
+    platforms: ["kalshi"], market_types: ["game_winner"], leagues: ["laliga", "nba"], min_price: 0.75, max_price: 1, max_spread: 0.05,
+    pre_game_only: true, min_hours_to_start: 2.5, max_hours_to_start: 3.5,
+  });
+  // A rule's buy limit has to stay under $1 (a 100¢ top once produced a rule the bot refused to load).
+  assert.deepEqual(rule.entry, { side: "yes", yes_price_above: 0.75, max_buy_price: 0.99 });
+  assert.equal(RuleSchema.parse(rule).entry.max_buy_price, 0.99);
+  // The range is on the mid, like the test: the buy may cost half the spread more, plus slippage.
+  assert.equal(ruleFor(P({ pick: "favorite", minPrice: 0.85, maxPrice: 0.95 }))!.rule.entry.max_buy_price, 0.98);
+  // $500 a bet from $5,000, and as many open at once as that bankroll covers (the test has no other cap).
+  assert.deepEqual(rule.risk, { bankroll_usd: 5000, position_size_fraction: 0.1, max_position_usd: 500, max_open_positions: 10, fire_after_n_losses: 0 });
+  assert.deepEqual(notes, ["Paper fills add half a cent of slippage to every buy, which the test doesn't."]);
+
+  const riser = ruleFor(P({ pick: "riser", entryH: 1, fromH: 12, minMove: 0.02 }))!.rule;
+  assert.deepEqual(riser.entry.pregame_move, { min_move: 0.02, lookback_hours: 11, max_hours_to_start: 1.5 });
+  assert.equal(riser.entry.yes_price_above, undefined);
+  const every = ruleFor(P({ pick: "all", minPrice: 0.2, maxPrice: 0.4 }))!.rule;
+  assert.deepEqual([every.name, every.filters.min_price, every.entry.yes_price_above], ["Lab every side 20–40¢", 0.2, 0.2]);
+
+  // The id names which bets are picked, not the money: a new bet size is the same strategy…
+  const base = P({ pick: "favorite", minPrice: 0.85, maxPrice: 0.95 });
+  const id = (over: Partial<LabParams>) => ruleFor({ ...base, ...over })!.rule.id;
+  assert.equal(id({ size: 100, bankroll: 9000 }), id({}));
+  assert.equal(id({ stake: "percent", pct: 0.05 }), id({}));
+  assert.equal(id({ from: 1, to: 2 }), id({}), "the dates of the test don't change the strategy");
+  // …and anything that changes the bets is a different one.
+  const others = [{ entryH: 3 }, { leagues: ["KXNBAGAME"] }, { leagues: ["KXNHLGAME"] }, { maxSpread: 0.03 }, { maxPrice: 0.9 }, { pick: "all" as const }];
+  assert.equal(new Set([id({}), ...others.map(id)]).size, others.length + 1);
+  assert.equal(id({ leagues: ["KXNHLGAME", "KXNBAGAME"] }), id({ leagues: ["KXNBAGAME", "KXNHLGAME"] }), "league order doesn't matter");
+
+  // Percent bets: the bot sizes on the starting bankroll, and says so.
+  const pct = ruleFor(P({ minPrice: 0.85, maxPrice: 0.95, stake: "percent", pct: 0.05, bankroll: 2000 }))!;
+  assert.deepEqual([pct.rule.risk.position_size_fraction, pct.rule.risk.max_position_usd, pct.rule.risk.max_open_positions], [0.05, 100, 20]);
+  assert.match(pct.notes[0], /5% of the starting bankroll every time/);
+  // A favorite is known only by its price.
+  const low = ruleFor(P({ pick: "favorite", minPrice: 0.3, maxPrice: 0.7 }))!;
+  assert.equal(low.rule.filters.min_price, 0.5);
+  assert.match(low.notes[0], /The test started at 30¢/);
+
+  // Every shape must load as a real rule, as data and as the text to paste.
   const shapes: Array<Partial<LabParams>> = [
-    {}, { pick: "riser" }, { pick: "favorite", minPrice: 0.3, maxPrice: 0.7, leagues: ["KXNBAGAME", "KXNHLGAME"] },
+    {}, { pick: "riser" }, { pick: "all" }, { pick: "favorite", minPrice: 0.3, maxPrice: 0.7, leagues: ["KXNBAGAME", "KXNHLGAME"] },
     { pick: "riser", entryH: 0, fromH: 1 }, { pick: "riser", entryH: 24, fromH: 26, minMove: 0.005 }, { stake: "percent", pct: 0.05, entryH: 6 },
+    { size: 5000, bankroll: 100 }, { stake: "percent", pct: 1 }, { entryH: 0 }, { leagues: Object.keys(LEAGUE_LABEL) }, { maxPrice: 1, size: 100_000, bankroll: 10_000_000 },
   ];
   for (const over of shapes) {
-    const text = ruleYaml(P({ minPrice: 0.6, maxPrice: 0.9, ...over }))!;
+    const p = P({ minPrice: 0.6, maxPrice: 0.9, ...over });
+    const made = ruleFor(p)!;
+    assert.deepEqual(RuleSchema.parse(made.rule).filters, made.rule.filters, JSON.stringify(over));
+    const text = ruleYaml(p)!;
     const file = RulesFileSchema.parse(parseYaml(`version: 1\nrules:\n${text}\n`));
-    assert.equal(file.rules.length, 1, text);
-    assert.equal(file.rules[0].action, "paper");
+    assert.deepEqual([file.rules.length, file.rules[0].action, file.rules[0].id], [1, "paper", made.rule.id], text);
+    assert.equal(text.split("\n").filter((l) => l.startsWith("  # ")).length, made.notes.length, "each difference from the test is a comment in the text");
   }
-  // What a rule can't do is written into the snippet: no league filter, and a favorite is known only by its price.
-  const narrowed = ruleYaml(P({ pick: "favorite", minPrice: 0.3, maxPrice: 0.7, leagues: ["KXNBAGAME"] }))!;
-  assert.match(narrowed, /# Tested on NBA only/);
-  assert.match(narrowed, /# The test started at 30¢/);
-  assert.match(narrowed, /min_price: 0\.5\n/);
-  assert.equal(ruleYaml(P({ pick: "favorite", minPrice: 0.2, maxPrice: 0.4 })), null, "a favorite below 50¢ can't be written as a rule");
-  // The bot has no resting orders, no pre-game selling and no "underdog" rule: no snippet for those.
-  assert.equal(ruleYaml(P({ exec: "maker" })), null);
-  assert.equal(ruleYaml(P({ exit: "pregame" })), null);
-  assert.equal(ruleYaml(P({ pick: "underdog" })), null);
+
+  // What the bot can't run gets no rule, and a plain reason instead.
+  for (const [over, why] of [
+    [{ exec: "maker" }, /can't leave an order resting/], [{ exit: "pregame" }, /can't sell at a set time/], [{ pick: "underdog" }, /can't tell which side is the underdog/],
+    [{ pick: "faller" }, /no rule for buying the side whose price fell/], [{ pick: "favorite", minPrice: 0.2, maxPrice: 0.4 }, /50¢ or more/],
+  ] as Array<[Partial<LabParams>, RegExp]>) {
+    assert.equal(ruleFor(P(over)), null);
+    assert.equal(ruleYaml(P(over)), null);
+    assert.match(ruleBlocker(P(over))!, why);
+  }
+  assert.equal(ruleBlocker(P({})), null);
+  assert.equal(Object.keys(LEAGUE_LABEL).length, 11, "every game series has a league name");
 });
 
 test("dataset: candles become hourly quotes; an update only fetches games that aren't on disk", async () => {
