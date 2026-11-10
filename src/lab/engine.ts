@@ -1,5 +1,8 @@
+import { stringify } from "yaml";
 import type { LabData, LabMarket } from "./data.js";
 import { LEAGUE_LABEL } from "./data.js";
+import { kalshiLeague } from "../platforms/kalshi.js";
+import { LEAGUE_NAMES, type LeagueId } from "../types.js";
 
 /**
  * The backtest lab's engine: pick bets from settled games by rule, size them, and measure the
@@ -460,42 +463,128 @@ export function monteCarlo(rets: number[], o: McOptions): McResult | null {
   };
 }
 
-/** Hours from a Kalshi game's start to its expected result (`KALSHI_GAME_HOURS`): turns "hours before the start" into a resolve-time filter. */
-const GAME_HOURS = 3;
+/** A lab test written as a paper rule. Plain data: it parses with `RuleSchema`. */
+export interface LabRuleData {
+  id: string;
+  name: string;
+  enabled: true;
+  action: "paper";
+  filters: {
+    platforms: ["kalshi"];
+    market_types: ["game_winner"];
+    leagues?: LeagueId[];
+    min_price: number;
+    max_price: number;
+    max_spread: number;
+    pre_game_only: true;
+    min_hours_to_start?: number;
+    max_hours_to_start: number;
+  };
+  entry: {
+    side: "yes";
+    yes_price_above?: number;
+    pregame_move?: { min_move: number; lookback_hours: number; max_hours_to_start: number };
+    max_buy_price: number;
+  };
+  risk: { bankroll_usd: number; position_size_fraction: number; max_position_usd: number; max_open_positions: number; fire_after_n_losses: 0 };
+  paper: { slippage: number; include_fees: true };
+}
 
-/** A paper rule for `rules/example.yaml` that does what these settings test, when the bot can run it. */
-export function ruleYaml(p: LabParams): string | null {
-  if (p.exec !== "taker" || p.exit !== "result" || (p.pick !== "favorite" && p.pick !== "riser")) return null;
-  const c = (x: number) => (Math.round(x * 1000) / 1000).toString();
-  const window = Math.max(1, p.entryH);
+export interface LabRule {
+  rule: LabRuleData;
+  /** Where the rule can't do exactly what the test did. */
+  notes: string[];
+}
+
+/** Why the bot can't paper trade these settings, in plain words; null when it can. */
+export function ruleBlocker(p: LabParams): string | null {
+  if (p.exec === "maker") return "The bot's paper trades buy at the ask. It can't leave an order resting at the bid, so this test can't be paper traded.";
+  if (p.exit === "pregame") return "The bot can't sell at a set time before the game, so this test can't be paper traded. Tests that hold to the result can.";
+  if (p.pick === "underdog") return "A rule looks at one market at a time, so it can't tell which side is the underdog. \"Every side in a price range\" is the closest test the bot can run.";
+  if (p.pick === "faller") return "The bot has no rule for buying the side whose price fell, so this test can't be paper traded.";
+  if (p.pick === "favorite" && p.maxPrice < 0.5) return "A rule can only tell a favorite by a price of 50¢ or more, and this test's price range ends below that.";
+  return null;
+}
+
+/** Extra cost per paper buy on top of the ask, as the bot's own paper rules use. */
+const PAPER_SLIPPAGE = 0.005;
+
+function shortHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36).padStart(7, "0").slice(-6);
+}
+
+/**
+ * The paper rule that does what these settings test: favorites, risers or every side in a price
+ * range, bought at the ask and held to the result. The id depends only on which bets are picked
+ * (not on the money), so adding the same test again with another bet size updates one strategy
+ * instead of making two that buy the same games.
+ */
+export function ruleFor(p: LabParams): LabRule | null {
+  if (ruleBlocker(p)) return null;
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  const notes: string[] = [];
   // A rule sees one market at a time, so it can only tell a favorite by its price: 50¢ or more.
   const min = p.pick === "favorite" ? Math.max(0.5, p.minPrice) : p.minPrice;
-  if (min > p.maxPrice) return null;
-  const lines: string[] = [];
-  // Where the rule differs from the test, say so in the snippet itself, where it will be read.
-  if (p.leagues.length) lines.push(`  # Tested on ${p.leagues.map((s) => LEAGUE_LABEL[s] ?? s).join(", ")} only. Rules can't be limited to a league, so this one trades every league.`);
-  if (min > p.minPrice + 1e-9) lines.push(`  # The test started at ${Math.round(p.minPrice * 100)}¢. A rule can only tell a favorite by its price, so this one starts at 50¢.`);
-  lines.push(
-    `  - id: lab-${p.pick}-${Math.round(min * 100)}-${Math.round(p.maxPrice * 100)}`,
-    `    name: Lab ${p.pick === "favorite" ? "favorites" : "late movers"} ${Math.round(min * 100)}–${Math.round(p.maxPrice * 100)}¢`,
-    "    enabled: true",
-    "    action: paper",
-    "    filters:",
-    "      platforms: [kalshi]",
-    "      market_types: [game_winner]",
-    `      min_price: ${c(min)}`,
-    `      max_price: ${c(p.maxPrice)}`,
-    `      max_spread: ${c(p.maxSpread)}`,
-    "      pre_game_only: true",
-  );
-  // Favorites: only in the last hours before the start, like the test (risers carry their own window).
-  if (p.pick === "favorite") lines.push(`      max_hours_to_resolve: ${window + GAME_HOURS}`);
-  lines.push("    entry:", "      side: yes");
-  if (p.pick === "riser") lines.push(`      pregame_move: { min_move: ${c(p.minMove)}, lookback_hours: ${Math.max(2, p.fromH - p.entryH)}, max_hours_to_start: ${window} }`);
-  else lines.push(`      yes_price_above: ${c(min)}`);
-  lines.push(`      max_buy_price: ${c(p.maxPrice)}`, "    risk:", "      bankroll_usd: " + Math.round(p.bankroll));
-  if (p.stake === "flat") lines.push(`      position_size_fraction: ${c(Math.min(1, p.size / p.bankroll))}`, `      max_position_usd: ${Math.round(p.size)}`);
-  else lines.push(`      position_size_fraction: ${c(p.pct)}`, `      max_position_usd: ${Math.round(p.bankroll * p.pct * 2)}`);
-  lines.push("      fire_after_n_losses: 0", "    paper:", "      slippage: 0.005", "      include_fees: true");
-  return lines.join("\n");
+  if (min > p.minPrice + 1e-9) notes.push(`The test started at ${Math.round(p.minPrice * 100)}¢. A rule can only tell a favorite by its price, so this one starts at 50¢.`);
+  const leagues = [...new Set(p.leagues.map((s) => kalshiLeague(s)).filter((l): l is LeagueId => l != null))].sort();
+  // The test used the price about `entryH` hours before the start: the same hour-wide window.
+  const lo = Math.max(0, p.entryH - 0.5);
+  const hi = p.entryH + 0.5;
+  const riser = p.pick === "riser";
+  const lookback = Math.max(2, p.fromH - p.entryH);
+  if (riser && lookback !== p.fromH - p.entryH) notes.push("The bot compares prices at least 2 hours apart, a little more than this test did.");
+  const stake = p.stake === "flat" ? Math.min(p.size, p.bankroll) : p.bankroll * p.pct;
+  if (p.stake === "percent") notes.push(`The bot bets ${Math.round(p.pct * 1000) / 10}% of the starting bankroll every time; the test let that grow and shrink with results.`);
+  notes.push("Paper fills add half a cent of slippage to every buy, which the test doesn't.");
+  const range = `${Math.round(min * 100)}–${Math.round(p.maxPrice * 100)}¢`;
+  const what = p.pick === "favorite" ? "favorites" : riser ? "late movers" : "every side";
+  const names = leagues.map((l) => LEAGUE_NAMES[l]);
+  const key = [p.pick, r3(min), r3(p.maxPrice), p.entryH, riser ? lookback : "", riser ? r3(p.minMove) : "", r3(p.maxSpread), leagues.join("+")].join("|");
+  const rule: LabRuleData = {
+    id: `lab-${p.pick}-${Math.round(min * 100)}-${Math.round(p.maxPrice * 100)}-${shortHash(key)}`,
+    name: `Lab ${what} ${range}${names.length ? `, ${names.length > 3 ? `${names.length} leagues` : names.join(" + ")}` : ""}`,
+    enabled: true,
+    action: "paper",
+    filters: {
+      platforms: ["kalshi"],
+      market_types: ["game_winner"],
+      ...(leagues.length ? { leagues } : {}),
+      min_price: r3(min),
+      max_price: r3(p.maxPrice),
+      max_spread: r3(p.maxSpread),
+      pre_game_only: true,
+      ...(lo > 0 ? { min_hours_to_start: lo } : {}),
+      max_hours_to_start: hi,
+    },
+    entry: {
+      side: "yes",
+      ...(riser ? { pregame_move: { min_move: r3(p.minMove), lookback_hours: lookback, max_hours_to_start: Math.min(24, hi) } } : { yes_price_above: r3(min) }),
+      // The range is on the mid price, like the test; the buy itself may cost half the spread more,
+      // plus slippage. A rule's limit has to stay under $1.
+      max_buy_price: Math.max(0.01, Math.min(0.99, r3(p.maxPrice + p.maxSpread / 2 + PAPER_SLIPPAGE))),
+    },
+    risk: {
+      bankroll_usd: Math.round(p.bankroll),
+      position_size_fraction: Math.min(1, Math.round((stake / p.bankroll) * 10000) / 10000),
+      max_position_usd: Math.max(1, Math.round(stake * 100) / 100),
+      // The test bets on every game that fits; the bankroll check is what limits how many are open.
+      max_open_positions: Math.max(5, Math.min(200, Math.floor(p.bankroll / Math.max(1, stake)))),
+      fire_after_n_losses: 0,
+    },
+    paper: { slippage: PAPER_SLIPPAGE, include_fees: true },
+  };
+  return { rule, notes };
+}
+
+/** The same rule as text to paste under `rules:` in a rules file (the notes become comments). */
+export function ruleYaml(p: LabParams): string | null {
+  const made = ruleFor(p);
+  if (!made) return null;
+  const body = stringify([made.rule], { lineWidth: 0 }).trimEnd().split("\n");
+  return [...made.notes.map((n) => `# ${n}`), ...body].map((l) => `  ${l}`).join("\n");
 }

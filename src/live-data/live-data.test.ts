@@ -256,6 +256,33 @@ test("live adapter caches REST between full checks and overlays streamed quotes"
   assert.deepEqual(watched, ["listing:A", "lookup:B", "listing:A"]);
 });
 
+test("live adapter keeps a rule's league games in the cached listing, whatever limit is asked for", async () => {
+  let t = 0;
+  const asked: string[] = [];
+  const mk = (id: string, league?: "nba"): NormalizedMarket => ({ platform: "kalshi", id, title: id, yesPrice: 0.5, yesBid: 0.49, yesAsk: 0.51, league });
+  const inner: PlatformAdapter = {
+    id: "kalshi",
+    // Like the real adapters: `limit` markets, then the games of the leagues asked for by name.
+    async listMarkets(o = {}) {
+      asked.push(`${o.limit}:${(o.leagues ?? []).join("+")}`);
+      const head = ["A", "B", "C", "D"].slice(0, o.limit).map((id) => mk(id));
+      return o.leagues?.includes("nba") ? [...head, mk("NBA-LATE", "nba")] : head;
+    },
+  };
+  const a = new LiveQuoteAdapter(inner, new QuoteBook(), { refreshMs: 60_000, maxQuoteAgeMs: 10_000, now: () => t });
+  const ids = async (o: { limit: number; leagues?: Array<"nba" | "nhl"> }) => (await a.listMarkets(o)).map((m) => m.id);
+  assert.deepEqual(await ids({ limit: 4, leagues: ["nba"] }), ["A", "B", "C", "D", "NBA-LATE"]);
+  t = 5000;
+  // A quick check asking for fewer markets still gets the league game, from the cache.
+  assert.deepEqual(await ids({ limit: 2, leagues: ["nba"] }), ["A", "B", "NBA-LATE"]);
+  assert.deepEqual(await ids({ limit: 4, leagues: ["nba"] }), ["A", "B", "C", "D", "NBA-LATE"]);
+  assert.deepEqual(asked, ["4:nba"]);
+  // Other leagues wanted (a strategy was added or removed): read again rather than serve the wrong set.
+  assert.deepEqual(await ids({ limit: 4 }), ["A", "B", "C", "D"]);
+  assert.deepEqual(await ids({ limit: 4, leagues: ["nba", "nhl"] }), ["A", "B", "C", "D", "NBA-LATE"]);
+  assert.deepEqual(asked, ["4:nba", "4:", "4:nba+nhl"]);
+});
+
 test("fast checks sell on a live quote without touching the prices that move-based rules compare against", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "prb-fast-"));
   const rules = path.join(dir, "rules.yaml");

@@ -1,5 +1,5 @@
 import type { Rule } from "../rules/schema.js";
-import { platformName, type NormalizedMarket, type SignalSide } from "../types.js";
+import { leagueName, platformName, type NormalizedMarket, type SignalSide } from "../types.js";
 import type { Tick } from "./series.js";
 import { describeMove, detectUnusualMove, type UnusualMove } from "./unusual.js";
 import { cents, hours, usd, type Check } from "./trace.js";
@@ -112,11 +112,25 @@ export function filterChecks(rule: Rule, market: NormalizedMarket, now = new Dat
     const t = market.marketType ?? "other";
     add("Market type", f.market_types.includes(t), `${t === "game_winner" ? "a game winner" : "not a game winner (spread, total, prop or other)"}${f.market_types.includes(t) ? "" : ` (needs ${f.market_types.join(" / ")})`}`);
   }
+  if (f.leagues?.length) {
+    const ok = market.league != null && f.leagues.includes(market.league);
+    add("League", ok, market.league ? `${leagueName(market.league)}${ok ? "" : ` (needs ${f.leagues.map(leagueName).join(" / ")})`}` : "not a game in a league the bot knows");
+  }
   if (f.pre_game_only) {
     const started = hasStarted(market, now);
     const h = market.startsAt ? (Date.parse(market.startsAt) - now.getTime()) / 3600_000 : 0;
     const when = Math.abs(h) < 1 ? `${Math.round(Math.abs(h) * 60)} min` : hours(Math.abs(h));
     add("Before the game", started !== true, started == null ? "no start time (not a game)" : started ? (h <= 0 ? `started ${when} ago: in-play` : `starts in ${when} (too close)`) : `starts in ${when}`);
+  }
+  if (f.min_hours_to_start != null || f.max_hours_to_start != null) {
+    const t = market.startsAt ? Date.parse(market.startsAt) : NaN;
+    const h = Number.isFinite(t) ? (t - now.getTime()) / 3600_000 : undefined;
+    const lo = f.min_hours_to_start ?? 0;
+    const hi = f.max_hours_to_start;
+    const ok = h != null && h >= lo && (hi == null || h <= hi);
+    const span = (x: number) => (x < 1 ? `${Math.round(x * 60)} min` : `${Math.round(x * 10) / 10}h`);
+    const range = hi == null ? `at least ${span(lo)} before` : lo > 0 ? `${span(lo)}–${span(hi)} before` : `within ${span(hi)}`;
+    add("Time to start", ok, h == null ? "no start time (not a game)" : h < 0 ? `already started (needs ${range})` : `starts in ${span(h)} (needs ${range})`);
   }
   if (f.min_hours_to_resolve != null || f.max_hours_to_resolve != null) {
     const hrs = hoursToResolve(market, now);

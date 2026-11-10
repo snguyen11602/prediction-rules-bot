@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { downloadLab, loadLab, saveLab, summarizeLab, type LabData, type LabProgress, type LabSummary } from "./data.js";
-import { backtest, monteCarlo, pickBets, ruleYaml, type LabParams, type LabResult, type McResult } from "./engine.js";
+import { backtest, monteCarlo, pickBets, ruleBlocker, ruleFor, ruleYaml, type LabParams, type LabResult, type McResult } from "./engine.js";
 
 /**
  * The backtest lab behind the dashboard: the dataset on disk (cached in memory), a run endpoint
@@ -86,6 +86,8 @@ export interface LabRunResponse {
   trades: Array<{ at: number; side: string; game: string; league: string; price: number; exit: number; won: boolean; stake: number; pnl: number; move?: number }>;
   mc: McResult | null;
   yaml: string | null;
+  /** Can the bot trade this test on paper? The strategy it would add, or the reason it can't. */
+  paper: { ok: true; id: string; name: string; notes: string[] } | { ok: false; why: string };
   /** Things the reader should know about how to read this run. */
   notes: string[];
 }
@@ -110,6 +112,14 @@ export function runLab(data: LabData, q: LabQueryIn): LabRunResponse {
   const rode = result.trades.filter((t) => t.rode).length;
   if (rode) notes.push(`${rode.toLocaleString("en-US")} of ${n.toLocaleString("en-US")} bets had no usable price at the sell time and were held to the result instead.`);
   if ((p.pick === "riser" || p.pick === "faller") && p.fromH <= p.entryH) notes.push("The earlier price has to be from before the buy time; nothing can match with these two settings.");
+  // Leagues picked after seeing which did best flatter a test. Show the same test without the pick.
+  if (p.leagues.length && n > 0) {
+    const all = backtest(pickBets(data, { ...p, leagues: [] }), p).stats;
+    if (all.bets > n) {
+      const pct = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x * 100).toFixed(1)}%`;
+      notes.push(`On every league, the same test made ${all.bets.toLocaleString("en-US")} bets for ${pct(all.ret)} per $1 (here: ${pct(result.stats.ret)}). Leagues chosen because they did best in a test usually do worse afterwards.`);
+    }
+  }
   if (result.stats.bustAt != null) {
     const when = new Date(result.stats.bustAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
     notes.push(`With bets this size the bankroll would have run out on ${when}. The test keeps going as if it were topped up, so these totals describe the strategy, not whether the bankroll survives. Smaller bets, or the simulation below, answer that.`);
@@ -129,8 +139,15 @@ export function runLab(data: LabData, q: LabQueryIn): LabRunResponse {
       .map((t) => ({ at: t.start, side: t.side, game: t.game, league: t.series, price: t.price, exit: t.exitValue, won: t.won, stake: Math.round(t.stake * 100) / 100, pnl: Math.round(t.pnl * 100) / 100, move: t.move })),
     mc,
     yaml: ruleYaml(p),
+    paper: paperInfo(p),
     notes,
   };
+}
+
+function paperInfo(p: LabParams): LabRunResponse["paper"] {
+  const made = ruleFor(p);
+  if (!made) return { ok: false, why: ruleBlocker(p) ?? "The bot can't paper trade this test." };
+  return { ok: true, id: made.rule.id, name: made.rule.name, notes: made.notes };
 }
 
 export interface LabUpdateState {
@@ -146,6 +163,8 @@ export interface LabUpdateState {
 export interface LabService {
   status(): Promise<{ dataset: LabSummary; update: LabUpdateState }>;
   run(query: URLSearchParams): Promise<LabRunResponse | { ok: false; error: string }>;
+  /** One run from settings that are already checked; null when there's no game history yet. */
+  test(q: LabQueryIn): Promise<LabRunResponse | null>;
   /** Start a background download; false when one is already running. */
   update(): boolean;
 }
@@ -168,6 +187,10 @@ export function createLabService(file: string, download: typeof downloadLab = do
       const parsed = LabQuery.safeParse(Object.fromEntries(query));
       if (!parsed.success) return { ok: false, error: `bad setting: ${parsed.error.issues[0]?.path.join(".")} ${parsed.error.issues[0]?.message}` };
       return runLab(data, parsed.data);
+    },
+    async test(q) {
+      const data = await load();
+      return data?.markets.length ? runLab(data, q) : null;
     },
     update() {
       if (state.running) return false;

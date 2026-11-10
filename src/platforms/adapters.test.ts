@@ -74,6 +74,38 @@ test("Kalshi: listing maps quotes; getMarket maps result to resolution", async (
   assert.equal(k.roundContracts(55.25), 55);
 });
 
+test("Kalshi listing: games in a league a rule is limited to are never cut off by a busy day", async () => {
+  const H = 3600_000;
+  const now = Date.now();
+  const game = (ticker: string, startsInHours: number) => {
+    const start = now + startsInHours * H;
+    return {
+      ticker, title: ticker, status: "active", yes_bid_dollars: "0.8000", yes_ask_dollars: "0.8200",
+      expected_expiration_time: new Date(start + 3 * H).toISOString(), latest_expiration_time: new Date(start + 48 * H).toISOString(),
+    };
+  };
+  mockFetch({
+    // A college football Saturday: six games before the evening's NBA game.
+    "series_ticker=KXNCAAFGAME": { body: { markets: [1, 2, 3, 4, 5, 6].map((i) => game(`KXNCAAFGAME-26NOV14TEAM${"ABCDEF"[i - 1]}OPP-TEAM${"ABCDEF"[i - 1]}`, i * 0.25)) } },
+    "series_ticker=KXNBAGAME": {
+      body: { markets: [game("KXNBAGAME-26NOV14LALBOS-LAL", 3), game("KXNBAGAME-26NOV14DENPHX-DEN", -1), game("KXNBAGAME-26NOV18NYKMIA-NYK", 80)] },
+    },
+    "max_created_ts": { body: { markets: [{ ticker: "FED-1", title: "f", status: "active", yes_bid_dollars: "0.40", yes_ask_dollars: "0.42", volume_24h_fp: "9" }, { ticker: "FED-2", title: "f", status: "active", yes_bid_dollars: "0.40", yes_ask_dollars: "0.42" }] } },
+    "/markets?": { body: { markets: [] } },
+  });
+  const k = new KalshiAdapter("https://kalshi.test/v2");
+  const plain = await k.listMarkets({ limit: 4 });
+  assert.deepEqual(plain.map((m) => m.id.split("-")[0]), ["KXNCAAFGAME", "KXNCAAFGAME", "FED", "FED"], "the cap alone hides the NBA game");
+  const withNba = await k.listMarkets({ limit: 4, leagues: ["nba"] });
+  assert.deepEqual(withNba.slice(0, 4).map((m) => m.id), plain.map((m) => m.id), "the usual listing is unchanged");
+  // …and the coming NBA game is added. Not the one in play, and not one days away.
+  assert.deepEqual(withNba.slice(4).map((m) => [m.id, m.league]), [["KXNBAGAME-26NOV14LALBOS-LAL", "nba"]]);
+  assert.equal((await k.listMarkets({ limit: 4, leagues: ["nhl"] })).length, 4, "a league with no games adds nothing");
+  // Already inside the cap: not listed twice.
+  const roomy = await k.listMarkets({ limit: 40, leagues: ["nba", "cfb"] });
+  assert.equal(new Set(roomy.map((m) => m.id)).size, roomy.length);
+});
+
 test("Kalshi fee estimate rounds up to the cent and is zero at the extremes", () => {
   assert.equal(kalshiTakerFeeUsd(100, 0.5), 1.75);
   assert.equal(kalshiTakerFeeUsd(55.25, 0.905), 0.34);

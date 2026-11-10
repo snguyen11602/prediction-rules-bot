@@ -1,4 +1,4 @@
-import type { NormalizedMarket } from "../types.js";
+import type { LeagueId, NormalizedMarket } from "../types.js";
 import type { ListMarketsOptions, PlatformAdapter } from "./types.js";
 import { getJson } from "./http.js";
 
@@ -163,6 +163,15 @@ export function isUsGameWinner(m: Pick<UsMarket, "slug" | "sportsMarketTypeV2">)
   return m.sportsMarketTypeV2 === "SPORTS_MARKET_TYPE_MONEYLINE" || /^aec-/.test(m.slug ?? "");
 }
 
+/** Polymarket US league codes (the part after `aec-` / `asc-` / `tsc-` in a game's slug) the bot knows. */
+const US_LEAGUES: Record<string, LeagueId> = { nfl: "nfl", cfb: "cfb", nba: "nba", cbb: "cbb", wnba: "wnba", nhl: "nhl", mlb: "mlb", epl: "epl", ucl: "ucl", mls: "mls" };
+
+/** The league of a game market, from its slug: `aec-nba-phi-det-2026-11-04` → "nba". */
+export function usLeague(slug: string | undefined): LeagueId | undefined {
+  const code = /^(?:aec|asc|tsc)-([a-z0-9]+)-/.exec(slug ?? "")?.[1];
+  return code ? US_LEAGUES[code] : undefined;
+}
+
 /**
  * A game's end date here is a placeholder about two weeks after it starts; the start time is
  * real. Results are expected a few hours after the start.
@@ -217,6 +226,7 @@ export function normalizePolymarketUs(m: UsMarket, settlement?: number): Normali
     closesAt: m.endDate,
     ...usTimes(m),
     marketType: isUsGameWinner(m) ? "game_winner" : "other",
+    league: usLeague(m.slug),
     tags: tags.length ? [...new Set(tags)] : undefined,
     volume24hUnavailable: true,
     ...(resolved ?? lifecycle),

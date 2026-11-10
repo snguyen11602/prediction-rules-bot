@@ -21,6 +21,28 @@ export function platformName(id: string): string {
   return PLATFORM_NAMES[id as PlatformId] ?? id;
 }
 
+/** Leagues a game can belong to, as short ids shared by every platform (adapters map their own codes to these). */
+export const LEAGUE_IDS = ["nfl", "cfb", "nba", "cbb", "wnba", "nhl", "mlb", "epl", "ucl", "laliga", "mls"] as const;
+export type LeagueId = (typeof LEAGUE_IDS)[number];
+
+export const LEAGUE_NAMES: Record<LeagueId, string> = {
+  nfl: "NFL",
+  cfb: "College football",
+  nba: "NBA",
+  cbb: "College basketball",
+  wnba: "WNBA",
+  nhl: "NHL",
+  mlb: "MLB",
+  epl: "Premier League",
+  ucl: "Champions League",
+  laliga: "La Liga",
+  mls: "MLS",
+};
+
+export function leagueName(id: string): string {
+  return LEAGUE_NAMES[id as LeagueId] ?? id;
+}
+
 export interface NormalizedMarket {
   platform: PlatformId;
   id: string;
@@ -55,6 +77,8 @@ export interface NormalizedMarket {
   startsAt?: string;
   /** "game_winner" for a game's moneyline / match winner, "other" otherwise (spreads, totals, props…). */
   marketType?: "game_winner" | "other";
+  /** The league a game market belongs to, when the adapter can tell from the platform's own ids. */
+  league?: LeagueId;
   /** When the market was listed (Kalshi). Brand-new markets have empty, jumpy books. */
   createdAt?: string;
   /**

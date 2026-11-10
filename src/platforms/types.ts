@@ -1,4 +1,4 @@
-import type { NormalizedMarket, PlatformId } from "../types.js";
+import type { LeagueId, NormalizedMarket, PlatformId } from "../types.js";
 import type { Tick } from "../engine/series.js";
 
 export interface ListMarketsOptions {
@@ -6,6 +6,12 @@ export interface ListMarketsOptions {
   limit?: number;
   /** Optional keyword hint for adapters that support search. */
   query?: string;
+  /**
+   * Leagues some rule is limited to. Their upcoming games are always included, after the first
+   * `limit` markets, so such a rule sees every game it could bet on however busy the day is.
+   * Adapters that can't tell leagues ignore this.
+   */
+  leagues?: LeagueId[];
 }
 
 /** An event's outcomes as separate binary markets (e.g. one market per candidate). */

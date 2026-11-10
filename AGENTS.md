@@ -119,6 +119,13 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
   pattern, else expected expiration − 3h (baseball, tennis, part of soccer), for match tickers only.
 - `isGame()` (`src/engine/games.ts`) is the one definition of "a game or match" (Kalshi match ticker,
   Polymarket US game slug). Copy trading's `games_only` uses it.
+- `NormalizedMarket.league` is a short id shared by every platform (`LEAGUE_IDS` in `src/types.ts`);
+  each adapter maps its own codes to it (`kalshiLeague`, `usLeague`) and leaves it unset when unsure.
+  `filters.leagues` fails a market with no league. Rules limited to a league must see all of its
+  coming games: `leaguesWanted` → `ListMarketsOptions.leagues` → the adapter appends those games after
+  the first `limit` markets, and `marketsForRules` keeps them past the per-platform cut. A new adapter
+  or wrapper that slices a listing has to keep that tail (see `LiveQuoteAdapter.listMarkets`).
+- `filters.min_hours_to_start` / `max_hours_to_start` use `startsAt`; a started game always fails.
 - `entry.pregame_move` reads hourly platform prices through the optional read-only adapter method
   `priceHistory()` (Kalshi candlesticks), loaded by `src/engine/pregame.ts` only for games inside a
   rule's window and cached 15 minutes; without it the signal falls back to our own snapshots.
@@ -183,10 +190,20 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 - Verdicts use the study's bar (`verdictOf`: 100+ bets and two standard errors). Don't soften the
   wording in the page, and keep the warnings in `runLab` (`notes`) for anything optimistic: limit
   orders assumed filled, bets that couldn't be sold, a bankroll that would have run out.
-- `ruleYaml` must only return a rule the bot can really run, and every shape of it must parse with
-  `RulesFileSchema` (tested). Where a rule can't match the test, write that into the snippet as a comment.
-- `POST /api/lab/update` goes through `postRefusal` like `/api/control` (JSON, same-origin, localhost)
-  and only ever writes `lab-games.json`. `GET /api/lab/run` validates every setting with `LabQuery`.
+- `ruleFor` (and `ruleYaml`, its text form) must only return a rule the bot can really run, and every
+  shape of it must parse with `RuleSchema` (tested). It should do what the test did: same leagues, same
+  price range on the mid, same hour before the start, same bet size. Where it can't, say so in `notes`,
+  and give `ruleBlocker` a plain reason for tests the bot can't trade at all. A rule's id comes from
+  what it picks, never from the money, so one test can't be added twice with different bet sizes.
+- Lab strategies (`strategies.ts`, file `*.lab.json` next to the ledger): written only by the
+  dashboard's `POST /api/lab/strategy`, read by every paper cycle (`labRules`). The browser sends lab
+  settings only; the rule is rebuilt on the server and loaded as `action: paper` with an id starting
+  `lab-`, whatever the file says. A removed strategy stays in the file (disabled) so its open bets
+  settle under its name. The lab still never touches the ledger; paper results on the lab page come
+  from the dashboard's own state.
+- `POST /api/lab/update` and `POST /api/lab/strategy` go through `postRefusal` like `/api/control`
+  (JSON, same-origin, localhost) and only ever write `lab-games.json` / `*.lab.json`.
+  `GET /api/lab/run` and the strategy endpoint validate every setting with `LabQuery`.
 - Dashboard charts: colors come from the CSS tokens (`--up` / `--down` for gain and loss, `--series-1`
   for a single series), which were checked for color-blind separation and contrast in light and dark.
   Gains and losses always carry a sign as well; never rely on color alone, and don't add new hues

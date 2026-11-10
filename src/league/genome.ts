@@ -1,5 +1,6 @@
 import { RuleSchema, type Rule } from "../rules/schema.js";
 import type { Traits } from "./personas.js";
+import { leagueName } from "../types.js";
 
 /**
  * Strategy "DNA": a rule config the league can invent, clone and mutate. Rookies are drawn from a
@@ -225,6 +226,10 @@ export function describeRule(b: RuleBody): string[] {
   }
   if (f.max_spread != null) out.push(`Skips markets with a bid/ask gap over ${c(f.max_spread)}.`);
   if (f.market_types?.length === 1 && f.market_types[0] === "game_winner") out.push("Only bets on who wins a game (no spreads, totals or props).");
+  if (f.leagues?.length) out.push(`Only ${f.leagues.map(leagueName).join(", ")} games.`);
+  if (f.min_hours_to_start != null || f.max_hours_to_start != null) {
+    out.push(f.max_hours_to_start == null ? `Only bets at least ${f.min_hours_to_start}h before the start.` : `Only bets ${f.min_hours_to_start ? `${f.min_hours_to_start}h–` : "in the last "}${f.max_hours_to_start}h before the start.`);
+  }
   if (f.pre_game_only) out.push("Only bets before the game starts.");
   const e = b.entry;
   if (e.yes_price_move_abs != null) {

@@ -318,10 +318,30 @@ dip, long shots, and buy early then sell before the game. Your settings are reme
 - Profit and loss bet by bet. Hover the chart for any date.
 - Where it won and lost, by league, month or price paid.
 - Every bet: side, game, price paid, result and profit.
-- **Run this as a paper strategy**: when the bot is able to trade the idea (favorites or risers, bought
-  at the ask and held to the result) the page writes a rule to paste under `rules:` in
-  `rules/example.yaml`. Where the rule can't match the test (rules have no league filter; a rule can only
-  tell a favorite by a price of 50¢ or more) a comment in the snippet says so.
+- **Add to paper trading**: one button under the result (see below).
+
+**From a test to paper trading.** When the bot is able to trade the test (favorites, risers or every
+side in a price range, bought at the ask and held to the result), **Add to paper trading** makes it a
+paper strategy. It starts at the bot's next check, with pretend money, and shows up on the Strategies
+page with its own on / off switch and its own profit and loss. The strategy trades what was tested: the
+same leagues, the same price range, the same bet size, and it buys in the same hour before the start.
+
+- **Lab strategies in paper trading** at the bottom of the lab lists what you've added, with the test
+  result from the day it was added next to its paper results so far. **Open in lab** puts its settings
+  back in the form. **Remove** stops new bets (open bets stay until they settle); **Undo** brings it back.
+- Adding the same picks again with another bet size updates that strategy instead of making a second
+  one that would buy the same games twice. Up to 12 can trade at once.
+- When the bot can't trade a test (limit orders, selling before the game, underdogs, fallers), the page
+  says why instead of showing the button.
+- A link can carry settings, which is handy for coming back to a test:
+  `http://localhost:4321/#/backtest?pick=favorite&min=75&max=100&entry=3&leagues=KXNBAGAME,KXLALIGAGAME&bank=5000&size=500`
+- The strategies are saved next to the ledger in `data/paper-ledger.lab.json`, not in your rules file,
+  so `git pull` never touches them. **See the rule** shows the same strategy as text, if you'd rather
+  keep it in `rules/example.yaml`.
+
+When a test is limited to some leagues, the lab also says how the same test did on every league.
+Leagues picked because they did best in a test usually do worse afterwards; paper trading is how to
+find out before any real money is involved.
 
 **Monte Carlo simulation ("What could happen next").** Each simulated future draws bets at random, with
 replacement, from the test's own results and runs them through the same bet sizing. From 2,000 futures
@@ -518,9 +538,9 @@ every page. A switched-off bot makes no new trades; its open trades still sell a
 so nothing is left unwatched. Switching on a bot that's paused after a losing streak lifts the pause. The
 switches are saved next to the ledger (`data/paper-ledger.controls.json`) and take effect on the next
 check (within 5 seconds in fast mode). Stopping copy trading still follows the leaders' sells for copies
-you hold. The buttons, and the lab's game-history download (which only writes `data/lab-games.json`),
-are the only things the dashboard can change, and they only accept requests from the dashboard page
-itself. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C finishes the current check and exits.
+you hold. The buttons, the lab's game-history download (which only writes `data/lab-games.json`) and
+its **Add to paper trading** button (which only writes `data/paper-ledger.lab.json`) are the only
+things the dashboard can change, and they only accept requests from the dashboard page itself. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C finishes the current check and exits.
 Don't run `paper:watch` and `paper -- --loop` at the same time; the second one just waits for the lock.
 
 **Reset.** On the Overview page, **Reset** (next to the "since" date) starts the paper portfolio over
@@ -590,6 +610,8 @@ reversion in liquid markets). The paper strategies are hypotheses, not proven ed
 | `filters` | `max_spread` | Max YES bid/ask spread; markets without quotes fail |
 | `filters` | `pre_game_only` | Only bet before the event starts (markets with no start time, like most non-sports, pass) |
 | `filters` | `market_types` | `[game_winner]` = only a game's moneyline / match winner |
+| `filters` | `leagues` | Only games in these leagues: `nfl`, `cfb`, `nba`, `cbb`, `wnba`, `nhl`, `mlb`, `epl`, `ucl`, `laliga`, `mls`. Anything that isn't a game in a known league fails. A rule with this filter always sees every coming game in its leagues, however busy the day |
+| `filters` | `min_hours_to_start`, `max_hours_to_start` | Only bet this long before the event starts (`2.5` and `3.5` = about three hours before). Markets with no start time, and games that have started, fail |
 | `filters` | `min_hours_to_resolve`, `max_hours_to_resolve` | Hours until the result is **expected** (Kalshi's expected expiration, a game's start + 3h), not the platform's placeholder close |
 | `entry` | `move_direction` | `up` / `down` / `any` (default) for the move conditions |
 | `entry` | `max_prior_age_minutes` | Ignore the previous observation if it is older than this |

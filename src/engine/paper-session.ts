@@ -28,8 +28,10 @@ import { applyOutcome, defaultRiskState, type RiskState } from "./risk.js";
 import {
   evaluateRules,
   fetchMarkets,
+  leaguesWanted,
   marketKey,
   marketRef,
+  marketsForRules,
   papersRule,
   platformsFromRules,
 } from "./runner.js";
@@ -62,6 +64,7 @@ import { parseUsRace } from "./exact-pairs.js";
 import { kalshiMatchCode } from "../platforms/kalshi.js";
 import { controlsPathFor, isStopped, loadControls } from "./controls.js";
 import { houseNames, leaguePathFor, leagueRules, loadLeague, MEMBER_PREFIX, upgradeLeague } from "../league/league.js";
+import { labRules, loadStrategies, strategiesPathFor } from "../lab/strategies.js";
 import {
   arbConfig,
   arbScanLimit,
@@ -70,7 +73,6 @@ import {
   findOpportunities,
   openArbGroups,
   quoteEnv,
-  slicePerPlatform,
   summarizeQuote,
   unwindArbGroups,
   loadUniverse,
@@ -217,23 +219,39 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
   // League strategies (bot-made, named like traders) paper-trade next to your own rules.
   // Retired members stay in allRules (disabled) so their open trades are still managed.
   // A broken league file or member is reported and skipped; your own rules keep trading.
-  const leagueProblems: string[] = [];
+  const strategyProblems: string[] = [];
   let leagueList: Rule[] = [];
   try {
     const league = await loadLeague(leaguePathFor(opts.ledgerPath));
     upgradeLeague(league, houseNames(file));
     leagueList = leagueRules(league, file.league, (m, err) =>
-      leagueProblems.push(`League strategy ${m.name ?? m.id} skipped: ${err.message.slice(0, 160)}`),
+      strategyProblems.push(`League strategy ${m.name ?? m.id} skipped: ${err.message.slice(0, 160)}`),
     );
   } catch (err) {
-    leagueProblems.push(`League strategies skipped: ${(err as Error).message}`);
+    strategyProblems.push(`League strategies skipped: ${(err as Error).message}`);
   }
   for (const r of leagueList) if (!allRules.has(r.id)) allRules.set(r.id, r);
+  // Lab strategies: tests added to paper trading from the backtest lab. Same treatment as the
+  // league's: a removed one stays known (disabled) so its open bets settle under its name, and a
+  // broken file or strategy is reported and skipped.
+  let labList: Rule[] = [];
+  try {
+    labList = labRules(await loadStrategies(strategiesPathFor(opts.ledgerPath)), new Set(allRules.keys()), (s, why) =>
+      strategyProblems.push(`Lab strategy ${s.name ?? s.id} skipped: ${why}`),
+    );
+  } catch (err) {
+    strategyProblems.push(`Lab strategies skipped: ${(err as Error).message}`);
+  }
+  for (const r of labList) allRules.set(r.id, r);
   // Start / stop switches from the dashboard: a stopped bot makes no new trades (its open ones are
   // still managed below).
   const controls = await loadControls(controlsPathFor(opts.ledgerPath));
   const stopped = (id: string) => isStopped(controls, id);
-  const rules = [...enabledRules(file), ...leagueList.filter((r) => r.enabled && !file.rules.some((x) => x.id === r.id))].filter((r) => !stopped(r.id));
+  const rules = [
+    ...enabledRules(file),
+    ...leagueList.filter((r) => r.enabled && !file.rules.some((x) => x.id === r.id)),
+    ...labList.filter((r) => r.enabled),
+  ].filter((r) => !stopped(r.id));
   // arbCfg gates finding / opening new arbs; open arbs are always managed (see arbCtx).
   const arbCfg = stopped(ARB_RULE_ID) ? undefined : arbConfig(file);
   const arbManageCfg = file.arbitrage ?? ArbitrageSchema.parse({ enabled: false });
@@ -256,7 +274,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     let realized = 0;
     const arb = { opportunities: [] as ArbOpportunity[], opened: 0, closed: 0, realizedPnlUsd: 0 };
 
-    for (const message of leagueProblems) await push({ at: now.toISOString(), type: "adapter_error", message });
+    for (const message of strategyProblems) await push({ at: now.toISOString(), type: "adapter_error", message });
 
     // Start pressed on the dashboard: lift that bot's loss pause (once per press).
     for (const [id, at] of Object.entries(controls.resumed)) {
@@ -306,9 +324,11 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     const adapterFor = (id: PlatformId) => adapters.find((a) => a.id === id);
 
     const limit = opts.limitPerPlatform ?? 80;
-    const { markets: fetched, failed } = await fetchMarkets(adapters, arbScanLimit(arbCfg, limit), push);
-    // Per-market rules see the usual top `limit` per platform; arbitrage matching sees the wider scan.
-    const markets = slicePerPlatform(fetched, limit);
+    const leagues = leaguesWanted(rules);
+    const { markets: fetched, failed } = await fetchMarkets(adapters, arbScanLimit(arbCfg, limit), push, leagues);
+    // Per-market rules see the usual top `limit` per platform (plus every game in a league a rule is
+    // limited to); arbitrage matching sees the wider scan.
+    const markets = marketsForRules(fetched, limit, leagues);
     const listed = new Map(fetched.map((m) => [marketKey(m), m]));
     const lookups = new Map<string, Promise<NormalizedMarket | null>>();
     const getMarket = async (platform: PlatformId, id: string): Promise<NormalizedMarket | null | undefined> => {

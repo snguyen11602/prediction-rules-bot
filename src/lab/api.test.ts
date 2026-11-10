@@ -60,6 +60,15 @@ test("a run: stats, thinned equity, breakdowns, latest trades, a simulation and 
   assert.ok(sold.trades.every((t) => t.exit === 0.79));
   const unsold = runLab(sample(), LabQuery.parse({ min: 50, max: 95, entry: 12, exit: "pregame", exitH: 0 }));
   assert.match(unsold.notes[0], /^120 of 120 bets had no usable price at the sell time/);
+  // A test on hand-picked leagues says how the same test did on all of them.
+  const picked = runLab(sample(), LabQuery.parse({ min: 50, max: 95, leagues: "KXNBAGAME" }));
+  assert.equal(picked.stats.bets, 60);
+  assert.match(picked.notes[0], /^On every league, the same test made 120 bets for [+−]\d+\.\d% per \$1 \(here: [+−]\d+\.\d%\)\. Leagues chosen because they did best/);
+  assert.deepEqual(runLab(sample(), LabQuery.parse({ min: 50, max: 95, leagues: "KXNBAGAME,KXNHLGAME" })).notes, [], "every league picked is no pick at all");
+  // Whether the bot can paper trade the test, and as what.
+  assert.deepEqual(picked.paper, { ok: true, id: picked.paper.ok ? picked.paper.id : "", name: "Lab favorites 50–95¢, NBA", notes: ["Paper fills add half a cent of slippage to every buy, which the test doesn't."] });
+  const cant = runLab(sample(), LabQuery.parse({ pick: "underdog", min: 10, max: 30 })).paper;
+  assert.deepEqual([cant.ok, cant.ok ? "" : /can't tell which side is the underdog/.test(cant.why)], [false, true]);
   // Bets too big for the bankroll: the test still measures every bet, and says when the money would have run out.
   const big = runLab(sample(), LabQuery.parse({ pick: "underdog", min: 10, max: 30, size: 400, bank: 1000 }));
   assert.equal(big.stats.bets, 120);

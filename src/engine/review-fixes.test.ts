@@ -5,8 +5,8 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
-import { KalshiAdapter, kalshiTimes, normalizeKalshi } from "../platforms/kalshi.js";
-import { isUsGameWinner, usTimes } from "../platforms/polymarket-us.js";
+import { KalshiAdapter, kalshiLeague, kalshiTimes, normalizeKalshi } from "../platforms/kalshi.js";
+import { isUsGameWinner, usLeague, usTimes } from "../platforms/polymarket-us.js";
 import { CopyTradingSchema, LeagueSchema, RuleSchema } from "../rules/schema.js";
 import { filterChecks, hasStarted, hoursToResolve } from "./evaluate.js";
 import { evaluateExit } from "./exits.js";
@@ -75,6 +75,51 @@ test("pre-game and market-type filters", () => {
   assert.equal(filterChecks(rule, km({ marketType: "other" }), NOW).find((c) => c.name === "Market type")!.ok, false);
   // No start time (not a game): passes the pre-game check.
   assert.equal(filterChecks(rule, km({ startsAt: undefined }), NOW).find((c) => c.name === "Before the game")!.ok, true);
+});
+
+test("league filter: only games in the listed leagues; a market with no league fails", () => {
+  // The adapters name the league from the platforms' own ids.
+  assert.equal(kalshiLeague("KXNBAGAME-26NOV04BOSNYK-BOS"), "nba");
+  assert.equal(kalshiLeague("KXWNBAGAME-26SEP04LVNY-LV"), "wnba");
+  assert.equal(kalshiLeague("KXLALIGAGAME-26NOV08RMABAR-RMA"), "laliga");
+  assert.equal(kalshiLeague("KXNCAAMBGAME-26NOV08DUKEUNC-DUKE"), "cbb");
+  assert.equal(kalshiLeague("KXNBASPREAD-26NOV04BOSNYK-BOS6"), "nba", "full-game lines belong to the league too");
+  assert.equal(kalshiLeague("KXUCLTEAMTOTAL-26NOV03VILPSG-PSG2"), "ucl");
+  assert.equal(kalshiLeague("KXNBAMVP-27-SGA"), undefined, "an award isn't a game");
+  assert.equal(kalshiLeague("KXFEDDECISION-26DEC-C25"), undefined);
+  assert.equal(usLeague("aec-nba-phi-det-2026-11-04"), "nba");
+  assert.equal(usLeague("asc-nfl-buf-min-2026-11-09-neg-3pt5"), "nfl");
+  assert.equal(usLeague("aec-xyz-aaa-bbb-2026-11-04"), undefined, "an unknown league code stays unknown");
+  assert.equal(usLeague("will-the-fed-cut-in-december"), undefined);
+  assert.equal(normalizeKalshi({ ticker: "KXNBAGAME-26NOV04BOSNYK-BOS", title: "Boston wins", yes_bid_dollars: "0.89", yes_ask_dollars: "0.91", status: "active" } as never)?.league, "nba");
+
+  const rule = RuleSchema.parse({ id: "r", name: "r", filters: { leagues: ["nba", "laliga"] } });
+  const check = (m: NormalizedMarket) => filterChecks(rule, m, NOW).find((c) => c.name === "League")!;
+  assert.deepEqual([check(km({ league: "nba" })).ok, check(km({ league: "nba" })).detail], [true, "NBA"]);
+  assert.equal(check(km({ league: "laliga" })).ok, true);
+  const nhl = check(km({ league: "nhl" }));
+  assert.deepEqual([nhl.ok, nhl.detail], [false, "NHL (needs NBA / La Liga)"]);
+  const none = check(km({ league: undefined }));
+  assert.deepEqual([none.ok, none.detail], [false, "not a game in a league the bot knows"]);
+  // No filter: no check, and every market passes as before.
+  assert.equal(filterChecks(RuleSchema.parse({ id: "r", name: "r" }), km({ league: "nhl" }), NOW).some((c) => c.name === "League"), false);
+  // A league the bot doesn't know is a mistake in the rules file, not a filter that never matches.
+  assert.throws(() => RuleSchema.parse({ id: "r", name: "r", filters: { leagues: ["curling"] } }));
+});
+
+test("hours-to-start filter: a window before the game, never after it starts", () => {
+  // km() starts at 2026-11-05T00:00Z, four hours after NOW.
+  const at = (filters: Record<string, number>, startsAt: string | undefined) =>
+    filterChecks(RuleSchema.parse({ id: "r", name: "r", filters }), km({ startsAt }), NOW).find((c) => c.name === "Time to start")!;
+  const window = { min_hours_to_start: 2.5, max_hours_to_start: 3.5 };
+  assert.deepEqual([at(window, "2026-11-04T23:00:00Z").ok, at(window, "2026-11-04T23:00:00Z").detail], [true, "starts in 3h (needs 2.5h–3.5h before)"]);
+  assert.equal(at(window, "2026-11-05T00:00:00Z").ok, false, "four hours out is too early");
+  assert.equal(at(window, "2026-11-04T22:00:00Z").ok, false, "two hours out is too late");
+  assert.deepEqual([at({ max_hours_to_start: 1 }, "2026-11-04T20:30:00Z").ok, at({ max_hours_to_start: 1 }, "2026-11-04T20:30:00Z").detail], [true, "starts in 30 min (needs within 1h)"]);
+  const started = at({ max_hours_to_start: 1 }, "2026-11-04T19:30:00Z");
+  assert.deepEqual([started.ok, started.detail], [false, "already started (needs within 1h)"]);
+  assert.deepEqual([at(window, undefined).ok, at(window, undefined).detail], [false, "no start time (not a game)"]);
+  assert.equal(at({ min_hours_to_start: 6 }, "2026-11-05T12:00:00Z").ok, true);
 });
 
 test("stops compare the mid, not a bid that vanished for a moment", () => {
