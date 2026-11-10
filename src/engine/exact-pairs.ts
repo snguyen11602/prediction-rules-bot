@@ -17,9 +17,12 @@ import type { NormalizedMarket } from "../types.js";
 export interface ExactPair {
   kalshi: NormalizedMarket;
   us: NormalizedMarket;
-  kind: "game" | "election";
+  /** "line" = the same full-game point spread or total. */
+  kind: "game" | "election" | "line";
   /** Plain-English reason they're the same question. */
   how: string;
+  /** Polymarket US YES is the same bet as Kalshi NO (a spread quoted from the other team's side). */
+  invert?: boolean;
 }
 
 /** Kalshi game series → Polymarket US league slug. (No NFL: ties.) */
@@ -164,6 +167,8 @@ export function matchElections(us: NormalizedMarket[], kalshi: NormalizedMarket[
 }
 
 export interface ExactSources {
+  /** One Kalshi event's markets (public read), for a game's spread and total lines. */
+  kalshiEvent?: (eventTicker: string) => Promise<NormalizedMarket[]>;
   /** Open Kalshi markets in a series (public read). */
   kalshiSeries?: (series: string) => Promise<NormalizedMarket[]>;
   /** Kalshi markets by ticker. */
@@ -173,7 +178,7 @@ export interface ExactSources {
 }
 
 /** Look both kinds up. `usListed` are Polymarket US markets already fetched this cycle (for races). */
-export async function findExactPairs(src: ExactSources, usListed: NormalizedMarket[], pauseMs = 300): Promise<ExactPair[]> {
+export async function findExactPairs(src: ExactSources, usListed: NormalizedMarket[], pauseMs = 300, lines?: { now: Date }): Promise<ExactPair[]> {
   const out: ExactPair[] = [];
   if (src.kalshiSeries && src.usSlugs) {
     const kalshi: NormalizedMarket[] = [];
@@ -186,12 +191,247 @@ export async function findExactPairs(src: ExactSources, usListed: NormalizedMark
     const slugs = [...events].flatMap(([e, codes]) => (codes.length === 2 ? usSlugsForGame(e, codes) : []));
     const us = slugs.length ? await src.usSlugs(slugs) : [];
     out.push(...matchGames(kalshi, us));
+    if (lines && src.kalshiEvent && src.kalshiTickers) {
+      try {
+        out.push(...(await findLinePairs(src, kalshi, us, lines.now, pauseMs)));
+      } catch {
+        // A failed line lookup (rate limit, timeout) must not cost this cycle its game pairs.
+      }
+    }
   }
   if (src.kalshiTickers) {
     const races = usListed.filter((m) => m.platform === "polymarket_us" && parseUsRace(usRaw(m).slug ?? ""));
     const tickers = [...new Set(races.flatMap((m) => kalshiTickersForRace(parseUsRace(usRaw(m).slug!)!)))];
     const kalshi = tickers.length ? await src.kalshiTickers(tickers) : [];
     out.push(...matchElections(races, kalshi));
+  }
+  return out;
+}
+
+
+// ---- Spreads and totals ---------------------------------------------------------------------
+//
+// Kalshi `KXNBASPREAD-26NOV10OKCPOR-POR9` ("Portland wins by over 8.5 points") and
+// `KXNBATOTAL-26NOV10OKCPOR-255` ("Over 254.5 points") ↔ Polymarket US
+// `asc-nba-okc-por-2026-11-10-neg-8pt5` / `…-pos-8pt5` and `tsc-nba-okc-por-2026-11-10-254pt5`.
+// Both sites count overtime, score an NHL shootout as one goal, and settle to a fair price if the
+// game isn't played within two days. Lines end in .5, so there are no pushes (and no NFL tie
+// problem). Only FULL-GAME lines are matched: Polymarket US also lists halves, quarters and team
+// totals under the same market types, and those must never be paired with a full-game line.
+
+/** Polymarket US league → Kalshi's winner / spread / total series. */
+export const LINE_SERIES: Record<string, { game: string; spread: string; total: string }> = {
+  nba: { game: "KXNBAGAME", spread: "KXNBASPREAD", total: "KXNBATOTAL" },
+  nhl: { game: "KXNHLGAME", spread: "KXNHLSPREAD", total: "KXNHLTOTAL" },
+  nfl: { game: "KXNFLGAME", spread: "KXNFLSPREAD", total: "KXNFLTOTAL" },
+  cfb: { game: "KXNCAAFGAME", spread: "KXNCAAFSPREAD", total: "KXNCAAFTOTAL" },
+  cbb: { game: "KXNCAAMBGAME", spread: "KXNCAAMBSPREAD", total: "KXNCAAMBTOTAL" },
+};
+
+/** One game on both sites, with each team's code and both sites' names for it. */
+export interface GameTwin {
+  league: string;
+  /** Kalshi's date + teams code, e.g. 26NOV10OKCPOR. */
+  matchCode: string;
+  /** Polymarket US slug without its type prefix, e.g. nba-okc-por-2026-11-10. */
+  base: string;
+  /** Start time from Polymarket US (exact). */
+  startsAt?: string;
+  teams: Array<{ code: string; kalshiName: string; usName: string }>;
+}
+
+const kalshiSub = (k: NormalizedMarket) => (k.raw as { yes_sub_title?: string } | undefined)?.yes_sub_title ?? k.subtitle ?? "";
+const namedBy = (sub: string, team: string) => norm(sub).length >= 3 && norm(team).startsWith(norm(sub));
+
+/**
+ * Games listed on both sites: Kalshi winner markets (two per game) and Polymarket US moneylines,
+ * agreeing on league, date and both teams by abbreviation AND by name (as in matchGames, plus NFL).
+ */
+export function gameTwins(kalshiGames: NormalizedMarket[], usMoneylines: NormalizedMarket[]): GameTwin[] {
+  const seriesLeague = new Map(Object.entries(LINE_SERIES).map(([league, s]) => [s.game, league]));
+  const bySlug = new Map(usMoneylines.map((m) => [usRaw(m).slug ?? "", m]));
+  const events = new Map<string, NormalizedMarket[]>();
+  for (const m of kalshiGames) if (m.eventId && (m.status ?? "open") === "open") events.set(m.eventId, [...(events.get(m.eventId) ?? []), m]);
+  const out: GameTwin[] = [];
+  for (const [event, markets] of events) {
+    const parsed = /^([A-Z0-9]+)-((\d{2})([A-Z]{3})(\d{2})(?:\d{4})?[A-Z]+)$/.exec(event);
+    const league = parsed && seriesLeague.get(parsed[1]);
+    if (!parsed || !league || markets.length !== 2) continue;
+    const month = MON.indexOf(parsed[4]);
+    if (month < 0) continue;
+    const date = `20${parsed[3]}-${String(month + 1).padStart(2, "0")}-${parsed[5]}`;
+    const [a, b] = markets.map((m) => codeOf(m).toLowerCase());
+    for (const base of [`${league}-${a}-${b}-${date}`, `${league}-${b}-${a}-${date}`]) {
+      const u = bySlug.get(`aec-${base}`);
+      if (!u || (u.status ?? "open") !== "open" || usRaw(u).sportsMarketTypeV2 !== "SPORTS_MARKET_TYPE_MONEYLINE") continue;
+      const sides = (usRaw(u).marketSides ?? []).map((s) => s.team).filter((t): t is { abbreviation: string; name: string } => !!t?.abbreviation && !!t.name);
+      if (sides.length !== 2) continue;
+      const teams = markets.map((k) => {
+        const t = sides.find((x) => x.abbreviation.toUpperCase() === codeOf(k));
+        return t && namedBy(kalshiSub(k), t.name) ? { code: codeOf(k), kalshiName: kalshiSub(k), usName: t.name } : undefined;
+      });
+      if (teams.some((t) => !t) || teams[0]!.code === teams[1]!.code) continue;
+      out.push({ league, matchCode: parsed[2], base, startsAt: u.startsAt, teams: teams as GameTwin["teams"] });
+      break;
+    }
+  }
+  return out;
+}
+
+const half = (x: number) => Number.isFinite(x) && Math.abs((Math.abs(x) % 1) - 0.5) < 1e-9;
+const pt = (x: number) => `${Math.floor(Math.abs(x))}pt5`;
+const strikeOf = (k: NormalizedMarket) => Number((k.raw as { floor_strike?: number | string; strike_type?: string } | undefined)?.floor_strike);
+const greater = (k: NormalizedMarket) => (k.raw as { strike_type?: string } | undefined)?.strike_type === "greater";
+
+/** A Kalshi spread market of this game → the team that must win by more than `line`. */
+function kalshiSpread(k: NormalizedMarket, twin: GameTwin): { team: GameTwin["teams"][number]; other: GameTwin["teams"][number]; line: number } | undefined {
+  const m = /^([A-Z]+?)(\d+)$/.exec(codeOf(k));
+  const line = strikeOf(k);
+  const team = m && twin.teams.find((t) => t.code === m[1]);
+  if (!m || !team || !greater(k) || !half(line) || line <= 0) return undefined;
+  // "Portland wins by over 8.5 points": Kalshi's own name for the team, and the same number.
+  const title = norm(k.title);
+  if (!title.startsWith(norm(team.kalshiName)) || !title.includes(`wins by over ${Math.floor(line)}5 `) || /half|quarter|period|inning/.test(title)) return undefined;
+  return { team, other: twin.teams.find((t) => t !== team)!, line };
+}
+
+/** A Kalshi full-game total of this game → the line. */
+function kalshiTotal(k: NormalizedMarket): number | undefined {
+  const line = strikeOf(k);
+  const title = norm(k.title);
+  if (!greater(k) || !half(line) || line <= 0 || !/^\d+$/.test(codeOf(k))) return undefined;
+  if (!title.includes(`over ${Math.floor(line)}5`) || /half|quarter|period|inning|\b[1-4]q\b|\b[12]h\b/.test(title)) return undefined;
+  return line;
+}
+
+/** Polymarket US slugs that could be the same line (the team quoted first varies by game). */
+export function lineSlugs(twin: GameTwin, kalshiLines: NormalizedMarket[]): string[] {
+  const out = new Set<string>();
+  for (const k of kalshiLines) {
+    const s = kalshiSpread(k, twin);
+    if (s) for (const sign of ["neg", "pos"]) out.add(`asc-${twin.base}-${sign}-${pt(s.line)}`);
+    const t = s ? undefined : kalshiTotal(k);
+    if (t != null) for (const mid of ["", "total-"]) out.add(`tsc-${twin.base}-${mid}${pt(t)}`);
+  }
+  return [...out];
+}
+
+interface UsLineRaw {
+  slug?: string;
+  line?: number | string;
+  sportsMarketType?: string;
+  sportsMarketTypeV2?: string;
+  marketSides?: Array<{ long?: boolean; description?: string; team?: { abbreviation?: string } }>;
+}
+
+/**
+ * Pair this game's Kalshi spread / total markets with Polymarket US full-game lines. Every pair
+ * must agree on the game, the kind of line, the number and (for spreads) which team it is about.
+ */
+export function matchLines(twin: GameTwin, kalshiLines: NormalizedMarket[], usLines: NormalizedMarket[]): ExactPair[] {
+  const out: ExactPair[] = [];
+  const us = usLines
+    .filter((u) => (u.status ?? "open") === "open")
+    .map((u) => ({ u, raw: (u.raw ?? {}) as UsLineRaw }))
+    // Full game only: nothing between the date and the line in the slug, and the type says so.
+    .filter(({ raw }) => /full_game/.test(raw.sportsMarketType ?? "") && half(Number(raw.line)));
+  for (const k of kalshiLines) {
+    if ((k.status ?? "open") !== "open") continue;
+    const s = kalshiSpread(k, twin);
+    if (s) {
+      for (const { u, raw } of us) {
+        if (raw.sportsMarketTypeV2 !== "SPORTS_MARKET_TYPE_SPREAD") continue;
+        const long = raw.marketSides?.find((x) => x.long === true)?.team?.abbreviation?.toUpperCase();
+        const line = Number(raw.line);
+        // "T covers −X.5" is the same bet; "the other team covers +X.5" is the opposite bet.
+        const same = raw.slug === `asc-${twin.base}-neg-${pt(s.line)}` && long === s.team.code && line === -s.line;
+        const opposite = raw.slug === `asc-${twin.base}-pos-${pt(s.line)}` && long === s.other.code && line === s.line;
+        if (!same && !opposite) continue;
+        out.push({ kalshi: k, us: u, kind: "line", invert: opposite, how: `same spread: ${s.team.usName} by more than ${s.line} (${k.id} ↔ ${raw.slug}${opposite ? ", quoted from the other side" : ""})` });
+      }
+      continue;
+    }
+    const t = kalshiTotal(k);
+    if (t == null) continue;
+    for (const { u, raw } of us) {
+      if (raw.sportsMarketTypeV2 !== "SPORTS_MARKET_TYPE_TOTAL" || Number(raw.line) !== t) continue;
+      if (raw.slug !== `tsc-${twin.base}-${pt(t)}` && raw.slug !== `tsc-${twin.base}-total-${pt(t)}`) continue;
+      if (!/^over$/i.test(raw.marketSides?.find((x) => x.long === true)?.description ?? "")) continue;
+      out.push({ kalshi: k, us: u, kind: "line", how: `same total: over ${t} in ${twin.teams[0].usName} vs ${twin.teams[1].usName} (${k.id} ↔ ${raw.slug})` });
+    }
+  }
+  return out;
+}
+
+/** Which lines exist on both sites is re-checked this often; their prices are read every time. */
+const LINE_REFRESH_MS = 10 * 60_000;
+/** Lines are only looked for on games starting within this long, soonest first, this many games. */
+const LINE_WINDOW_MS = 36 * 3600_000;
+const LINE_MAX_GAMES = 20;
+const LINE_MAX_SPREAD = 0.15;
+let lineCache: { at: number; pairs: Array<{ kalshiId: string; usSlug: string; invert?: boolean; how: string; startsAt: number }> } | undefined;
+
+export function clearLineCache(): void {
+  lineCache = undefined;
+}
+
+/**
+ * Spread / total twins for games that haven't started. Finding them costs a few requests per game,
+ * so the list is cached for ten minutes; every call re-reads the prices of the cached pairs.
+ */
+export async function findLinePairs(src: ExactSources, kalshiGames: NormalizedMarket[], usMoneylines: NormalizedMarket[], now: Date, pauseMs = 300): Promise<ExactPair[]> {
+  const nowMs = now.getTime();
+  const pause = () => (pauseMs ? new Promise((r) => setTimeout(r, pauseMs)) : Promise.resolve());
+  if (!lineCache || nowMs - lineCache.at >= LINE_REFRESH_MS || nowMs < lineCache.at) {
+    // NFL winners aren't arbitraged (ties), but its spreads and totals can be: fetch its games here.
+    const games = [...kalshiGames];
+    const moneylines = [...usMoneylines];
+    if (src.kalshiSeries && src.usSlugs && !games.some((m) => m.id.startsWith(`${LINE_SERIES.nfl.game}-`))) {
+      const nfl = await src.kalshiSeries(LINE_SERIES.nfl.game);
+      games.push(...nfl);
+      const events = new Map<string, string[]>();
+      for (const m of nfl) if (m.eventId) events.set(m.eventId, [...(events.get(m.eventId) ?? []), codeOf(m).toLowerCase()]);
+      const slugs: string[] = [];
+      for (const [e, codes] of events) {
+        const p = /^[A-Z0-9]+-(\d{2})([A-Z]{3})(\d{2})/.exec(e);
+        if (!p || codes.length !== 2 || MON.indexOf(p[2]) < 0) continue;
+        const date = `20${p[1]}-${String(MON.indexOf(p[2]) + 1).padStart(2, "0")}-${p[3]}`;
+        slugs.push(`aec-nfl-${codes[0]}-${codes[1]}-${date}`, `aec-nfl-${codes[1]}-${codes[0]}-${date}`);
+      }
+      if (slugs.length) moneylines.push(...(await src.usSlugs(slugs)));
+    }
+    const twins = gameTwins(games, moneylines)
+      .filter((t) => t.startsAt && Date.parse(t.startsAt) > nowMs && Date.parse(t.startsAt) - nowMs <= LINE_WINDOW_MS)
+      .sort((a, b) => Date.parse(a.startsAt!) - Date.parse(b.startsAt!))
+      .slice(0, LINE_MAX_GAMES);
+    const pairs: NonNullable<typeof lineCache>["pairs"] = [];
+    for (const twin of twins) {
+      const series = LINE_SERIES[twin.league];
+      const kLines: NormalizedMarket[] = [];
+      for (const s of [series.spread, series.total]) {
+        kLines.push(...(await src.kalshiEvent!(`${s}-${twin.matchCode}`)));
+        await pause();
+      }
+      // Only lines someone is actually quoting on Kalshi.
+      const live = kLines.filter((k) => (k.status ?? "open") === "open" && k.yesBid != null && k.yesAsk != null && k.yesBid > 0 && k.yesAsk < 1 && k.yesAsk - k.yesBid <= LINE_MAX_SPREAD);
+      const slugs = lineSlugs(twin, live);
+      if (!slugs.length) continue;
+      const usLines = await src.usSlugs!(slugs);
+      await pause();
+      for (const p of matchLines(twin, live, usLines)) pairs.push({ kalshiId: p.kalshi.id, usSlug: usRaw(p.us).slug!, invert: p.invert, how: p.how, startsAt: Date.parse(twin.startsAt!) });
+    }
+    lineCache = { at: nowMs, pairs };
+  }
+  // Fresh prices for the cached pairs whose game hasn't started.
+  const open = lineCache.pairs.filter((p) => p.startsAt > nowMs);
+  if (!open.length) return [];
+  const kNow = new Map((await src.kalshiTickers!([...new Set(open.map((p) => p.kalshiId))])).map((m) => [m.id, m]));
+  const uNow = new Map((await src.usSlugs!([...new Set(open.map((p) => p.usSlug))])).map((m) => [usRaw(m).slug ?? "", m]));
+  const out: ExactPair[] = [];
+  for (const p of open) {
+    const k = kNow.get(p.kalshiId);
+    const u = uNow.get(p.usSlug);
+    if (k && u && (k.status ?? "open") === "open" && (u.status ?? "open") === "open") out.push({ kalshi: k, us: u, kind: "line", invert: p.invert, how: p.how });
   }
   return out;
 }

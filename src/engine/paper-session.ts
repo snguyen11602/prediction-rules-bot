@@ -36,6 +36,8 @@ import { dayKeyLA } from "./clock.js";
 import { cents, type ScanTrace } from "./trace.js";
 import { loadSeries, saveSeries, seriesPathFor } from "./series.js";
 import { loadHourly } from "./pregame.js";
+import { loadSharp, sharpPathFor, type SharpDeps } from "../sharp/runtime.js";
+import { backfillStarts, finalizeClosings, noteClosing, startTracking } from "./closing.js";
 import { ARB_RULE_ID, ArbitrageSchema, arbitrageAsRule, copyAsRule, COPY_RULE_ID, PARLAY_RULE_ID } from "../rules/schema.js";
 import { checkEntryRisk } from "./risk.js";
 import type { Check } from "./trace.js";
@@ -109,6 +111,8 @@ export interface PaperCycleOptions {
   fastTick?: boolean;
   /** Test hook: public lookups for copy trading (default: the live Polymarket APIs). */
   copyDeps?: CopyDeps;
+  /** Test hook: the odds-service key and fetch for sharp lines (default: ODDS_API_KEY, real fetch; off in demo). */
+  sharpDeps?: Pick<SharpDeps, "key" | "fetchImpl">;
 }
 
 export interface PaperCycleResult {
@@ -349,7 +353,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
           return fee / 100;
         },
         buy: async (market, side, checks) => {
-          const gate = checkEntryRisk(copyRule, copyRisk!, now);
+          const gate = checkEntryRisk(copyRule, copyRisk!, now, buyPrice(market, side, copyRule.paper.slippage));
           const all: Check[] = [...checks, { stage: "position", name: "Position", ok: true, detail: "not already holding, no re-entry cool-down, ask available" }, ...gate.checks];
           if (!gate.ok) return { ok: false, reason: gate.reason ?? "risk limits", checks: all };
           const res = await paperBuy(copyRule, market, side, gate.sizeUsd ?? 0, all);
@@ -407,6 +411,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       }
       // Quick checks act only on a live streamed quote; anything else waits for the full check.
       if (opts.fastTick && !market.quotedAt) continue;
+      noteClosing(pos, market, now);
 
       // Arbitrage legs are managed as a group, never by a per-market rule's exits.
       const rule = pos.groupId ? undefined : allRules.get(pos.ruleId);
@@ -547,6 +552,12 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       arb.realizedPnlUsd += f.realizedPnlUsd;
     }
 
+    // Closing prices for bets whose game has started (and, once, for recent bets from before tracking).
+    if (!opts.fastTick) {
+      await backfillStarts(ledger, adapterFor, now).catch(() => undefined);
+      await finalizeClosings(ledger, adapterFor, now).catch(() => undefined);
+    }
+
     // ---- 2. Entries ---------------------------------------------------------------
     if (!opts.paperAll && rules.length > 0 && !rules.some((r) => papersRule(r))) {
       await push({
@@ -590,7 +601,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
       }
       // A pre-game move shows up on every market of a game at once (one team up, the other down):
       // one bet per game.
-      if (rule.entry.pregame_move && openPositions(ledger).some((p) => p.ruleId === rule.id && sameGame(p, market))) return "already holding this game";
+      if ((rule.entry.pregame_move || rule.entry.sharp_edge) && openPositions(ledger).some((p) => p.ruleId === rule.id && sameGame(p, market))) return "already holding this game";
       // No stacking: one league strategy per game. Many league strategies think alike, so
       // several of them on one game is really one big bet.
       if (rule.id.startsWith(MEMBER_PREFIX)) {
@@ -608,6 +619,13 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
     const entryMarkets = opts.fastTick ? markets.filter((m) => m.quotedAt) : markets;
     if (entryMarkets.length > 0 && entryRules.length > 0) {
       const hourly = await loadHourly(entryRules.filter((r) => !stopped(r.id)), entryMarkets, adapterFor, now);
+      const sharp = await loadSharp(file.sharp_lines, entryRules.filter((r) => !stopped(r.id)), entryMarkets, sharpPathFor(opts.ledgerPath), now, {
+        key: opts.sharpDeps?.key ?? (demo ? "" : undefined),
+        fetchImpl: opts.sharpDeps?.fetchImpl,
+        mayFetch: !opts.fastTick,
+      });
+      for (const m of sharp.notes) await push({ at: now.toISOString(), type: "info", message: m });
+      for (const m of sharp.problems) await push({ at: now.toISOString(), type: "adapter_error", message: m });
       const res = await evaluateRules({
         rules: entryRules,
         markets: entryMarkets,
@@ -619,6 +637,8 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
         paperAll: opts.paperAll,
         series,
         hourly,
+        fair: sharp.fair,
+        fairWhy: sharp.why,
         skipMarket,
         onSignal: async ({ rule, market, side, sizeUsd, checks }) => {
           if (!papersRule(rule, opts.paperAll)) return false;
@@ -687,6 +707,7 @@ export async function runPaperCycle(opts: PaperCycleOptions): Promise<PaperCycle
             at: now,
           });
           pos.eventKey = eventKeyOf(market);
+          startTracking(pos, market, now);
           // Mark at the sell side immediately so the spread shows up as unrealized cost.
           markPosition(pos, sellPrice(market, side), now, "open");
           const fillCheck = {

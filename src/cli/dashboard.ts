@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "./args.js";
 import { runPaperCycle } from "../engine/paper-session.js";
 import { consoleSink, fileSink, webhookSink, type EventSink } from "../engine/events.js";
+import { alertSinkFromEnv } from "../engine/notify.js";
 import { defaultLedgerPath } from "../ledger/paper.js";
 import { createDashboardServer, type LoopState } from "../dashboard/server.js";
 import type { EngineEvent, NormalizedMarket, PlatformId } from "../types.js";
@@ -242,6 +243,15 @@ async function main() {
   const extraSinks: EventSink[] = [];
   if (args.logFile) extraSinks.push(fileSink(args.logFile));
   if (args.webhook) extraSinks.push(webhookSink(args.webhook));
+  // Phone alerts (ALERT_WEBHOOK_URL in .env): real runs only, never the demo.
+  if (!args.demo) {
+    loadDotEnv();
+    const alerts = alertSinkFromEnv();
+    if (alerts) {
+      extraSinks.push(alerts);
+      console.log("Phone alerts: on (ALERT_WEBHOOK_URL).");
+    }
+  }
   const emit = async (e: EngineEvent) => {
     remember(e);
     if (QUIET_TYPES.has(e.type) || (e.type === "risk_block" && /pause armed/i.test(e.message))) consoleSink(e);

@@ -883,6 +883,15 @@
         : `All ${bots.length} trading.`;
   }
 
+  // Closing-price record under the strategy's name: average (close − price paid) in cents, and how
+  // often the bet beat the close. Buying cheaper than the price at the start is the early sign of an edge.
+  function closeNote(c) {
+    if (!c || !c.n) return null;
+    const cents = c.avg * 100;
+    const line = el("div", { class: "meta", title: "Average price at the game's start minus the price paid, for bets placed before a game. Buying cheaper than the closing price, over and over, is the earliest sign of a real edge." });
+    line.append("vs closing price: ", el("span", { class: cents > 0.05 ? "pos" : cents < -0.05 ? "neg" : "", text: `${cents >= 0 ? "+" : "−"}${Math.abs(cents).toFixed(1)}¢` }), `, beat it ${c.beat} of ${c.n}${c.n < 30 ? " (too few yet)" : ""}`);
+    return line;
+  }
   function renderRules(rulesById) {
     const body = $("rulesBody");
     body.replaceChildren();
@@ -897,6 +906,8 @@
       if (!r.enabled) name.append(el("div", { class: "meta", text: "turned off in the rules file" }));
       else if (r.stopped) name.append(el("div", { class: "meta", text: "⏹ Stopped: no new trades" }));
       else if (paused) name.append(el("div", { class: "meta", text: `⏸ Paused after losses until ${new Date(r.pausedUntil).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }));
+      const close = closeNote(r.clv);
+      if (close) name.append(close);
       body.append(el("tr", null,
         name,
         el("td", { class: "num", text: String(r.open) }),

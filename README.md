@@ -46,6 +46,14 @@ after the bid/ask spread, slippage and fees.
     Polymarket US moneyline for the same date, with both teams agreeing by abbreviation **and** by name,
     so a pair can't come out flipped. These trade like pairs you confirmed. NFL is left out because a tie
     can settle differently on the two sites.
+  - **Spreads and totals** (`line_match`, on by default; NBA, NHL, NFL, college basketball and football):
+    for a game listed on both sites, Kalshi's "Portland wins by over 8.5 points" / "Over 214.5 points"
+    and Polymarket US's full-game spread or total with the **same number** (and, for spreads, the same
+    team: "the other team +8.5" is recognised as the opposite bet). Only full-game lines: halves,
+    quarters and team totals are never paired. Both sites count overtime, score an NHL shootout as one
+    goal and settle to a fair price if the game isn't played; .5 lines can't push, so NFL lines are
+    safe even though NFL winners aren't. Only games that haven't started. Which lines exist is
+    re-checked every 10 minutes (a few requests per game); their prices are re-read every check.
   - **Election races** (Senate, governor, House): office, state, district, year and party. Kalshi pays when
     the party's candidate is sworn in, Polymarket US when the party's nominee wins, so these **alert until
     you confirm them**. They also tie money up until the result is certified, past the 60-day
@@ -177,6 +185,66 @@ checks the leaders every minute. Still paper only.
 - `quick-flip-paper` in the example rules is made for this mode, but it's **off** by default: fees plus the
   bid/ask gap (~5% a round trip) were bigger than the bounces it caught in backtests. Set `enabled: true`
   to try it again.
+
+## Sharp line (`sharp-line-paper`)
+
+Compares each game's price here with a sharp sportsbook's line. A sharp book's odds, with the
+bookmaker's margin removed, are the best public estimate of a game's true chances; the rule buys a
+side when that estimate says it is worth at least 3¢ more than it costs here after the fee
+(`entry.sharp_edge`). This is how professionals look for an edge, but here it is **a paper test, not
+a proven one**.
+
+Setup: get a free key at the-odds-api.com, then add `ODDS_API_KEY=your-key` to `.env` (the file stays
+on your computer and is not in git). Without a key the rule simply waits. Settings are in the
+`sharp_lines:` block of `rules/example.yaml`.
+
+- **Whose line.** Pinnacle's when it has one; otherwise the median of at least four other books,
+  labelled "consensus". Soccer keeps the draw.
+- **Which games.** Kalshi and Polymarket US game winners in the NFL, college football, NBA, college
+  basketball, WNBA, NHL, MLB, the Premier League, Champions League, La Liga and MLS. A game is only
+  compared when the league, the start time (within 3 hours) and **both** team names agree, and exactly
+  one game fits; anything unclear is skipped, not guessed.
+- **The free plan's limit.** 500 requests a month, and one league's odds cost one request. So a league
+  is only asked for when one of its games starts within 2 hours, at most once an hour, and never more
+  than 16 times a day. On a busy night some leagues go without a fresh line and the rule sits out. A
+  paid plan lets you set `refresh_minutes: 5`.
+- **The honest weakness.** A line that is an hour old looks exactly like an edge when the price here
+  has moved on news. So a line older than 60 minutes is refused, an "edge" above 15¢ is treated as a
+  wrong match, the bet is $25 with a $25 worst case, and there is one bet per game. Judge it by the
+  "vs closing price" column, not by a week of profit.
+- This part has only been tested against the provider's documented format, not a live key. The first
+  time you run with a key, the terminal prints "Sharp lines: …" with the number of games found, or
+  the reason it couldn't get them.
+
+## Closing price (is a strategy actually good?)
+
+For every bet placed before a game, the bot records the price just before the game starts and
+compares it with what you paid. The price at the start is the market's best guess with everything
+known, so **paying less than it, over and over, is the earliest sign of a real edge**: it shows in
+dozens of trades, where profit and loss needs hundreds. The dashboard's Strategies table has a "vs
+closing price" column (average cents better or worse, and how many bets beat it), and
+`npm run paper:report` prints the same.
+
+- The closing price is the last check within 15 minutes of the start; if the laptop was asleep, it
+  is Kalshi's last hourly price before the start; if neither exists it's left out.
+- It compares the price you paid (the ask plus slippage) with the mid price at the start, so a
+  strategy starts about half the spread behind. Around zero or better is good; clearly negative means
+  the market keeps moving against the bets after they are placed.
+- Recent Kalshi game bets from before this feature are filled in once. Bets made during a game, on
+  things that aren't games, and arbitrage legs aren't counted.
+
+## Phone alerts
+
+Add `ALERT_WEBHOOK_URL=…` to `.env` and the bot sends a short message for each paper trade, exit and
+losing-streak pause. It takes a Discord channel webhook (channel settings → Integrations → Webhooks),
+a Slack incoming webhook, an ntfy.sh topic URL (install the ntfy app and subscribe to the topic), or
+any URL that accepts JSON. Every message starts with PAPER.
+
+- `ALERT_EVENTS=trades,exits,pauses` picks what to send (also `signals`, `problems`, or `all`).
+- `ALERT_RULES=arbitrage,late-mover-paper` limits it to some strategies.
+- At most 15 messages per 10 minutes; the rest are counted and mentioned in the next one.
+- Treat the URL like a password (anyone with it can post to your channel). It is read from `.env`,
+  never printed, and nothing but the alert text is sent to it. Alerts are off with `--demo`.
 
 ## Does it actually pay? (`npm run study`)
 
@@ -413,6 +481,16 @@ reversion in liquid markets). The paper strategies are hypotheses, not proven ed
   `min_move` over the last `lookback_hours` and the game starts within `max_hours_to_start`
   (`side: yes` needs a rise, `no` a drop, `with_move` buys whichever side rose).
 - `copy_trading.copy.min_buy_price` (default 0.30) and `games_only` (default true).
+- `entry.sharp_edge: { min_edge, max_edge, max_line_age_minutes }` — see "Sharp line" above
+  (`side: with_move` buys whichever side is the cheap one).
+- `risk.max_loss_per_trade_usd` — the most one trade may lose. The size is cut so the worst case
+  fits: the whole stake when the rule holds to the result; with a stop loss, 1.5× the planned loss
+  (stops often fill well below their trigger), never more than the stake. The trade's **Why?** shows
+  the sum. Works on copy trading's `risk:` block too.
+- `risk.min_reward_risk` — skip a trade whose possible gain is less than this many times its
+  possible loss. A 90¢ favorite held to the result is 0.11 : 1, so only set it on rules meant to
+  pass it.
+- `arbitrage.cross_platform.line_match` (default true) — pair full-game spreads and totals.
 
 | Section | Field | Meaning |
 |---------|-------|---------|
@@ -463,6 +541,8 @@ Optional:
 - `POLYMARKET_US_BOOKS` — Polymarket US order books read per scan for liquidity (default 100)
 - `KALSHI_API_KEY_ID`, `KALSHI_PRIVATE_KEY_PATH`, `POLYMARKET_KEY_ID`, `POLYMARKET_SECRET_KEY` — only for
   `npm run paper:fast` (read-only price streams); keep them in `.env`, never in git
+- `ODDS_API_KEY` — read-only sportsbook odds for the sharp-line rule (the-odds-api.com free plan)
+- `ALERT_WEBHOOK_URL`, `ALERT_EVENTS`, `ALERT_RULES` — phone alerts
 
 ## Layout
 

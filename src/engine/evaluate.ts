@@ -3,6 +3,8 @@ import { platformName, type NormalizedMarket, type SignalSide } from "../types.j
 import type { Tick } from "./series.js";
 import { describeMove, detectUnusualMove, type UnusualMove } from "./unusual.js";
 import { cents, hours, usd, type Check } from "./trace.js";
+import { buyPrice } from "./pricing.js";
+import type { Fair } from "../sharp/sharp.js";
 
 export interface PriorPrice {
   yesPrice: number;
@@ -22,6 +24,9 @@ export interface EvalContext {
   series?: Tick[];
   /** Hourly prices from the platform (for pregame_move); the snapshots above are used when absent. */
   hourly?: Tick[];
+  /** A sharp book's fair YES probability for this market (for sharp_edge), or why there is none. */
+  fair?: Fair;
+  fairWhy?: string;
 }
 
 /** The latest price at or before `atMs`, if one exists within `toleranceMs` before it. */
@@ -193,6 +198,29 @@ export function traceEntry(
     moveDir ??= delta > 0 ? "up" : "down";
     reasons.push(`pregame_move=${delta >= 0 ? "+" : "-"}${Math.abs(delta).toFixed(3)}`);
     sig("Pre-game move", true, `${moved}, starts in ${hours(toStart)}`);
+  }
+
+  if (e.sharp_edge) {
+    const cfg = e.sharp_edge;
+    const f = ctx.fair;
+    if (!f) return fail("Sharp line", ctx.fairWhy ?? "no sharp line for this game");
+    const ageMin = (now.getTime() - Date.parse(f.updatedAt)) / 60_000;
+    if (!(ageMin <= cfg.max_line_age_minutes)) return fail("Sharp line", `${f.book}'s line is ${Math.round(ageMin)} min old (max ${cfg.max_line_age_minutes}): a stale line looks like an edge`);
+    const rate = market.takerFeeRate ?? (market.platform === "kalshi" ? 0.07 : 0);
+    const edgeOf = (side: SignalSide) => {
+      const cost = buyPrice(market, side, rule.paper.slippage);
+      const worth = side === "yes" ? f.p : 1 - f.p;
+      return { side, cost, worth, edge: worth - cost - rate * cost * (1 - cost) };
+    };
+    const options = (e.side === "yes" ? [edgeOf("yes")] : e.side === "no" ? [edgeOf("no")] : [edgeOf("yes"), edgeOf("no")]).filter((o) => o.cost > 0 && o.cost < 1);
+    const best = options.sort((a, b) => b.edge - a.edge)[0];
+    if (!best) return fail("Sharp line", "no price to buy at");
+    const line = `${f.book} makes ${best.side.toUpperCase()} worth ${cents(best.worth)}; it costs ${cents(best.cost)} here = ${best.edge >= 0 ? "+" : "−"}${cents(Math.abs(best.edge))} after the fee (${f.game}, line ${Math.round(ageMin)} min old)`;
+    if (best.edge < cfg.min_edge - 1e-9) return fail("Sharp line", `${line}, needs ≥ ${cents(cfg.min_edge)}`);
+    if (best.edge > cfg.max_edge + 1e-9) return fail("Sharp line", `${line}: more than ${cents(cfg.max_edge)} is more likely a wrong match or old news than a gift`);
+    moveDir ??= best.side === "yes" ? "up" : "down";
+    reasons.push(`sharp_edge=${best.edge.toFixed(3)}`);
+    sig("Sharp line", true, line);
   }
 
   if (e.yes_price_above != null) {

@@ -155,6 +155,14 @@ export function buildEmit(args: CliArgs) {
     const sinks = [consoleSink];
     if (args.logFile) sinks.push(fileSink(args.logFile));
     if (args.webhook) sinks.push(webhookSink(args.webhook));
-    return multiSink(...sinks);
+    return Promise.all([import("../engine/notify.js"), import("../live-data/credentials.js")]).then(([{ alertSinkFromEnv }, { loadDotEnv }]) => {
+      // Phone alerts (ALERT_WEBHOOK_URL in .env): real runs only, never the demo.
+      if (!args.demo) {
+        loadDotEnv();
+        const alerts = alertSinkFromEnv();
+        if (alerts) sinks.push(alerts);
+      }
+      return multiSink(...sinks);
+    });
   });
 }
