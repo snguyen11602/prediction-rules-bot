@@ -168,6 +168,30 @@ Guidance for Claude, Cursor, Grok Bot, or any assistant continuing this repo.
 - Rounds run in a child process (`npm run league`) started by `paper:watch`, guarded by
   `data/backtest/round.lock`. Paper only, like everything else.
 
+## Backtest lab
+
+- `src/lab/`: `data.ts` (the game-history file `lab-games.json` next to the ledger: settled Kalshi
+  game-winner markets with hourly pre-game bid / ask; incremental download), `engine.ts` (pure: pick
+  bets, size them, measure; Monte Carlo bootstrap with a seeded generator; `ruleYaml`), `api.ts`
+  (settings in the page's units, one run's response, a background download with progress).
+- The lab reads public history and does arithmetic. It must never read or write the paper ledger,
+  import the paper session, or call anything but Kalshi's public market endpoints. This is separate
+  from `src/backtest/` (the league's replay through the real paper engine); don't merge them.
+- No look-ahead: a quote counts only if its hour ended at or before the game's start, and a bet uses
+  the quote at its own hour. "The favorite" needs every side's price (mids adding up to about $1) or
+  a price of 50¢ or more. Keep the tests in `engine.test.ts` that pin these.
+- Verdicts use the study's bar (`verdictOf`: 100+ bets and two standard errors). Don't soften the
+  wording in the page, and keep the warnings in `runLab` (`notes`) for anything optimistic: limit
+  orders assumed filled, bets that couldn't be sold, a bankroll that would have run out.
+- `ruleYaml` must only return a rule the bot can really run, and every shape of it must parse with
+  `RulesFileSchema` (tested). Where a rule can't match the test, write that into the snippet as a comment.
+- `POST /api/lab/update` goes through `postRefusal` like `/api/control` (JSON, same-origin, localhost)
+  and only ever writes `lab-games.json`. `GET /api/lab/run` validates every setting with `LabQuery`.
+- Dashboard charts: colors come from the CSS tokens (`--up` / `--down` for gain and loss, `--series-1`
+  for a single series), which were checked for color-blind separation and contrast in light and dark.
+  Gains and losses always carry a sign as well; never rely on color alone, and don't add new hues
+  without checking them the same way.
+
 ## Start / stop controls
 
 - `src/engine/controls.ts`: `data/paper-ledger.controls.json`, written only by the dashboard's

@@ -15,6 +15,7 @@ npm run paper:report  # offline PnL report from the paper ledger
 npm run paper:close -- --id <id> --price <0-1>   # manually close a stuck paper position
 npm run paper:watch   # paper trade every 5 min + live dashboard at http://localhost:4321
 npm run arb:find      # review likely Kalshi ↔ Polymarket US pairs for the arbitrage strategy
+npm run lab:update    # download / top up game history for the dashboard's Backtest lab
 npm test              # unit + demo end-to-end tests (no network)
 npm run live          # exits with “not implemented / needs keys”
 ```
@@ -279,6 +280,74 @@ hold to the result (`entry.pregame_move`). The earlier price comes from Kalshi's
 (one request per 40 markets, at most every 15 minutes), so it works even if the laptop was asleep. One
 bet per game. It is a test, not a proven edge: re-run the study on new games before trusting it.
 
+## Backtest lab (test your own idea, then simulate it)
+
+The dashboard's **Backtest lab** page tests an idea against Kalshi's settled games and redraws the
+moment you change a setting. It only reads public history and does arithmetic: it never touches the
+paper ledger and can't place a trade.
+
+```bash
+npm run paper:watch     # then open "Backtest lab" in the menu
+npm run lab:update      # optional: download or top up the game history from the terminal
+```
+
+**First use.** Click **Download game history** (about two minutes, public data, no keys). It saves the
+last 90 days of settled game-winner markets, with each side's bid and ask every hour for the day before
+the start, to `data/lab-games.json` (about 3 MB for ~3,000 games). **Check for new games** at the bottom
+of the page adds what has settled since; only the new games are fetched.
+
+**What you can change**
+
+| Group | Settings |
+|---|---|
+| What to buy | The favorite, the underdog, the side whose price rose, the side whose price fell, or every side in a price range. The price range. When to buy (1 to 24 hours before the start). For movers: how big a move, and since when |
+| Which games | Any mix of leagues, and a date range |
+| How it trades | Buy at the ask (taker fee) or rest an order at the bid (maker fee). Hold to the result or sell before the game. Skip prices from a book wider than a few cents |
+| Money | Bankroll, and either the same dollars every bet or a share of the bankroll |
+| Simulation | 1,000 to 10,000 futures, how many bets in each, and how big a loss counts as ruin |
+
+Six starting points fill the form in one click: favorites 85–95¢, all favorites, late movers, buy the
+dip, long shots, and buy early then sell before the game. Your settings are remembered in the browser.
+
+**What it shows**
+
+- One sentence saying exactly what is being tested, the profit or loss, and a verdict held to the same
+  bar as `npm run study`: nothing is called real without 100 bets and two standard errors. Next to it,
+  how often a strategy with no edge at all would look that good (or bad) by luck.
+- Return per $1 staked, win rate against the price paid, biggest drop, longest losing run, bets a day.
+- Profit and loss bet by bet. Hover the chart for any date.
+- Where it won and lost, by league, month or price paid.
+- Every bet: side, game, price paid, result and profit.
+- **Run this as a paper strategy**: when the bot is able to trade the idea (favorites or risers, bought
+  at the ask and held to the result) the page writes a rule to paste under `rules:` in
+  `rules/example.yaml`. Where the rule can't match the test (rules have no league filter; a rule can only
+  tell a favorite by a price of 50¢ or more) a comment in the snippet says so.
+
+**Monte Carlo simulation ("What could happen next").** Each simulated future draws bets at random, with
+replacement, from the test's own results and runs them through the same bet sizing. From 2,000 futures
+by default the page shows the share that ended ahead, the chance of ruin (losing half the bankroll
+unless you change it), the typical and the 1-in-20 biggest drop, a bad, middle and good ending (5th,
+50th and 95th percentile), a fan chart of the range as the bets add up, and a histogram of where the
+futures ended. **Run it again** draws a fresh set.
+
+Honest limits:
+
+- The simulation reshuffles the past. It shows how wide luck can swing *if* the next bets look like the
+  tested ones; it can't know whether they will, and it treats every bet as independent.
+- Trying settings until one looks good is the easiest way to fool yourself: the more you try, the more
+  likely the best one is luck. Test an idea on dates it hasn't seen (the date range), then on paper.
+- Prices are one bid and ask per hour, so "1 hour before" means the last hourly quote roughly 30 to 90
+  minutes before the start. Start times are worked out from Kalshi's expiry times, as in the bot.
+- There is no order-book depth: a bet never moves the price. Fine at $25, not at thousands.
+- Limit orders are assumed to fill every time, which flatters them (the page says so when you pick them).
+- A test measures every bet at full size even after the bankroll would have run out, and says when
+  that happened. Whether a bankroll survives is what the simulation is for.
+- Kalshi game winners only. Fees use Kalshi's formula without rounding each order up to the cent.
+
+On Sept 2 – Nov 9, 2026 the default test (favorites at 85–95¢, an hour before the start) made 306 bets
+for +1.0% ±1.7 per $1: ahead, but within luck. Nothing in the lab is evidence of an edge until it clears
+that bar on games it wasn't tuned on.
+
 ## Unusual moves (possible informed trading)
 
 The bot can't know who is trading or why. What it can spot in public prices is the footprint informed
@@ -359,8 +428,8 @@ or now with `npm run league`:
 
 The dashboard's **Leaderboard** tab ranks everyone and can sort by steady score, profit, win rate or trades,
 using backtest or paper results. Click a name for its own page: personality, how it trades, its P/L chart, its
-trades (backtest and paper, each with **Why?**), the coach's notes and its family. The **Backtests** tab shows
-the last run and the evolution log. **Live money** is a placeholder: live trading stays off.
+trades (backtest and paper, each with **Why?**), the coach's notes and its family. The **League backtests** page
+(linked from the League page and from the bottom of the Backtest lab) shows the last run and the evolution log. **Live money** is a placeholder: live trading stays off.
 
 ```bash
 npm run league                 # run a round now (a few minutes)
@@ -437,8 +506,9 @@ tabs on a phone) has one page per question:
 - **Strategies**: every strategy with its record, profit, closing-price result and switch, grouped
   into yours, the league's bots, and ones that are turned off.
 - **Activity**: everything the bot bought, sold or flagged, then "How the bot decides" (below).
-- Under **More**: Arbitrage, Copy trading (with parlays), Unusual moves, League, Backtests and Live
-  money (off). These are the detail pages for each kind of strategy.
+- **Backtest lab**: test your own idea on settled games and simulate what could happen next (above).
+- Under **More**: Arbitrage, Copy trading (with parlays), Unusual moves, League and Live money (off).
+  These are the detail pages for each kind of strategy.
 
 It follows your computer's light or dark setting and warns you when paper trading has stopped.
 
@@ -448,10 +518,10 @@ every page. A switched-off bot makes no new trades; its open trades still sell a
 so nothing is left unwatched. Switching on a bot that's paused after a losing streak lifts the pause. The
 switches are saved next to the ledger (`data/paper-ledger.controls.json`) and take effect on the next
 check (within 5 seconds in fast mode). Stopping copy trading still follows the leaders' sells for copies
-you hold. The buttons are the only thing the dashboard can change, and they only accept requests from the
-dashboard page itself. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C finishes the current check
-and exits. Don't run `paper:watch` and `paper -- --loop` at the same time; the second one just waits
-for the lock.
+you hold. The buttons, and the lab's game-history download (which only writes `data/lab-games.json`),
+are the only things the dashboard can change, and they only accept requests from the dashboard page
+itself. Flags: `--port N`, `--interval sec`, `--no-open`. Ctrl+C finishes the current check and exits.
+Don't run `paper:watch` and `paper -- --loop` at the same time; the second one just waits for the lock.
 
 **Reset.** On the Overview page, **Reset** (next to the "since" date) starts the paper portfolio over
 at $0 after asking you to confirm. Profit and loss, the chart, win rate, trade history and loss pauses go
@@ -577,7 +647,8 @@ src/engine/            Evaluate, exits, pricing, risk, runner, paper session, ev
 src/ledger/            Paper ledger: positions, fills journal, PnL (JSON)
 src/league/            Strategy league: personas, strategy DNA, scoring, diagnosis, evolution
 src/backtest/          Price history (cached), replay adapter, backtest runner
-src/cli/               scan | watch | paper | paper-report | league | live
+src/lab/               Backtest lab: game history file, picking + Monte Carlo (pure), dashboard API
+src/cli/               scan | watch | paper | paper-report | league | study | lab-update | live
 AGENTS.md              How to extend without breaking the schema
 ```
 
