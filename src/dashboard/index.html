@@ -3,59 +3,69 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Paper Trading</title>
+<title>Rules Bot</title>
 <style>
   :root {
     color-scheme: light;
-    --page: #f9f9f7;
-    --surface: #fcfcfb;
-    --ink: #0b0b0b;
-    --ink-2: #52514e;
-    --muted: #898781;
-    --grid: #e1e0d9;
-    --axis: #c3c2b7;
-    --border: rgba(11, 11, 11, 0.10);
-    --series-1: #2a78d6;
-    --up: #006300;
-    --down: #d03b3b;
-    --warn: #fab219;
-    --good: #0ca30c;
-    --hover: rgba(11, 11, 11, 0.04);
-    --badge: #f0efec;
+    --page: #f5f6f8;
+    --surface: #ffffff;
+    --ink: #101623;
+    --ink-2: #414a5a;
+    --muted: #6a7385;
+    --grid: #e4e7ec;
+    --axis: #cbd0d9;
+    --border: #e4e7ec;
+    --series-1: #2b55e0;
+    --up: #0b8a5c;
+    --down: #d2364b;
+    --warn: #e8a317;
+    --good: #12a56f;
+    --hover: rgba(16, 22, 35, 0.04);
+    --badge: #eef0f4;
+    --accent: #2b55e0;
+    --select: #eaeefc;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
       color-scheme: dark;
-      --page: #0d0d0d;
-      --surface: #1a1a19;
-      --ink: #f0efec;
-      --ink-2: #c3c2b7;
-      --muted: #898781;
-      --grid: #2c2c2a;
-      --axis: #383835;
-      --border: rgba(255, 255, 255, 0.10);
-      --series-1: #3987e5;
-      --up: #0ca30c;
-      --down: #e66767;
+      --page: #0d1219;
+      --surface: #151c26;
+      --ink: #e9edf3;
+      --ink-2: #b9c1ce;
+      --muted: #8d97a8;
+      --grid: #232c39;
+      --axis: #334052;
+      --border: #232c39;
+      --series-1: #7c9bff;
+      --up: #2cc58b;
+      --down: #f26b7e;
+      --warn: #f0b93a;
+      --good: #2cc58b;
       --hover: rgba(255, 255, 255, 0.05);
-      --badge: #2c2c2a;
+      --badge: #1f2835;
+      --accent: #7c9bff;
+      --select: #1c2740;
     }
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
-    --page: #0d0d0d;
-    --surface: #1a1a19;
-    --ink: #f0efec;
-    --ink-2: #c3c2b7;
-    --muted: #898781;
-    --grid: #2c2c2a;
-    --axis: #383835;
-    --border: rgba(255, 255, 255, 0.10);
-    --series-1: #3987e5;
-    --up: #0ca30c;
-    --down: #e66767;
+    --page: #0d1219;
+    --surface: #151c26;
+    --ink: #e9edf3;
+    --ink-2: #b9c1ce;
+    --muted: #8d97a8;
+    --grid: #232c39;
+    --axis: #334052;
+    --border: #232c39;
+    --series-1: #7c9bff;
+    --up: #2cc58b;
+    --down: #f26b7e;
+    --warn: #f0b93a;
+    --good: #2cc58b;
     --hover: rgba(255, 255, 255, 0.05);
-    --badge: #2c2c2a;
+    --badge: #1f2835;
+    --accent: #7c9bff;
+    --select: #1c2740;
   }
 
   * { box-sizing: border-box; }
@@ -273,38 +283,307 @@
 
   footer { color: var(--muted); font-size: 12px; margin-top: 24px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* ================= App shell (2026-11 redesign) ================= */
+  body { font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+  .off-page { display: none !important; }
+  .app { display: grid; grid-template-columns: 212px minmax(0, 1fr); min-height: 100vh; }
+  .rail { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; display: flex; flex-direction: column; padding: 18px 12px 14px; background: var(--surface); border-right: 1px solid var(--grid); }
+  .brand { display: flex; align-items: center; gap: 9px; padding: 2px 10px 18px; font-size: 15.5px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); text-decoration: none; }
+  .brand svg { flex: none; }
+  .tabs { display: flex; flex-direction: column; flex-wrap: nowrap; gap: 2px; margin: 0; border: 0; }
+  .tabs a { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; margin: 0; border: 0; border-radius: 8px; color: var(--ink-2); font-weight: 500; text-decoration: none; white-space: nowrap; }
+  .tabs a:hover { background: var(--hover); color: var(--ink); }
+  .tabs a.on { background: var(--select); color: var(--ink); font-weight: 600; border: 0; }
+  .tabs a.off { color: var(--muted); }
+  .tabs a .count { font-size: 12px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .tabs .group { margin: 16px 10px 4px; font-size: 12px; color: var(--muted); }
+  .rail-foot { margin-top: auto; padding: 14px 10px 0; font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .wrap { max-width: 1140px; width: 100%; margin: 0 auto; padding: 18px 28px 56px; }
+  header { margin-bottom: 16px; gap: 10px 12px; min-height: 34px; }
+  h1 { font-size: 20px; font-weight: 650; letter-spacing: -0.015em; }
+  h2 { font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
+  .status { font-size: 13px; }
+  .card { border-radius: 10px; border-color: var(--grid); padding: 16px 18px; }
+  .badge { font-weight: 500; }
+  .btn { border-color: var(--axis); border-radius: 8px; font-weight: 500; }
+  .btn.ctl.go { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  th { font-weight: 500; color: var(--muted); padding: 6px 10px 8px; }
+  td { padding: 10px; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .side { border-radius: 5px; font-weight: 600; white-space: nowrap; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+  .card-head h2 { margin: 0; }
+  .card-head a { font-size: 13px; text-decoration: none; }
+  .card-head a:hover { text-decoration: underline; }
+  .grid2.even { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  @media (max-width: 980px) { .grid2.even { grid-template-columns: minmax(0, 1fr); } }
+
+  /* ---- overview: the account at a glance ---- */
+  .hero { padding: 20px 22px 16px; margin-bottom: 16px; }
+  .hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .hero .label { color: var(--muted); font-size: 13px; }
+  .hero .value { font-size: 36px; line-height: 1.15; font-weight: 650; letter-spacing: -0.025em; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .hero .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  #chart { height: 220px; margin: 10px -6px 0; }
+  #chart.up .line { stroke: var(--up); }
+  #chart.down .line { stroke: var(--down); }
+  .line { stroke-width: 1.75; }
+  .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; margin: 14px 0 0; padding-top: 14px; border-top: 1px solid var(--grid); }
+  .stats > div { padding: 0 14px; border-left: 1px solid var(--grid); min-width: 0; }
+  .stats > div:first-child { padding-left: 0; border-left: 0; }
+  .stats dt { color: var(--muted); font-size: 12.5px; }
+  .stats dd { margin: 2px 0 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .stats .note { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 760px) {
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
+    .stats > div { padding: 0 12px 0 0; border-left: 0; }
+    .hero .value { font-size: 30px; }
+  }
+
+  /* ---- compact rows (overview lists) ---- */
+  .rows { list-style: none; margin: 0; padding: 0; }
+  .rows li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--grid); }
+  .rows li:last-child { border-bottom: 0; }
+  .rows li.empty { display: block; }
+  .rows li.tap { cursor: pointer; margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 8px; }
+  .rows li.tap:hover { background: var(--hover); }
+  .rows .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rows .name a { color: inherit; text-decoration: none; }
+  .rows .name a:hover { text-decoration: underline; }
+  .rows .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rows .amt { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 500; }
+  .rows .amt .meta { font-weight: 400; }
+  .rows .more { display: block; padding: 10px 0 0; border: 0; font-size: 13px; }
+  .state { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 7px; vertical-align: 1px; }
+  .state.stopped { background: var(--muted); }
+  .state.paused { background: var(--warn); }
+
+  /* ---- on / off switch for a strategy ---- */
+  .switch { position: relative; width: 36px; height: 21px; flex: none; border-radius: 999px; border: 0; padding: 0; background: var(--axis); cursor: pointer; transition: background-color .15s; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .15s; }
+  .switch[aria-checked="true"] { background: var(--good); }
+  .switch[aria-checked="true"]::after { transform: translateX(15px); }
+  .switch:disabled { opacity: .55; cursor: wait; }
+  @media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
+
+  /* ---- tables on the full pages ---- */
+  tr.group td { padding: 18px 10px 6px; font-size: 12.5px; color: var(--muted); border-bottom: 1px solid var(--grid); }
+  tr.group:first-child td { padding-top: 4px; }
+  td.title { min-width: 0; }
+  td.title .name { font-weight: 500; }
+  td.title a { color: var(--ink); }
+  .why { font: inherit; font-size: 12.5px; padding: 3px 8px; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--accent); cursor: pointer; white-space: nowrap; }
+  .why:hover { background: var(--hover); }
+  tr.tap { cursor: pointer; }
+  tr.tap:hover td { background: var(--hover); }
+  td.title .meta .side { margin-right: 2px; font-size: 11px; }
+  td.title .name { overflow-wrap: anywhere; }
+  .feed { max-height: none; }
+  .feed li { grid-template-columns: 64px minmax(0, 1fr); padding: 9px 0; }
+  .feed .kind { font-size: 12.5px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted); }
+  .feed .msg { font-size: 13.5px; }
+  footer { margin-top: 28px; }
+
+  @media (max-width: 860px) {
+    .app { display: block; }
+    .rail { position: sticky; top: 0; z-index: 6; height: auto; flex-direction: row; align-items: center; gap: 6px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--grid); overflow-x: auto; scrollbar-width: none; }
+    .rail::-webkit-scrollbar { display: none; }
+    .brand { padding: 0 6px 0 0; }
+    .brand span { display: none; }
+    .tabs { flex-direction: row; gap: 2px; }
+    .tabs .group, .rail-foot { display: none; }
+    .tabs a { padding: 6px 10px; }
+    .tabs a .count { display: none; }
+    .wrap { padding: 14px 14px 48px; }
+    .status { margin-left: 0; width: 100%; order: 5; }
+    .hero { padding: 16px 16px 14px; }
+    .card { padding: 14px; }
+    th.opt, td.opt, .wide { display: none; }
+    td, th { padding-left: 6px; padding-right: 6px; }
+    td:first-child, th:first-child { padding-left: 0; }
+    td:last-child, th:last-child { padding-right: 0; }
+  }
 </style>
 </head>
 <body>
+<div class="app">
+<aside class="rail">
+  <a class="brand" href="#/">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><rect width="22" height="22" rx="6" fill="currentColor"/><path d="M5 14.5l4-4 3 2.5 5-6" fill="none" stroke="var(--surface)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>Rules Bot</span>
+  </a>
+  <nav class="tabs" aria-label="Pages">
+    <a href="#/" data-page="overview">Overview</a>
+    <a href="#/trades" data-page="trades">Trades <span class="count" id="navOpen"></span></a>
+    <a href="#/strategies" data-page="strategies">Strategies</a>
+    <a href="#/activity" data-page="activity">Activity</a>
+    <div class="group">More</div>
+    <a href="#/arbitrage" data-page="arbitrage" id="navArb">Arbitrage</a>
+    <a href="#/copy" data-page="copy" id="navCopy">Copy trading</a>
+    <a href="#/moves" data-page="moves">Unusual moves</a>
+    <a href="#/leaderboard" data-page="league">League</a>
+    <a href="#/backtest" data-page="backtest">Backtests</a>
+    <a href="#/live" data-page="live" class="off">Live money (off)</a>
+  </nav>
+  <div class="rail-foot">Pretend money only. Nothing here places real orders.</div>
+</aside>
 <div class="wrap">
   <header>
-    <h1>Paper Trading</h1>
-    <span class="badge">Pretend money only</span>
+    <h1 id="pageTitle">Overview</h1>
+    <span class="badge">Paper</span>
     <span class="badge demo" id="demoBadge" hidden>Demo data</span>
     <span class="badge stopped" id="stoppedBadge" hidden>All bots stopped</span>
-    <button class="btn ctl" type="button" id="allCtl" hidden></button>
     <div class="status" aria-live="polite"><span class="dot" id="statusDot"></span><span id="statusText">Loading…</span></div>
+    <button class="btn ctl" type="button" id="allCtl" hidden></button>
   </header>
-
-  <nav class="tabs" aria-label="Pages">
-    <a href="#/" data-view="paper">Paper trading</a>
-    <a href="#/leaderboard" data-view="league">Leaderboard</a>
-    <a href="#/backtest" data-view="backtest">Backtests</a>
-    <a href="#/live" data-view="live" class="off">Live money · off</a>
-  </nav>
 
   <div class="banner" id="banner" role="status"></div>
 
   <main id="viewPaper">
-  <section class="kpis" aria-label="Totals">
-    <div class="card kpi"><div class="label">Total profit / loss</div><div class="value" id="kTotal">—</div><div class="sub">closed + still open</div></div>
-    <div class="card kpi"><div class="label">From closed trades</div><div class="value" id="kRealized">—</div><div class="sub" id="kRealizedSub"></div></div>
-    <div class="card kpi"><div class="label">On open trades</div><div class="value" id="kUnrealized">—</div><div class="sub">if sold right now</div></div>
-    <div class="card kpi"><div class="label">Open trades</div><div class="value" id="kOpen">—</div><div class="sub" id="kOpenSub"></div></div>
-    <div class="card kpi"><div class="label">Win rate</div><div class="value" id="kWin">—</div><div class="sub" id="kWinSub"></div></div>
+  <section class="card hero" data-pages="overview" aria-label="Totals">
+    <div class="hero-top">
+      <div>
+        <div class="label">Total profit / loss</div>
+        <div class="value" id="kTotal">—</div>
+        <div class="sub" id="kTotalSub"></div>
+      </div>
+      <div class="seg" id="chartRange" role="group" aria-label="Chart range"><button type="button" data-v="1d">Today</button><button type="button" data-v="7d">7 days</button><button type="button" data-v="all">All</button></div>
+    </div>
+    <div id="chart" role="img" aria-label="Profit and loss from closed trades over time"></div>
+    <div class="tip" id="tip"></div>
+    <dl class="stats">
+      <div><dt>Today</dt><dd id="kToday">—</dd><div class="note" id="kTodaySub"></div></div>
+      <div><dt>Closed trades</dt><dd id="kRealized">—</dd><div class="note" id="kRealizedSub"></div></div>
+      <div><dt>Open trades</dt><dd id="kUnrealized">—</dd><div class="note" id="kOpenSub"></div></div>
+      <div><dt>Win rate</dt><dd id="kWin">—</dd><div class="note" id="kWinSub"></div></div>
+      <div><dt>Fees paid</dt><dd id="kFees">—</dd><div class="note">included in every number</div></div>
+    </dl>
   </section>
 
-  <section class="card section" id="decideSection">
+  <div class="grid2 even" data-pages="overview">
+    <section class="card">
+      <div class="card-head"><h2>Strategies</h2><a href="#/strategies">All strategies</a></div>
+      <ul class="rows" id="ovRules"></ul>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Open trades</h2><a href="#/trades">All trades</a></div>
+      <ul class="rows" id="ovOpen"></ul>
+    </section>
+  </div>
+
+  <section class="card section" data-pages="overview">
+    <div class="card-head"><h2>Latest</h2><a href="#/activity">All activity</a></div>
+    <ul class="feed" id="ovFeed"></ul>
+  </section>
+
+  <dialog class="story" id="story"><div class="story-in" id="storyBody"></div></dialog>
+
+  <section data-pages="arbitrage" class="card section" id="arbSection" hidden>
+    <div class="arb-head">
+      <h2>Arbitrage</h2>
+      <span class="arb-note">Buys sets of contracts that pay a guaranteed amount, for less than that amount (after fees).</span>
+    </div>
+    <div class="sub-h" id="oppTitle">Opportunities right now</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Trade</th><th class="num">Profit per $1</th><th class="num">Profit</th><th class="num">Ties up</th><th class="num">Resolves</th></tr></thead>
+      <tbody id="oppBody"></tbody>
+    </table></div>
+    <div class="sub-h">Open arbitrage trades</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Trade</th><th class="num">Cost</th><th class="num">Locked in</th><th class="num">If sold now</th><th class="num">Opened</th></tr></thead>
+      <tbody id="arbOpenBody"></tbody>
+    </table></div>
+    <div class="sub-h">Closed arbitrage trades</div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Trade</th><th>How it closed</th><th class="num">Expected</th><th class="num">Actual</th><th class="num">Closed</th></tr></thead>
+      <tbody id="arbClosedBody"></tbody>
+    </table></div>
+  </section>
+
+  <section data-pages="moves" class="card section" id="unusualSection">
+    <div class="arb-head">
+      <h2>Unusual moves</h2>
+      <span class="arb-note">Sharp moves on a volume spike that haven't reversed — what informed trading often looks like. Public data only; news and big traders cause it too.</span>
+    </div>
+    <div class="meta" id="historyNote" style="margin-bottom:8px"></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Market</th><th class="num">Move</th><th class="num">vs normal</th><th class="num">Volume</th><th>Bot's call</th></tr></thead>
+      <tbody id="unusualBody"></tbody>
+    </table></div>
+  </section>
+
+  <section data-pages="copy" class="card section" id="copySection" hidden>
+    <div class="arb-head">
+      <h2>Copy trading</h2>
+      <span class="arb-note" id="copyNote">Top global-Polymarket traders, copied onto the same market where you can trade (Polymarket US / Kalshi). A leaderboard is partly luck.</span>
+    </div>
+    <div class="grid2" style="margin-bottom:0">
+      <div>
+        <div class="sub-h" style="margin-top:0">Following</div>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Trader</th><th class="num">Win rate</th><th class="num">Markets</th><th class="num">Profit</th></tr></thead>
+          <tbody id="leadersBody"></tbody>
+        </table></div>
+      </div>
+      <div>
+        <div class="sub-h" style="margin-top:0">Their latest bets</div>
+        <ul class="decisions" id="copyBets"></ul>
+      </div>
+    </div>
+  </section>
+
+  <section data-pages="copy" class="card section" id="parlaySection" hidden>
+    <div class="arb-head">
+      <h2>Parlays</h2>
+      <span class="arb-note" id="parlayNote"></span>
+    </div>
+    <div class="grid2" style="margin-bottom:0">
+      <div>
+        <div class="sub-h" style="margin-top:0">Open</div>
+        <ul class="decisions" id="parlayOpen"></ul>
+        <div class="sub-h">Settled</div>
+        <ul class="decisions" id="parlayClosed"></ul>
+      </div>
+      <div>
+        <div class="sub-h" style="margin-top:0">Legs waiting (leaders' big bets)</div>
+        <ul class="decisions" id="parlayPool"></ul>
+        <div class="sub-h">Parlay decisions</div>
+        <ul class="decisions" id="parlayRecent"></ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="card section" data-pages="strategies">
+    <div class="meta" id="ctlNote" style="margin-bottom:10px"></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Strategy</th><th class="num opt">Open</th><th class="num">Won / lost</th><th class="num">Profit / loss</th><th class="num opt" title="Average price at the game's start minus the price paid. Buying cheaper than the closing price, over and over, is the earliest sign of a real edge.">vs closing price</th><th><span class="sr-only">On / off</span></th></tr></thead>
+      <tbody id="rulesBody"></tbody>
+    </table></div>
+  </section>
+
+  <section class="card section" data-pages="trades">
+    <h2>Open trades</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Market</th><th class="num opt">Bought at</th><th class="num">Worth now</th><th class="num opt">Cost</th><th class="num">Profit / loss</th><th class="num opt">Opened</th><th class="opt"></th></tr></thead>
+      <tbody id="openBody"></tbody>
+    </table></div>
+  </section>
+  <section class="card section" data-pages="trades">
+    <h2>Closed trades</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Market</th><th class="opt">Why it closed</th><th class="num">Bought, sold</th><th class="num">Profit / loss</th><th class="num opt">Closed</th><th class="opt"></th></tr></thead>
+      <tbody id="closedBody"></tbody>
+    </table></div>
+  </section>
+
+  <section class="card section" data-pages="activity">
+    <h2 id="feedTitle">Recent activity</h2>
+    <ul class="feed" id="feed"></ul>
+  </section>
+  <section data-pages="activity" class="card section" id="decideSection">
     <div class="arb-head">
       <h2>How the bot decides</h2>
       <span class="arb-note" id="decideNote">Every check, every market, every time. Click any trade below (or a signal here) to see why it was taken.</span>
@@ -330,120 +609,6 @@
     </div>
   </section>
 
-  <dialog class="story" id="story"><div class="story-in" id="storyBody"></div></dialog>
-
-  <section class="card section" id="arbSection" hidden>
-    <div class="arb-head">
-      <h2>Arbitrage</h2>
-      <span class="arb-note">Buys sets of contracts that pay a guaranteed amount, for less than that amount (after fees).</span>
-    </div>
-    <div class="sub-h" id="oppTitle">Opportunities right now</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Trade</th><th class="num">Profit per $1</th><th class="num">Profit</th><th class="num">Ties up</th><th class="num">Resolves</th></tr></thead>
-      <tbody id="oppBody"></tbody>
-    </table></div>
-    <div class="sub-h">Open arbitrage trades</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Trade</th><th class="num">Cost</th><th class="num">Locked in</th><th class="num">If sold now</th><th class="num">Opened</th></tr></thead>
-      <tbody id="arbOpenBody"></tbody>
-    </table></div>
-    <div class="sub-h">Closed arbitrage trades</div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Trade</th><th>How it closed</th><th class="num">Expected</th><th class="num">Actual</th><th class="num">Closed</th></tr></thead>
-      <tbody id="arbClosedBody"></tbody>
-    </table></div>
-  </section>
-
-  <section class="card section" id="unusualSection">
-    <div class="arb-head">
-      <h2>Unusual moves</h2>
-      <span class="arb-note">Sharp moves on a volume spike that haven't reversed — what informed trading often looks like. Public data only; news and big traders cause it too.</span>
-    </div>
-    <div class="meta" id="historyNote" style="margin-bottom:8px"></div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Market</th><th class="num">Move</th><th class="num">vs normal</th><th class="num">Volume</th><th>Bot's call</th></tr></thead>
-      <tbody id="unusualBody"></tbody>
-    </table></div>
-  </section>
-
-  <section class="card section" id="copySection" hidden>
-    <div class="arb-head">
-      <h2>Copy trading</h2>
-      <span class="arb-note" id="copyNote">Top global-Polymarket traders, copied onto the same market where you can trade (Polymarket US / Kalshi). A leaderboard is partly luck.</span>
-    </div>
-    <div class="grid2" style="margin-bottom:0">
-      <div>
-        <div class="sub-h" style="margin-top:0">Following</div>
-        <div class="tablewrap"><table>
-          <thead><tr><th>Trader</th><th class="num">Win rate</th><th class="num">Markets</th><th class="num">Profit</th></tr></thead>
-          <tbody id="leadersBody"></tbody>
-        </table></div>
-      </div>
-      <div>
-        <div class="sub-h" style="margin-top:0">Their latest bets</div>
-        <ul class="decisions" id="copyBets"></ul>
-      </div>
-    </div>
-  </section>
-
-  <section class="card section" id="parlaySection" hidden>
-    <div class="arb-head">
-      <h2>Parlays</h2>
-      <span class="arb-note" id="parlayNote"></span>
-    </div>
-    <div class="grid2" style="margin-bottom:0">
-      <div>
-        <div class="sub-h" style="margin-top:0">Open</div>
-        <ul class="decisions" id="parlayOpen"></ul>
-        <div class="sub-h">Settled</div>
-        <ul class="decisions" id="parlayClosed"></ul>
-      </div>
-      <div>
-        <div class="sub-h" style="margin-top:0">Legs waiting (leaders' big bets)</div>
-        <ul class="decisions" id="parlayPool"></ul>
-        <div class="sub-h">Parlay decisions</div>
-        <ul class="decisions" id="parlayRecent"></ul>
-      </div>
-    </div>
-  </section>
-
-  <div class="grid2">
-    <section class="card">
-      <h2>Profit / loss from closed trades over time</h2>
-      <div id="chart" role="img" aria-label="Cumulative profit and loss from closed trades"></div>
-      <div class="tip" id="tip"></div>
-    </section>
-    <section class="card">
-      <h2>Strategies <a href="#/leaderboard" class="meta" style="font-weight:400;margin-left:6px">Leaderboard →</a></h2>
-      <div class="meta" id="ctlNote" style="margin-bottom:6px"></div>
-      <div class="tablewrap"><table>
-        <thead><tr><th>Strategy</th><th class="num">Open</th><th class="num">W / L</th><th class="num">P/L</th><th><span class="sr-only">Start / stop</span></th></tr></thead>
-        <tbody id="rulesBody"></tbody>
-      </table></div>
-    </section>
-  </div>
-
-  <section class="card section">
-    <h2>Open trades</h2>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Market</th><th>Bet</th><th class="num">Bought at</th><th class="num">Worth now</th><th class="num">Cost</th><th class="num">P/L</th><th class="num">Opened</th><th></th></tr></thead>
-      <tbody id="openBody"></tbody>
-    </table></div>
-  </section>
-
-  <div class="grid2">
-    <section class="card">
-      <h2>Closed trades</h2>
-      <div class="tablewrap"><table>
-        <thead><tr><th>Market</th><th>Why it closed</th><th class="num">Bought → sold</th><th class="num">P/L</th><th class="num">Closed</th><th></th></tr></thead>
-        <tbody id="closedBody"></tbody>
-      </table></div>
-    </section>
-    <section class="card">
-      <h2 id="feedTitle">Recent activity</h2>
-      <ul class="feed" id="feed"></ul>
-    </section>
-  </div>
 
   </main>
 
@@ -560,6 +725,7 @@
     <span id="ledgerPath"></span>
   </footer>
 </div>
+</div>
 
 <script>
 (() => {
@@ -611,13 +777,34 @@
   const PLATFORM_LABEL = { kalshi: "Kalshi", polymarket: "Polymarket (global)", polymarket_us: "Polymarket US" };
   function platformLabel(id) { return PLATFORM_LABEL[id] || String(id || ""); }
   function safeUrl(u) { return typeof u === "string" && /^https?:\/\//i.test(u) ? u : null; }
+  /** A long exchange question → the short name people use, plus who YES is when the title says. */
+  function shortMarket(title) {
+    const t = String(title || "");
+    let m = /^Who will win in the upcoming .*? event (.+?) vs\.? (.+?) scheduled for .*?\[YES = (.+?)\]\s*$/i.exec(t);
+    if (m) return { name: `${m[1]} vs ${m[2]}`, yes: m[3] };
+    m = /^(.*?)\s*\[YES = (.+?)\]\s*$/.exec(t);
+    if (m) return { name: m[1], yes: m[2] };
+    return { name: t };
+  }
+  function betText(p) {
+    const yes = shortMarket(p.title).yes;
+    return `${String(p.side).toUpperCase()}${yes ? ` on ${yes}` : ""}`;
+  }
+  /** "Short-dated YES favorites (85–95¢), hold to resolution" → "Short-dated YES favorites". */
+  function shortRule(name) {
+    return String(name || "").split(/ \(| — |, hold/)[0];
+  }
+  function ruleName(id, rulesById) {
+    return shortRule((rulesById[id] && rulesById[id].name) || (state.ruleNames || {})[id] || id);
+  }
   function marketCell(p, rulesById) {
     const href = safeUrl(p.url);
+    const name = shortMarket(p.title).name;
     const title = href
-      ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: p.title })
-      : el("span", { text: p.title });
-    const rule = rulesById[p.ruleId]?.name || p.ruleId;
-    return el("td", { class: "title" }, title, el("div", { class: "meta", text: `${rule} · ${platformLabel(p.platform)}` }));
+      ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: name, title: p.title })
+      : el("span", { text: name, title: p.title });
+    return el("td", { class: "title" }, el("div", { class: "name" }, title),
+      el("div", { class: "meta" }, el("span", { class: "side", text: betText(p) }), ` ${ruleName(p.ruleId, rulesById)}`, el("span", { class: "wide", text: `, ${platformLabel(p.platform)}` })));
   }
   const REASONS = {
     take_profit: "Hit profit target",
@@ -701,19 +888,27 @@
   function setKpi(id, n) {
     const node = $(id);
     node.textContent = usd(n, true);
-    node.className = "value " + cls(n);
+    node.classList.remove("pos", "neg");
+    if (cls(n)) node.classList.add(cls(n));
   }
   function renderKpis() {
     const t = state.totals;
     setKpi("kTotal", t.realizedPnlUsd + t.unrealizedPnlUsd);
+    $("kTotalSub").textContent = `since ${new Date(state.ledger.createdAt || nowMs()).toLocaleDateString([], { month: "short", day: "numeric" })}, closed and open trades together`;
+    // Today = trades closed since local midnight.
+    const midnight = new Date(nowMs()); midnight.setHours(0, 0, 0, 0);
+    const today = (state.pnlSeries || []).filter((d) => new Date(d.at).getTime() >= midnight.getTime());
+    setKpi("kToday", today.reduce((a, d) => a + d.pnlUsd, 0));
+    $("kTodaySub").textContent = today.length ? `${today.length} trade${today.length === 1 ? "" : "s"} closed` : "nothing closed yet";
     setKpi("kRealized", t.realizedPnlUsd);
+    $("kRealizedSub").textContent = `${t.closed} closed`;
     setKpi("kUnrealized", t.unrealizedPnlUsd);
-    $("kRealizedSub").textContent = `${t.closed} closed · fees ${usd(t.feesUsd)}`;
-    $("kOpen").textContent = String(t.open);
-    $("kOpenSub").textContent = `${usd(t.exposureUsd)} in play`;
+    $("kOpenSub").textContent = t.open ? `${t.open} open, ${usd(t.exposureUsd)} in play` : "none open";
     const decided = t.wins + t.losses;
     $("kWin").textContent = decided ? `${Math.round((t.wins / decided) * 100)}%` : "—";
-    $("kWinSub").textContent = decided ? `${t.wins} won · ${t.losses} lost` : "no closed trades yet";
+    $("kWinSub").textContent = decided ? `${t.wins} won, ${t.losses} lost` : "no closed trades yet";
+    $("kFees").textContent = usd(t.feesUsd);
+    $("navOpen").textContent = t.open ? String(t.open) : "";
   }
 
   // ---------- chart ----------
@@ -742,7 +937,25 @@
     return (v < 0 ? MINUS : "") + body;
   }
   function renderChart() {
-    drawPnl($("chart"), $("tip"), state.pnlSeries || [], state.ledger.createdAt, nowMs(), "No closed trades yet. This line starts once the first trade closes.");
+    if (route().page !== "overview") return; // hidden: nothing to measure
+    const range = ui.range;
+    setSeg("chartRange", range, (v) => { ui.range = v; pref.set("range", v); renderChart(); });
+    const all = state.pnlSeries || [];
+    const box = $("chart");
+    let series = all, start = state.ledger.createdAt;
+    if (range !== "all" && all.length) {
+      const from = range === "1d" ? (() => { const d = new Date(nowMs()); d.setHours(0, 0, 0, 0); return d.getTime(); })() : nowMs() - 7 * 86400000;
+      const before = all.filter((d) => new Date(d.at).getTime() < from);
+      const base = before.length ? before[before.length - 1].cumPnlUsd : 0;
+      // Start the line at zero for the chosen period.
+      series = all.filter((d) => new Date(d.at).getTime() >= from).map((d) => ({ ...d, cumPnlUsd: d.cumPnlUsd - base }));
+      start = new Date(from).toISOString();
+    }
+    const last = series.length ? series[series.length - 1].cumPnlUsd : 0;
+    box.classList.toggle("up", last > 0.004);
+    box.classList.toggle("down", last < -0.004);
+    const empty = all.length ? (range === "1d" ? "No trades have closed today." : "No trades closed in the last 7 days.") : "No closed trades yet. This line starts once the first trade closes.";
+    drawPnl(box, $("tip"), series, start, nowMs(), empty);
   }
   /** Step line of cumulative P/L from closed trades, with a hover tip. */
   function drawPnl(box, tip, series, startIso, endMs, emptyText) {
@@ -863,6 +1076,23 @@
     b.addEventListener("click", () => sendControl({ action: start ? "start" : "stop", id: r.ruleId }, b));
     return b;
   }
+  /** On = trading. Off = no new trades (open ones are still managed). A loss pause counts as off. */
+  function ctlSwitch(r) {
+    const paused = r.pausedUntil && new Date(r.pausedUntil).getTime() > nowMs();
+    const on = !r.stopped && !paused;
+    const b = el("button", { class: "switch", type: "button", role: "switch", "aria-checked": on ? "true" : "false", title: on ? "Trading. Switch off to stop new trades (open ones are still managed)." : paused && !r.stopped ? "Paused after losses. Switch on to lift the pause." : "Stopped. Switch on to trade again." });
+    b.setAttribute("aria-label", `${r.name}: ${on ? "trading" : "off"}`);
+    b.addEventListener("click", (ev) => { ev.stopPropagation(); sendControl({ action: on ? "stop" : "start", id: r.ruleId }, b); });
+    return b;
+  }
+  function ruleState(r) {
+    const paused = r.pausedUntil && new Date(r.pausedUntil).getTime() > nowMs();
+    if (!r.enabled) return { key: "off", text: "turned off in the rules file" };
+    if (r.stopped) return { key: "stopped", text: "Stopped: no new trades" };
+    if (paused) return { key: "paused", text: `Paused after losses until ${new Date(r.pausedUntil).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` };
+    return { key: "on", text: "" };
+  }
+  const isLeagueBot = (r) => String(r.ruleId).startsWith("lg-");
   function renderControls() {
     const c = state.controls || { allStopped: false, stopped: {} };
     const bots = state.rules.filter((r) => r.action !== "alert" && r.enabled);
@@ -888,39 +1118,55 @@
   function closeNote(c) {
     if (!c || !c.n) return null;
     const cents = c.avg * 100;
-    const line = el("div", { class: "meta", title: "Average price at the game's start minus the price paid, for bets placed before a game. Buying cheaper than the closing price, over and over, is the earliest sign of a real edge." });
-    line.append("vs closing price: ", el("span", { class: cents > 0.05 ? "pos" : cents < -0.05 ? "neg" : "", text: `${cents >= 0 ? "+" : "−"}${Math.abs(cents).toFixed(1)}¢` }), `, beat it ${c.beat} of ${c.n}${c.n < 30 ? " (too few yet)" : ""}`);
-    return line;
+    const box = el("div", { title: "Average price at the game's start minus the price paid, for bets placed before a game. Buying cheaper than the closing price, over and over, is the earliest sign of a real edge." });
+    box.append(el("span", { class: cents > 0.05 ? "pos" : cents < -0.05 ? "neg" : "", text: `${cents >= 0 ? "+" : MINUS}${Math.abs(cents).toFixed(1)}¢` }));
+    box.append(el("div", { class: "meta", text: `beat it ${c.beat} of ${c.n}${c.n < 30 ? ", too few yet" : ""}` }));
+    return box;
   }
   function renderRules(rulesById) {
     const body = $("rulesBody");
     body.replaceChildren();
     renderControls();
-    if (!state.rules.length) { body.append(emptyRow(5, "No paper strategies in the rules file.")); return; }
-    for (const r of state.rules.filter((r) => r.action !== "alert")) {
-      const paused = r.pausedUntil && new Date(r.pausedUntil).getTime() > nowMs();
+    const bots = state.rules.filter((r) => r.action !== "alert");
+    if (!bots.length) { body.append(emptyRow(6, "No paper strategies in the rules file.")); return; }
+    const row = (r) => {
       const lp = state.league && playerById(r.ruleId);
-      const name = el("td", null, lp
-        ? el("div", null, el("a", { href: `#/s/${encodeURIComponent(r.ruleId)}`, style: "color:inherit", text: lp.house ? r.name : `${lp.name}` }), lp.house ? null : el("span", { class: "meta", text: ` ${lp.style}` }))
-        : el("div", { text: r.name }));
-      if (!r.enabled) name.append(el("div", { class: "meta", text: "turned off in the rules file" }));
-      else if (r.stopped) name.append(el("div", { class: "meta", text: "⏹ Stopped: no new trades" }));
-      else if (paused) name.append(el("div", { class: "meta", text: `⏸ Paused after losses until ${new Date(r.pausedUntil).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` }));
+      const label = lp && !lp.house ? `${lp.name}, ${lp.style}` : shortRule(r.name);
+      const st = ruleState(r);
+      const name = el("td", { class: "title" }, el("div", { class: "name" },
+        st.key === "off" ? null : el("span", { class: `state ${st.key === "on" ? "" : st.key}` }),
+        lp ? el("a", { href: `#/s/${encodeURIComponent(r.ruleId)}`, text: label, title: r.name }) : el("span", { text: label, title: r.name })));
+      if (st.text) name.append(el("div", { class: "meta", text: st.text }));
       const close = closeNote(r.clv);
-      if (close) name.append(close);
-      body.append(el("tr", null,
+      return el("tr", null,
         name,
-        el("td", { class: "num", text: String(r.open) }),
+        el("td", { class: "num opt", text: String(r.open) }),
         el("td", { class: "num", text: `${r.wins} / ${r.losses}` }),
         el("td", { class: "num" }, pnlNode(r.realizedPnlUsd + r.unrealizedPnlUsd)),
-        el("td", { class: "num" }, r.enabled ? ctlButton(r) : ""),
-      ));
+        el("td", { class: "num opt" }, close || el("span", { class: "meta", text: "—" })),
+        el("td", { class: "num" }, r.enabled ? ctlSwitch(r) : ""),
+      );
+    };
+    const groups = [
+      ["Your strategies", bots.filter((r) => r.enabled && !isLeagueBot(r))],
+      ["League bots (strategies the bot makes and tests itself)", bots.filter((r) => r.enabled && isLeagueBot(r))],
+      ["Turned off or retired (kept for their history)", bots.filter((r) => !r.enabled)],
+    ];
+    for (const [title, list] of groups) {
+      if (!list.length) continue;
+      body.append(el("tr", { class: "group" }, el("td", { colspan: 6, text: `${title} (${list.length})` })));
+      for (const r of list) body.append(row(r));
     }
+  }
+  /** The whole row opens the trade's story (links and buttons inside it keep working). */
+  function tapRow(tr, fn) {
+    tr.classList.add("tap");
+    tr.addEventListener("click", (ev) => { if (!ev.target.closest("a, button")) fn(); });
   }
   function renderOpen(rulesById) {
     const body = $("openBody");
     body.replaceChildren();
-    if (!state.open.length) { body.append(emptyRow(8, "No open trades right now.")); return; }
+    if (!state.open.length) { body.append(emptyRow(7, "No open trades right now. New ones show up here as soon as a strategy buys.")); return; }
     for (const p of state.open) {
       const pnl = p.unrealizedPnlUsd || 0;
       const pct = p.costUsd ? (pnl / p.costUsd) * 100 : 0;
@@ -929,70 +1175,125 @@
       if (p.marketStatus && p.marketStatus !== "open") worth.append(el("div", { class: "meta", text: "waiting for result" }));
       body.append(el("tr", null,
         marketCell(p, rulesById),
-        el("td", null, el("span", { class: "side", text: p.side.toUpperCase() })),
-        el("td", { class: "num", text: cents(p.entryPrice) }),
+        el("td", { class: "num opt", text: cents(p.entryPrice) }),
         worth,
-        el("td", { class: "num", text: usd(p.costUsd) }),
+        el("td", { class: "num opt", text: usd(p.costUsd) }),
         pnlCell,
-        el("td", { class: "num", text: ago(p.entryAt) }),
-        el("td", null, whyBtn(() => positionStory(p, rulesById))),
+        el("td", { class: "num opt", text: ago(p.entryAt) }),
+        el("td", { class: "num opt" }, whyBtn(() => positionStory(p, rulesById))),
       ));
+      tapRow(body.lastChild, () => positionStory(p, rulesById));
     }
   }
   function renderClosed(rulesById) {
     const body = $("closedBody");
     body.replaceChildren();
     if (!state.closed.length) { body.append(emptyRow(6, "No closed trades yet.")); return; }
-    for (const p of state.closed.slice(0, 40)) {
-      const why = el("td", null, el("div", { text: REASONS[p.exitReason] || p.exitReason || "—" }), el("span", { class: "side", text: p.side.toUpperCase() }));
+    for (const p of state.closed.slice(0, 60)) {
       body.append(el("tr", null,
         marketCell(p, rulesById),
-        why,
+        el("td", { class: "opt", text: REASONS[p.exitReason] || p.exitReason || "—" }),
         el("td", { class: "num", text: `${cents(p.entryPrice)} → ${cents(p.exitPrice)}` }),
         el("td", { class: "num" }, pnlNode(p.realizedPnlUsd || 0)),
-        el("td", { class: "num", text: ago(p.exitAt) }),
-        el("td", null, whyBtn(() => positionStory(p, rulesById))),
+        el("td", { class: "num opt", text: ago(p.exitAt) }),
+        el("td", { class: "num opt" }, whyBtn(() => positionStory(p, rulesById))),
+      ));
+      tapRow(body.lastChild, () => positionStory(p, rulesById));
+    }
+  }
+  // ---------- overview lists ----------
+  function renderOverview(rulesById) {
+    // Strategies that are switched on in the rules file; the league's bots share one line.
+    const list = $("ovRules");
+    list.replaceChildren();
+    const bots = state.rules.filter((r) => r.action !== "alert" && r.enabled);
+    const mine = bots.filter((r) => !isLeagueBot(r));
+    for (const r of mine) {
+      const st = ruleState(r);
+      const meta = st.text || `${r.open} open, ${r.wins} won, ${r.losses} lost`;
+      list.append(el("li", null,
+        el("div", null, el("div", { class: "name", title: r.name }, el("span", { class: `state ${st.key === "on" ? "" : st.key}` }), shortRule(r.name)), el("div", { class: "meta", text: meta })),
+        el("div", { class: "amt" }, pnlNode(r.realizedPnlUsd + r.unrealizedPnlUsd)),
+        ctlSwitch(r),
       ));
     }
+    const league = bots.filter(isLeagueBot);
+    if (league.length) {
+      const sum = (k) => league.reduce((a, r) => a + (r[k] || 0), 0);
+      list.append(el("li", null,
+        el("div", null, el("div", { class: "name" }, el("a", { href: "#/leaderboard", text: `League, ${league.length} bots` })), el("div", { class: "meta", text: `${sum("open")} open, ${sum("wins")} won, ${sum("losses")} lost` })),
+        el("div", { class: "amt" }, pnlNode(sum("realizedPnlUsd") + sum("unrealizedPnlUsd"))),
+        el("span"),
+      ));
+    }
+    if (!list.children.length) list.append(el("li", { class: "empty", text: "No paper strategies are switched on in the rules file." }));
+
+    // Open trades, newest first.
+    const open = $("ovOpen");
+    open.replaceChildren();
+    const sorted = [...state.open].sort((a, b) => new Date(b.entryAt) - new Date(a.entryAt));
+    for (const p of sorted.slice(0, 7)) {
+      const pnl = p.unrealizedPnlUsd || 0;
+      const li = el("li", { class: "tap", tabindex: "0", role: "button", title: "See why the bot took this trade" },
+        el("div", null, el("div", { class: "name", text: shortMarket(p.title).name, title: p.title }), el("div", { class: "meta", text: `${betText(p)}, ${ruleName(p.ruleId, rulesById)}` })),
+        el("div", { class: "amt" }, el("div", { text: `${cents(p.entryPrice)} → ${cents(p.lastMarkPrice)}` }), el("div", { class: "meta", text: usd(p.costUsd) })),
+        el("div", { class: "amt" }, pnlNode(pnl)),
+      );
+      const story = () => positionStory(p, rulesById);
+      li.addEventListener("click", story);
+      li.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); story(); } });
+      open.append(li);
+    }
+    if (!sorted.length) open.append(el("li", { class: "empty", text: "No open trades right now." }));
+    else if (sorted.length > 7) open.append(el("a", { class: "more", href: "#/trades", text: `and ${sorted.length - 7} more` }));
   }
   function renderFeed(rulesById) {
     const feed = $("feed");
+    const short = $("ovFeed");
     feed.replaceChildren();
+    short.replaceChildren();
     const loopOn = state.loop && state.loop.enabled;
     $("feedTitle").textContent = loopOn ? "Recent activity & alerts" : "Recent activity";
     const items = [];
     if (loopOn) {
       for (const e of state.events) {
         const rule = (state.ruleNames || {})[e.ruleId] || rulesById[e.ruleId]?.name || e.ruleId || "";
-        const title = e.market?.title || "";
+        const title = shortMarket(e.market?.title).name;
         if (e.ruleId === "copy-parlays" && (e.type === "paper_fill" || e.type === "paper_exit" || e.type === "entry_signal")) items.push({ at: e.at, kind: e.type === "paper_exit" ? "Parlay settled" : e.type === "entry_signal" ? "Parlay idea" : "Parlay", msg: e.message.replace(/^(Paper |PARLAY IDEA )/, ""), pnl: e.type === "paper_exit" ? e.data?.pnlUsd : undefined });
         else if (e.type === "entry_signal" && e.data?.unusual) items.push({ at: e.at, kind: "Unusual move", msg: `${title} — ${e.data.reason}` });
         else if (e.type === "entry_signal" && e.data?.action === "alert") items.push({ at: e.at, kind: "Alert", msg: `${rule}: ${title} (YES ${cents(e.market?.yesPrice)})` });
-        else if (e.type === "paper_fill") items.push({ at: e.at, kind: "Bought", msg: `${title} — ${usd(e.sizeUsd)} of ${String(e.side).toUpperCase()}` });
-        else if (e.type === "paper_exit") items.push({ at: e.at, kind: "Sold", msg: `${title} — ${REASONS[e.data?.reason] || e.data?.reason}`, pnl: e.data?.pnlUsd });
+        else if (e.type === "paper_fill") items.push({ at: e.at, kind: "Bought", msg: `${title}: ${usd(e.sizeUsd)} of ${String(e.side).toUpperCase()}` });
+        else if (e.type === "paper_exit") items.push({ at: e.at, kind: "Sold", msg: `${title}: ${REASONS[e.data?.reason] || e.data?.reason}`, pnl: e.data?.pnlUsd });
         else if (e.type === "risk_block" && /pause armed/i.test(e.message)) items.push({ at: e.at, kind: "Paused", msg: `${rule} paused after a losing streak` });
         else if (e.type === "adapter_error") items.push({ at: e.at, kind: "Problem", msg: e.message });
-        else if (e.type === "arb_signal") items.push({ at: e.at, kind: "Arb found", msg: `${e.data?.title || title} — ${((e.data?.edge || 0) * 100).toFixed(1)}¢ per $1` + (e.data?.matchedBy === "auto" ? " (auto-matched)" : "") });
-        else if (e.type === "arb_open") items.push({ at: e.at, kind: "Arb opened", msg: `${e.data?.title || ""} — locks in`, pnl: e.data?.profitUsd });
+        else if (e.type === "arb_signal") items.push({ at: e.at, kind: "Arb found", msg: `${shortArb(e.data?.title || title)}: ${((e.data?.edge || 0) * 100).toFixed(1)}¢ per $1` + (e.data?.matchedBy === "auto" ? " (auto-matched)" : "") });
+        else if (e.type === "arb_open") items.push({ at: e.at, kind: "Arb opened", msg: `${shortArb(e.data?.title || "")}: locks in`, pnl: e.data?.profitUsd });
         else if (e.type === "arb_close") items.push({ at: e.at, kind: "Arb closed", msg: (e.message.split(" — ").slice(1).join(" — ") || e.message), pnl: e.data?.pnlUsd });
       }
     } else {
       for (const f of state.journal) {
         if (f.kind === "parlay_open") items.push({ at: f.at, kind: "Parlay", msg: `${f.title} — ${usd(f.sizeUsd)} at ${cents(f.price)}` });
         else if (f.kind === "parlay_close") items.push({ at: f.at, kind: "Parlay settled", msg: `${f.title} — ${f.reason || ""}`, pnl: f.pnlUsd });
-        else if (f.kind === "arb_open") items.push({ at: f.at, kind: "Arb opened", msg: `${f.title} — locks in`, pnl: f.pnlUsd });
-        else if (f.kind === "arb_close") items.push({ at: f.at, kind: "Arb closed", msg: `${f.title} — ${REASONS[f.reason] || f.reason || ""}`, pnl: f.pnlUsd });
+        else if (f.kind === "arb_open") items.push({ at: f.at, kind: "Arb opened", msg: `${shortArb(f.title)}: locks in`, pnl: f.pnlUsd });
+        else if (f.kind === "arb_close") items.push({ at: f.at, kind: "Arb closed", msg: `${shortArb(f.title)}: ${REASONS[f.reason] || f.reason || ""}`, pnl: f.pnlUsd });
         else items.push(f.kind === "open"
-          ? { at: f.at, kind: "Bought", msg: `${f.title} — ${usd(f.sizeUsd)} of ${String(f.side).toUpperCase()}` }
-          : { at: f.at, kind: "Sold", msg: `${f.title} — ${REASONS[f.reason] || f.reason || ""}`, pnl: f.pnlUsd });
+          ? { at: f.at, kind: "Bought", msg: `${shortMarket(f.title).name}: ${usd(f.sizeUsd)} of ${betText(f)}` }
+          : { at: f.at, kind: "Sold", msg: `${shortMarket(f.title).name}: ${REASONS[f.reason] || f.reason || ""}`, pnl: f.pnlUsd });
       }
     }
-    if (!items.length) { feed.append(el("li", { class: "empty", text: "Nothing yet." })); return; }
-    for (const it of items.slice(0, 60)) {
+    if (!items.length) {
+      feed.append(el("li", { class: "empty", text: "Nothing yet. Trades, exits and alerts show up here as they happen." }));
+      short.append(el("li", { class: "empty", text: "Nothing yet." }));
+      return;
+    }
+    const line = (it) => {
       const msg = el("div", { class: "msg", text: it.msg });
       if (it.pnl != null) msg.append(" ", pnlNode(it.pnl));
-      feed.append(el("li", null, el("div", { class: "when", text: clock(it.at) }), el("div", null, el("div", { class: "kind", text: it.kind }), msg)));
-    }
+      const day = new Date(it.at).toDateString() === new Date(nowMs()).toDateString() ? clock(it.at) : new Date(it.at).toLocaleDateString([], { month: "short", day: "numeric" });
+      return el("li", null, el("div", { class: "when", text: day }), el("div", null, el("div", { class: "kind", text: it.kind }), msg));
+    };
+    for (const it of items.slice(0, 80)) feed.append(line(it));
+    for (const it of items.slice(0, 6)) short.append(line(it));
   }
 
   // ---------- arbitrage ----------
@@ -1000,14 +1301,21 @@
     const ul = el("ul", { class: "legs" });
     for (const l of legs.slice(0, 8)) {
       const href = safeUrl(l.url);
-      const name = href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: l.title }) : el("span", { text: l.title });
-      ul.append(el("li", null, el("span", { class: "side", text: String(l.side).toUpperCase() }), `${platformLabel(l.platform)} @ ${cents(l[priceKey])} · `, name));
+      const label = shortMarket(l.title).name;
+      const name = href ? el("a", { href, target: "_blank", rel: "noopener noreferrer", text: label, title: l.title }) : el("span", { text: label, title: l.title });
+      ul.append(el("li", null, el("span", { class: "side", text: betText(l) }), `${platformLabel(l.platform)} at ${cents(l[priceKey])}, `, name));
     }
     if (legs.length > 8) ul.append(el("li", { text: `+ ${legs.length - 8} more` }));
     return ul;
   }
+  /** "Denver wins ↔ Who will win in the upcoming … DEN Nuggets vs HOU Rockets …" → "DEN Nuggets vs HOU Rockets". */
+  function shortArb(title) {
+    const parts = String(title || "").split(" ↔ ").map((t) => shortMarket(t).name);
+    // The same game on two sites: the fuller of the two names says it once.
+    return parts.length === 2 ? parts.sort((x, y) => y.length - x.length)[0] : parts.join(" ↔ ");
+  }
   function arbTitleCell(a) {
-    const head = el("div", null, el("span", { text: a.title }));
+    const head = el("div", { class: "name" }, el("span", { text: shortArb(a.title), title: a.title }));
     if (a.entryTrace) head.append(" ", whyBtn(() => arbStory(a)));
     const m = MATCHED[a.matchedBy];
     if (m) head.append(el("span", { class: a.matchedBy === "auto" ? "tag warn" : "tag", text: m, title: a.matchedBy === "auto" ? "Found by title matching — check both questions really resolve the same way" : "" }));
@@ -1223,7 +1531,7 @@
     skipped: ["info", "Skipped"], not_filled: ["no", "Not filled"], near_miss: ["info", "Near miss"],
   };
   function whyBtn(fn) {
-    const b = el("button", { class: "btn why", type: "button", title: "See every check that led to this trade", text: "Why?" });
+    const b = el("button", { class: "why", type: "button", title: "See every check that led to this trade", text: "Why?" });
     b.addEventListener("click", (ev) => { ev.stopPropagation(); fn(); });
     return b;
   }
@@ -1428,7 +1736,7 @@
     get(k, d) { try { return localStorage.getItem("pb." + k) || d; } catch { return d; } },
     set(k, v) { try { localStorage.setItem("pb." + k, v); } catch { /* private window */ } },
   };
-  const ui = { src: pref.get("src", "backtest"), sort: pref.get("sort", "score"), retired: pref.get("retired", "0") === "1", chartSrc: "backtest", tradeSrc: "backtest" };
+  const ui = { src: pref.get("src", "backtest"), sort: pref.get("sort", "score"), retired: pref.get("retired", "0") === "1", chartSrc: "backtest", tradeSrc: "backtest", range: pref.get("range", "all") };
   const STATUS_LABEL = { champion: "🏆 Champion", rookie: "Rookie", retired: "Retired", house: "Your rule", active: "" };
   const EVENT_ICON = { born: "✦", cloned: "⧉", retired: "✕", champion: "🏆", round: "↻" };
   const ROMAN_N = { II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10 };
@@ -1688,27 +1996,33 @@
   }
 
   // ---------- pages ----------
+  const PAPER_PAGES = { "": "overview", trades: "trades", strategies: "strategies", activity: "activity", arbitrage: "arbitrage", copy: "copy", moves: "moves" };
+  const PAGE_TITLE = { overview: "Overview", trades: "Trades", strategies: "Strategies", activity: "Activity", arbitrage: "Arbitrage", copy: "Copy trading", moves: "Unusual moves", league: "League", backtest: "Backtests", live: "Live money", strategy: "Strategy" };
   function route() {
     const h = location.hash.replace(/^#\/?/, "");
     if (h.startsWith("s/")) {
       let id = h.slice(2);
       try { id = decodeURIComponent(id); } catch { /* keep it as typed */ }
-      return { view: "strategy", id };
+      return { view: "strategy", page: "strategy", id };
     }
-    if (h === "leaderboard") return { view: "league" };
-    if (h === "backtest") return { view: "backtest" };
-    if (h === "live") return { view: "live" };
-    return { view: "paper" };
+    if (h === "leaderboard") return { view: "league", page: "league" };
+    if (h === "backtest") return { view: "backtest", page: "backtest" };
+    if (h === "live") return { view: "live", page: "live" };
+    return { view: "paper", page: PAPER_PAGES[h] || "overview" };
   }
   const VIEWS = { paper: "viewPaper", league: "viewLeague", strategy: "viewStrategy", backtest: "viewBacktest", live: "viewLive" };
   function showView() {
     const r = route();
     for (const [k, id] of Object.entries(VIEWS)) $(id).hidden = k !== r.view;
-    for (const a of document.querySelectorAll(".tabs a")) a.classList.toggle("on", a.dataset.view === (r.view === "strategy" ? "league" : r.view));
+    for (const a of document.querySelectorAll(".tabs a")) a.classList.toggle("on", a.dataset.page === (r.page === "strategy" ? "league" : r.page));
+    for (const n of document.querySelectorAll("[data-pages]")) n.classList.toggle("off-page", !n.dataset.pages.split(" ").includes(r.page));
+    $("pageTitle").textContent = PAGE_TITLE[r.page] || "Overview";
+    document.title = `${PAGE_TITLE[r.page] || "Overview"} · Rules Bot`;
   }
   window.addEventListener("hashchange", () => {
     showView();
-    if (route().view === "strategy") { ui.chartSrc = "backtest"; ui.tradeSrc = "backtest"; window.scrollTo(0, 0); }
+    if (route().view === "strategy") { ui.chartSrc = "backtest"; ui.tradeSrc = "backtest"; }
+    window.scrollTo(0, 0);
     render();
   });
   $("lgSort").addEventListener("change", (e) => { ui.sort = e.target.value; pref.set("sort", ui.sort); renderLeague(); });
@@ -1735,9 +2049,13 @@
     renderParlays();
     renderChart();
     renderRules(rulesById);
+    renderOverview(rulesById);
     renderOpen(rulesById);
     renderClosed(rulesById);
     renderFeed(rulesById);
+    // Pages for parts that are switched off in the rules file aren't offered.
+    $("navArb").hidden = $("arbSection").hidden;
+    $("navCopy").hidden = $("copySection").hidden && $("parlaySection").hidden;
     renderBanner();
     renderStatus();
   }
